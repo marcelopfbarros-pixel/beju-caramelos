@@ -1024,7 +1024,7 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
       {/* NEW / EDIT ORDER MODAL (Logical Order) */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92dvh] flex flex-col overflow-hidden border border-slate-200">
             {/* Modal Header */}
             <div className="px-6 py-4 bg-[#f8f9ff] border-b border-slate-200 flex items-center justify-between">
               <div>

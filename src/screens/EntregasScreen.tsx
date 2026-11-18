@@ -556,11 +556,33 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                                   const msg = formatStatusNotificationMessage(order, order.status, products, units);
                                   dispatchWhatsAppMessage(order.clienteTelefone, msg);
                                 }}
-                                className="flex items-center justify-center p-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg transition-colors"
+                                className="min-h-[38px] min-w-[38px] flex items-center justify-center p-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg transition-colors"
                                 title={`Notificar cliente no WhatsApp (${order.status})`}
                               >
-                                <MessageSquare className="w-3.5 h-3.5" />
+                                <MessageSquare className="w-4 h-4" />
                               </button>
+
+                              {order.clienteTelefone && (
+                                <a
+                                  href={`tel:${order.clienteTelefone.replace(/[^\d+]/g, '')}`}
+                                  className="md:hidden min-h-[38px] min-w-[38px] flex items-center justify-center p-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg transition-colors"
+                                  title="Ligar para cliente"
+                                >
+                                  <Phone className="w-4 h-4" />
+                                </a>
+                              )}
+
+                              {order.enderecoEntrega && (
+                                <a
+                                  href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(order.enderecoEntrega)}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="md:hidden min-h-[38px] min-w-[38px] flex items-center justify-center p-2 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-lg transition-colors"
+                                  title="Abrir endereço no Google Maps"
+                                >
+                                  <MapPin className="w-4 h-4" />
+                                </a>
+                              )}
 
                               <button
                                 onClick={() => handlePrint(order, 'receipt')}
@@ -586,7 +608,7 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                                   const nextStatus: OrderStatus = order.status === 'EM_ROTA' ? 'ENTREGUE' : 'EM_ROTA';
                                   setPendingStatusConfirm({ order, nextStatus });
                                 }}
-                                className={`flex-1 md:flex-none py-2 px-3 text-xs font-bold rounded-lg transition-colors ${
+                                className={`flex-1 md:flex-none min-h-[38px] py-2 px-3 text-xs font-bold rounded-lg transition-colors ${
                                   isDelivered
                                     ? 'bg-red-600 text-white opacity-90 cursor-not-allowed'
                                     : order.status === 'EM_ROTA'

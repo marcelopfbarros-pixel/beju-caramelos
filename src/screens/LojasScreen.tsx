@@ -734,7 +734,7 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                   {group.items.map(unit => (
                     <div
                       key={unit.id}
-                      className="bg-white border border-[#e2e8f0] rounded-xl p-5 shadow-xs flex flex-col justify-between hover:border-brand-500 transition-colors"
+                      className="bg-white border border-[#e2e8f0] rounded-xl p-4 sm:p-5 shadow-xs flex flex-col justify-between hover:border-brand-500 transition-colors min-w-0 overflow-hidden"
                     >
                       <div className="space-y-3">
                         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -806,29 +806,29 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                         </div>
                       </div>
 
-                      <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-1.5">
+                      <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-1.5 min-w-0">
+                        <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                           <button
                             type="button"
                             onClick={() => openProductsModal(unit)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors cursor-pointer"
+                            className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
                             title="Gerenciar inventário, produtos oferecidos e estoque mínimo"
                           >
-                            <ClipboardList className="w-3.5 h-3.5" />
+                            <ClipboardList className="w-3.5 h-3.5 shrink-0" />
                             <span>Inventário</span>
                           </button>
                           <button
                             type="button"
                             onClick={() => openReplenishmentModal(unit)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-lg transition-colors cursor-pointer"
+                            className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-semibold text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
                             title="Criar pedido especial de reposição de estoque ao ateliê"
                           >
-                            <RefreshCw className="w-3.5 h-3.5" />
+                            <RefreshCw className="w-3.5 h-3.5 shrink-0" />
                             <span>Reposição</span>
                           </button>
                         </div>
 
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1 shrink-0 ml-auto">
                           <button
                             onClick={() => {
                               setEditingUnit(unit);

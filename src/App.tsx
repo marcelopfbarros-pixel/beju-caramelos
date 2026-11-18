@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Header } from './components/Header';
 import { Sidebar, ScreenId } from './components/Sidebar';
 import { RightBar } from './components/RightBar';
+import { LandingScreen } from './components/LandingScreen';
+import { TutorialOverlay } from './components/TutorialOverlay';
 import { PedidosScreen } from './screens/PedidosScreen';
 import { ProdutosScreen } from './screens/ProdutosScreen';
 import { EntregasScreen } from './screens/EntregasScreen';
@@ -75,6 +77,7 @@ export const App: React.FC = () => {
   const [selectedDeliveryIds, setSelectedDeliveryIds] = useState<string[]>([]);
   const [isMobileRightDrawerOpen, setIsMobileRightDrawerOpen] = useState<boolean>(false);
   const [focusRoteiroSignal, setFocusRoteiroSignal] = useState<number>(0);
+  const [isTutorialOpen, setIsTutorialOpen] = useState<boolean>(false);
 
   const handleOpenRoteiroTool = useCallback(() => {
     setFocusRoteiroSignal(s => s + 1);
@@ -1005,12 +1008,26 @@ export const App: React.FC = () => {
   }, [activeUnitId, allowedUnits, allowedUnitIds]);
 
   const handleSignOutBlockedUser = async () => {
-    if (SupabaseService.isConfigured()) {
-      await SupabaseService.signOut();
+    try {
+      if (SupabaseService.isConfigured()) {
+        await SupabaseService.signOut();
+      }
+    } catch (err) {
+      console.error('Erro ao encerrar sessão no BD:', err);
     }
     setSupabaseUser(null);
     setIsOperatorAuthenticated(false);
-    setUserProfile(AppStorage.getUserProfile());
+    const loggedOutProfile: UserProfile = {
+      ...userProfile,
+      id: 'guest',
+      nome: 'Visitante',
+      email: '',
+      avatarUrl: '/logo.jpg',
+      autenticadoGoogle: false,
+      ativo: true
+    };
+    setUserProfile(loggedOutProfile);
+    AppStorage.saveUserProfile(loggedOutProfile);
   };
 
   if (effectiveUserProfile.ativo === false) {
@@ -1047,6 +1064,7 @@ export const App: React.FC = () => {
         products={products}
         categories={categories}
         units={units}
+        stock={stock}
         customers={customers}
         onSubmitOrder={async (newOrder, customerRecord) => {
           await handleSaveOrder(newOrder);
@@ -1068,6 +1086,24 @@ export const App: React.FC = () => {
               }
             : () => setIsCardapioDigitalOpen(false)
         }
+      />
+    );
+  }
+
+  if (!supabaseUser && !isOperatorAuthenticated) {
+    return (
+      <LandingScreen
+        users={users}
+        units={units}
+        isSupabaseOnline={isSupabaseOnline}
+        onUpdateUserProfile={(profile) => {
+          setUserProfile(profile);
+          AppStorage.saveUserProfile(profile);
+          setIsOperatorAuthenticated(true);
+        }}
+        onRegisterUser={handleSaveUser}
+        onSupabaseAuthChange={handleRefreshAuth}
+        onOpenCardapioDigital={() => setIsCardapioDigitalOpen(true)}
       />
     );
   }
@@ -1115,7 +1151,7 @@ export const App: React.FC = () => {
         />
 
         {/* Column 2: Center Main Content Screen */}
-        <main className="flex-1 flex flex-col overflow-hidden pb-16 lg:pb-0">
+        <main className="flex-1 flex flex-col overflow-hidden pb-20 lg:pb-0">
           {currentScreen === 'pedidos' && (
             <PedidosScreen
               orders={allowedOrders}
@@ -1151,9 +1187,13 @@ export const App: React.FC = () => {
               activeUnitId={activeUnitId}
               onUpdateStock={async (newStock) => {
                 setStock(newStock);
+                AppStorage.saveStock(newStock);
                 if (isSupabaseOnline) {
                   try {
                     await SupabaseService.saveStock(newStock);
+                    const freshStock = await SupabaseService.getStock();
+                    setStock(freshStock);
+                    AppStorage.saveStock(freshStock);
                   } catch (e) {
                     console.error(e);
                   }
@@ -1233,6 +1273,9 @@ export const App: React.FC = () => {
                 if (isSupabaseOnline) {
                   try {
                     await SupabaseService.saveStock(newStock);
+                    const freshStock = await SupabaseService.getStock();
+                    setStock(freshStock);
+                    AppStorage.saveStock(freshStock);
                   } catch (e) {
                     console.error(e);
                   }
@@ -1269,6 +1312,7 @@ export const App: React.FC = () => {
               onSyncSupabase={loadDataFromSupabase}
               revenueGoals={revenueGoals}
               onSaveRevenueGoals={handleSaveRevenueGoals}
+              activeUnitId={activeUnitId}
               onOpenCardapioDigital={() => setIsCardapioDigitalOpen(true)}
             />
           )}
@@ -1292,6 +1336,7 @@ export const App: React.FC = () => {
           currentScreen={currentScreen}
           onNavigate={setCurrentScreen}
           focusRoteiroSignal={focusRoteiroSignal}
+          onOpenTutorial={() => setIsTutorialOpen(true)}
         />
       </div>
 
@@ -1368,6 +1413,7 @@ export const App: React.FC = () => {
             <RightBar
               orders={orders}
               products={products}
+              categories={categories}
               units={units}
               customers={customers}
               onSaveCustomer={handleSaveCustomer}
@@ -1389,10 +1435,17 @@ export const App: React.FC = () => {
               isMobileDrawer={true}
               onCloseMobileDrawer={() => setIsMobileRightDrawerOpen(false)}
               focusRoteiroSignal={focusRoteiroSignal}
+              onOpenTutorial={() => setIsTutorialOpen(true)}
             />
           </div>
         </div>
       )}
+
+      <TutorialOverlay
+        isOpen={isTutorialOpen}
+        currentScreen={currentScreen}
+        onClose={() => setIsTutorialOpen(false)}
+      />
 
       {/* Floating WhatsApp Status Notification Prompt */}
       {statusNotificationPrompt && (

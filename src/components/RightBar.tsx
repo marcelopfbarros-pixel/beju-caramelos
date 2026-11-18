@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Order, Product, Category, StoreUnit, StockItem, MonthlyRevenueGoals, ProductionShift } from '../types';
+import { getMonthGoalForUnit, getYearGoalForUnit } from '../utils/revenueGoals';
 import { ScreenId } from './Sidebar';
 import { ProgramacaoProducaoModal, toLocalDateKey } from './ProgramacaoProducaoModal';
 import { TutorialOverlay } from './TutorialOverlay';
@@ -23,7 +24,7 @@ import {
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Customer } from '../types';
-import { MapPin, Navigation, Share2, FileDown, ExternalLink, X, ChevronDown, ChevronUp, Wrench, Search, Loader2, UserCheck, Send, ChefHat, HelpCircle } from 'lucide-react';
+import { MapPin, Navigation, Share2, FileDown, ExternalLink, X, ChevronDown, ChevronUp, Wrench, Search, Loader2, UserCheck, Send, ChefHat, HelpCircle, Store, ShoppingBag } from 'lucide-react';
 import {
   formatCep,
   lookupByCep,
@@ -60,6 +61,7 @@ interface RightBarProps {
   isMobileDrawer?: boolean;
   onCloseMobileDrawer?: () => void;
   focusRoteiroSignal?: number;
+  onOpenTutorial?: () => void;
 }
 
 export const RightBar: React.FC<RightBarProps> = ({
@@ -80,7 +82,8 @@ export const RightBar: React.FC<RightBarProps> = ({
   onNavigate,
   isMobileDrawer = false,
   onCloseMobileDrawer,
-  focusRoteiroSignal = 0
+  focusRoteiroSignal = 0,
+  onOpenTutorial
 }) => {
   const [copied, setCopied] = useState(false);
   const [waPreviewMode, setWaPreviewMode] = useState<'RESUMO' | 'STATUS'>('RESUMO');
@@ -89,11 +92,15 @@ export const RightBar: React.FC<RightBarProps> = ({
   const [activeTab, setActiveTab] = useState<'INDICADORES' | 'FERRAMENTAS'>(() =>
     focusRoteiroSignal > 0 ? 'FERRAMENTAS' : 'INDICADORES'
   );
-  const [expandedTool, setExpandedTool] = useState<'WHATSAPP' | 'ROTEIRIZADOR' | 'BUSCA_CEP' | 'PLANEJAMENTO_PRODUCAO' | 'TUTORIAL'>(() =>
+  const [expandedTool, setExpandedTool] = useState<'WHATSAPP' | 'ROTEIRIZADOR' | 'BUSCA_CEP' | 'PLANEJAMENTO_PRODUCAO' | 'CARDAPIO_CLIENTES' | 'TUTORIAL'>(() =>
     focusRoteiroSignal > 0 ? 'ROTEIRIZADOR' : 'WHATSAPP'
   );
   const [isProgramacaoModalOpen, setIsProgramacaoModalOpen] = useState(false);
   const [isTutorialOpen, setIsTutorialOpen] = useState(false);
+  const [cardapioUnitId, setCardapioUnitId] = useState<string>(() =>
+    activeUnitId !== 'all' ? activeUnitId : units.find(u => u.ativo)?.id || ''
+  );
+  const [cardapioLinkCopied, setCardapioLinkCopied] = useState(false);
   const [progStartDate, setProgStartDate] = useState<string>(() => toLocalDateKey(new Date().toISOString()));
   const [progEndDate, setProgEndDate] = useState<string>(() => {
     const d = new Date();
@@ -135,11 +142,12 @@ export const RightBar: React.FC<RightBarProps> = ({
       ).length
     : lowStockCount;
 
+  const activeUnits = useMemo(() => units.filter(u => u.ativo), [units]);
+
   const goalAnalytics = useMemo(() => {
     const now = new Date();
     const year = now.getFullYear();
     const month = now.getMonth(); // 0-indexed
-    const monthKey = `${year}-${String(month + 1).padStart(2, '0')}`;
     const monthLabel = now.toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' }).replace('.', '');
 
     const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -162,11 +170,8 @@ export const RightBar: React.FC<RightBarProps> = ({
       }
     });
 
-    const monthGoal = Number(revenueGoals[monthKey]) || 0;
-    let yearGoal = 0;
-    for (let m = 1; m <= 12; m++) {
-      yearGoal += Number(revenueGoals[`${year}-${String(m).padStart(2, '0')}`]) || 0;
-    }
+    const monthGoal = getMonthGoalForUnit(revenueGoals, activeUnitId, year, month, activeUnits);
+    const yearGoal = getYearGoalForUnit(revenueGoals, activeUnitId, year, activeUnits);
 
     const isMonthly = goalScope === 'MENSAL';
     const realized = isMonthly ? monthRealized : yearRealized;
@@ -219,7 +224,7 @@ export const RightBar: React.FC<RightBarProps> = ({
       statusLabel,
       statusTone
     };
-  }, [validOrders, revenueGoals, goalScope]);
+  }, [validOrders, revenueGoals, goalScope, activeUnitId, activeUnits]);
 
   const targetOrder = selectedOrder || orders[0];
   const prodMap = new Map(products.map(p => [p.id, p]));
@@ -465,11 +470,18 @@ Obrigado por escolher a Beju Caramelos! ✨`;
           {/* Intelligent Revenue Goal Tracking Card */}
           <div className="mt-3 rounded-xl border border-slate-200 bg-gradient-to-br from-[#f8f9ff] to-white p-3.5 shadow-2xs space-y-2.5">
             <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5">
-                <Target className="w-3.5 h-3.5 text-brand-600" />
-                <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-700">
-                  Meta {goalAnalytics.periodLabel}
-                </span>
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <Target className="w-3.5 h-3.5 text-brand-600 shrink-0" />
+                  <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-700 truncate">
+                    Meta {goalAnalytics.periodLabel}
+                  </span>
+                </div>
+                <p className="text-[10px] font-semibold text-brand-700 truncate pl-5">
+                  {activeUnitId === 'all'
+                    ? 'Todas as Unidades (Consolidado)'
+                    : activeUnits.find(u => u.id === activeUnitId)?.nome || 'Unidade'}
+                </p>
               </div>
 
               <div className="inline-flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
@@ -868,7 +880,11 @@ Obrigado por escolher a Beju Caramelos! ✨`;
                       if (isMobileDrawer && onCloseMobileDrawer) {
                         onCloseMobileDrawer();
                       }
-                      setIsTutorialOpen(true);
+                      if (onOpenTutorial) {
+                        onOpenTutorial();
+                      } else {
+                        setIsTutorialOpen(true);
+                      }
                     }}
                     className="w-full flex items-center justify-center gap-1.5 py-2 px-3 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-lg shadow-xs transition-colors cursor-pointer"
                   >
@@ -877,6 +893,125 @@ Obrigado por escolher a Beju Caramelos! ✨`;
                   </button>
                 </div>
               )}
+            </div>
+
+            {/* Card 6: Cardápio Clientes */}
+            <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
+              <button
+                type="button"
+                onClick={() =>
+                  setExpandedTool(prev => (prev === 'CARDAPIO_CLIENTES' ? 'WHATSAPP' : 'CARDAPIO_CLIENTES'))
+                }
+                className="w-full px-3.5 py-2.5 bg-slate-50/80 hover:bg-slate-100/80 flex items-center justify-between text-left transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <ShoppingBag className="w-4 h-4 text-brand-600 shrink-0" />
+                  <span className="text-xs font-bold text-slate-900 truncate">
+                    Cardápio Clientes
+                  </span>
+                </div>
+                {expandedTool === 'CARDAPIO_CLIENTES' ? (
+                  <ChevronUp className="w-4 h-4 text-slate-400 shrink-0" />
+                ) : (
+                  <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+                )}
+              </button>
+
+              {expandedTool === 'CARDAPIO_CLIENTES' && (() => {
+                const effectiveCardapioUnitId =
+                  activeUnits.find(u => u.id === cardapioUnitId)?.id || activeUnits[0]?.id || '';
+                const selectedUnit = activeUnits.find(u => u.id === effectiveCardapioUnitId);
+                const unitProductIds = new Set(
+                  stock.filter(s => s.unidadeId === effectiveCardapioUnitId).map(s => s.produtoId)
+                );
+                const unitActiveProductCount = products.filter(
+                  p => p.ativo && (unitProductIds.size === 0 || unitProductIds.has(p.id))
+                ).length;
+                const cardapioUrl = effectiveCardapioUnitId
+                  ? `${window.location.origin}/?cardapio=1&unidade=${encodeURIComponent(effectiveCardapioUnitId)}`
+                  : `${window.location.origin}/?cardapio=1`;
+
+                return (
+                  <div className="p-3.5 space-y-2.5 border-t border-slate-100 text-xs">
+                    <div>
+                      <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">
+                        Unidade que vai vender
+                      </label>
+                      <div className="relative flex items-center">
+                        <Store className="w-3.5 h-3.5 text-brand-600 absolute left-2.5 pointer-events-none" />
+                        <select
+                          value={effectiveCardapioUnitId}
+                          onChange={e => {
+                            setCardapioUnitId(e.target.value);
+                            setCardapioLinkCopied(false);
+                          }}
+                          className="w-full pl-8 pr-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 outline-none focus:border-brand-500 cursor-pointer"
+                        >
+                          {activeUnits.map(u => (
+                            <option key={u.id} value={u.id}>
+                              {u.tipo === 'CENTRAL' ? '🏭 ' : '🏪 '}{u.nome}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {selectedUnit && (
+                      <div className="px-2.5 py-1.5 rounded-lg bg-emerald-50/70 border border-emerald-200 text-[11px] text-emerald-900 flex items-center justify-between">
+                        <span className="truncate font-medium">{selectedUnit.nome}</span>
+                        <span className="font-mono font-bold shrink-0 ml-2">
+                          {unitActiveProductCount} produto(s)
+                        </span>
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">
+                        Link do Cardápio
+                      </label>
+                      <input
+                        type="text"
+                        readOnly
+                        value={cardapioUrl}
+                        onFocus={e => e.target.select()}
+                        className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[10px] font-mono text-slate-600 outline-none"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(cardapioUrl);
+                          setCardapioLinkCopied(true);
+                          setTimeout(() => setCardapioLinkCopied(false), 2000);
+                        }}
+                        className="flex items-center justify-center gap-1.5 py-2 px-2.5 bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-bold rounded-lg transition-colors cursor-pointer"
+                      >
+                        {cardapioLinkCopied ? (
+                          <>
+                            <Check className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>Copiado!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3.5 h-3.5" />
+                            <span>Copiar Link</span>
+                          </>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => window.open(cardapioUrl, '_blank', 'noopener,noreferrer')}
+                        className="flex items-center justify-center gap-1.5 py-2 px-2.5 bg-brand-600 hover:bg-brand-700 text-white text-[11px] font-bold rounded-lg transition-colors cursor-pointer"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span>Abrir</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         )}

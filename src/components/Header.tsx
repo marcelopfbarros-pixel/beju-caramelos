@@ -43,6 +43,25 @@ export const Header: React.FC<HeaderProps> = ({
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [now, setNow] = useState<Date>(() => new Date());
   const [isHourlyBlink, setIsHourlyBlink] = useState(false);
+  const [showSeasonalDecoration, setShowSeasonalDecoration] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('juju_seasonal_decoration') !== 'false';
+    } catch {
+      return true;
+    }
+  });
+
+  const toggleSeasonalDecoration = () => {
+    setShowSeasonalDecoration(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem('juju_seasonal_decoration', String(next));
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
+  };
 
   useEffect(() => {
     let blinkEndTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -118,17 +137,43 @@ export const Header: React.FC<HeaderProps> = ({
         />
         <div className="min-w-0">
           <div className="flex items-center gap-1.5 min-w-0">
-            <span className={`text-sm sm:text-xl font-bold tracking-tight font-sans truncate ${seasonal.textGradientClass}`}>
+            <span
+              className={`text-sm sm:text-xl font-bold tracking-tight font-sans truncate ${
+                showSeasonalDecoration ? seasonal.textGradientClass : 'text-[#0f172a]'
+              }`}
+            >
               Beju Caramelos
             </span>
-            <span
-              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] sm:text-xs font-semibold shadow-xs shrink-0 ${seasonal.badgeClass}`}
-              aria-label={`Decoração sazonal: ${seasonal.label}`}
+            <button
+              type="button"
+              onClick={toggleSeasonalDecoration}
+              title={
+                showSeasonalDecoration
+                  ? `Decoração sazonal: ${seasonal.label} (clique para desativar)`
+                  : `Ativar decoração sazonal (${seasonal.label})`
+              }
+              aria-label={
+                showSeasonalDecoration
+                  ? `Desativar decoração sazonal: ${seasonal.label}`
+                  : `Ativar decoração sazonal: ${seasonal.label}`
+              }
+              aria-pressed={showSeasonalDecoration}
+              className={`hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] sm:text-xs font-semibold shadow-xs shrink-0 transition-all cursor-pointer ${
+                showSeasonalDecoration
+                  ? seasonal.badgeClass
+                  : 'bg-slate-100 border-slate-200 text-slate-400 opacity-60 hover:opacity-100 hover:text-slate-600'
+              }`}
             >
-              <span aria-hidden="true">{seasonal.icons[0]}</span>
-              <span className="hidden lg:inline">{seasonal.label}</span>
-              <span aria-hidden="true">{seasonal.icons[1]}</span>
-            </span>
+              <span aria-hidden="true" className={showSeasonalDecoration ? '' : 'grayscale'}>
+                {seasonal.icons[0]}
+              </span>
+              {showSeasonalDecoration && (
+                <>
+                  <span className="hidden lg:inline">{seasonal.label}</span>
+                  <span aria-hidden="true">{seasonal.icons[1]}</span>
+                </>
+              )}
+            </button>
           </div>
         </div>
       </div>
@@ -136,7 +181,7 @@ export const Header: React.FC<HeaderProps> = ({
       {/* Center Controls: N-Stores Selector & Shift Info */}
       <div className="flex items-center gap-2 md:gap-3 min-w-0">
         {/* Dynamic N-Store Dropdown (overflow-safe) */}
-        <div className="flex items-center gap-1.5 md:gap-2 bg-[#f8f9ff] border border-[#cbd5e1] rounded-lg px-2 md:px-3 py-1 md:py-1.5 shadow-sm hover:border-brand-500 transition-colors max-w-[155px] sm:max-w-[260px] min-w-0">
+        <div className="flex items-center gap-1.5 md:gap-2 bg-[#f8f9ff] border border-[#cbd5e1] rounded-lg px-2 md:px-3 py-1 md:py-1.5 shadow-sm hover:border-brand-500 transition-colors max-w-[175px] sm:max-w-[260px] min-w-0">
           <Store className="w-3.5 h-3.5 md:w-4 md:h-4 text-brand-600 shrink-0" />
           <span className="hidden sm:inline text-xs font-medium text-[#64748b] shrink-0">Unidade:</span>
           <select
@@ -153,6 +198,21 @@ export const Header: React.FC<HeaderProps> = ({
               </option>
             ))}
           </select>
+        </div>
+
+        {/* Compact Mobile Shift Indicator */}
+        <div
+          className="md:hidden flex items-center justify-center p-1.5 rounded-lg bg-slate-50 border border-slate-200 shrink-0"
+          title={currentDateText}
+          aria-label={currentDateText}
+        >
+          {currentHour < 12 ? (
+            <Sun className="w-3.5 h-3.5 text-yellow-500 fill-yellow-400" />
+          ) : currentHour < 18 ? (
+            <Sun className="w-3.5 h-3.5 text-orange-500 fill-orange-400" />
+          ) : (
+            <Moon className="w-3.5 h-3.5 text-indigo-600 fill-indigo-400" />
+          )}
         </div>
 
         {/* Date & Shift Text Box (Data e Turno atuais) */}
@@ -224,7 +284,7 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           onClick={() => setShowAuthModal(true)}
           className="flex items-center gap-2.5 p-1.5 pr-2 rounded-lg hover:bg-slate-50 border border-transparent hover:border-slate-200 transition-all text-left"
-          title="Login / Logout do Usuário (E-mail/Senha ou Google Auth)"
+          title="Login / Logout do Usuário (E-mail e Senha)"
         >
           <img
             src={userProfile.avatarUrl || '/logo.jpg'}

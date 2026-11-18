@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { UserProfile, StoreUnit, Category, Product, Order, StockItem, Customer, ProductionOrder, MonthlyRevenueGoals } from '../types';
+import { getMonthGoalForUnit, getMonthYearKey, getUnitMonthGoalKey, getYearGoalForUnit } from '../utils/revenueGoals';
 import { 
   User, 
   Building2, 
@@ -64,6 +65,7 @@ interface ConfiguracoesScreenProps {
   revenueGoals?: MonthlyRevenueGoals;
   onSaveRevenueGoals?: (goals: MonthlyRevenueGoals) => void;
   onOpenCardapioDigital?: () => void;
+  activeUnitId?: string;
 }
 
 export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
@@ -84,7 +86,8 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
   onSyncSupabase,
   revenueGoals = {},
   onSaveRevenueGoals,
-  onOpenCardapioDigital
+  onOpenCardapioDigital,
+  activeUnitId
 }) => {
   const [activeTab, setActiveTab] = useState<'perfil' | 'empresas' | 'metas' | 'whatsapp' | 'banco'>('perfil');
   const [waSettings, setWaSettings] = useState<WhatsAppAutomationSettings>(() =>
@@ -93,7 +96,17 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
   const [waSavedSuccess, setWaSavedSuccess] = useState(false);
   const [catalogLinkCopied, setCatalogLinkCopied] = useState(false);
   const [selectedGoalYear, setSelectedGoalYear] = useState<number>(new Date().getFullYear());
+  const [selectedGoalUnitId, setSelectedGoalUnitId] = useState<string>(
+    () => activeUnitId || units.find(u => u.ativo)?.id || 'all'
+  );
   const [draftGoals, setDraftGoals] = useState<MonthlyRevenueGoals>(revenueGoals);
+
+  useEffect(() => {
+    if (activeUnitId) {
+      setSelectedGoalUnitId(activeUnitId);
+      setFocusedGoalKey(null);
+    }
+  }, [activeUnitId]);
   const [goalsSavedSuccess, setGoalsSavedSuccess] = useState(false);
   const [bulkGoalValue, setBulkGoalValue] = useState<string>('');
   const [focusedGoalKey, setFocusedGoalKey] = useState<string | null>(null);
@@ -776,29 +789,33 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
             'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
             'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
           ];
+          const activeUnits = units.filter(u => u.ativo);
+          const isConsolidated = selectedGoalUnitId === 'all';
+          const selectedUnit = activeUnits.find(u => u.id === selectedGoalUnitId);
           const currentYear = new Date().getFullYear();
           const yearOptions = Array.from({ length: 8 }, (_, i) => currentYear - 2 + i);
 
           const getMonthKey = (monthIndex: number) =>
-            `${selectedGoalYear}-${String(monthIndex + 1).padStart(2, '0')}`;
+            isConsolidated
+              ? getMonthYearKey(selectedGoalYear, monthIndex)
+              : getUnitMonthGoalKey(selectedGoalUnitId, selectedGoalYear, monthIndex);
 
           const realizedByMonth = new Array<number>(12).fill(0);
           orders.forEach(o => {
             if (o.status === 'CANCELADO') return;
+            if (!isConsolidated && o.unidadeOrigemId !== selectedGoalUnitId) return;
             const d = new Date(o.dataHoraEntrega || o.dataPedido);
             if (d.getFullYear() === selectedGoalYear) {
               realizedByMonth[d.getMonth()] += o.valorTotal;
             }
           });
 
-          const annualGoalTotal = monthNames.reduce(
-            (sum, _, idx) => sum + (Number(draftGoals[getMonthKey(idx)]) || 0),
-            0
-          );
+          const annualGoalTotal = getYearGoalForUnit(draftGoals, selectedGoalUnitId, selectedGoalYear, activeUnits);
           const annualRealizedTotal = realizedByMonth.reduce((sum, v) => sum + v, 0);
           const annualPct = annualGoalTotal > 0 ? Math.min(100, (annualRealizedTotal / annualGoalTotal) * 100) : 0;
 
           const handleApplyBulk = () => {
+            if (isConsolidated) return;
             const val = parseFloat(bulkGoalValue.replace(',', '.'));
             if (isNaN(val) || val < 0) return;
             const updated = { ...draftGoals };
@@ -806,6 +823,9 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
               updated[getMonthKey(idx)] = val;
             }
             setDraftGoals(updated);
+            if (onSaveRevenueGoals) {
+              onSaveRevenueGoals(updated);
+            }
           };
 
           const handleSaveGoals = () => {
@@ -822,36 +842,61 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                 <div>
                   <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                     <Target className="w-4 h-4 text-brand-600" />
-                    <span>Metas Mensais de Faturamento</span>
+                    <span>
+                      Metas Mensais de Faturamento {selectedUnit ? `• ${selectedUnit.nome}` : '• Consolidado'}
+                    </span>
                   </h2>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    {isConsolidated
+                      ? 'Visão consolidada somando as metas de todas as unidades. Selecione uma unidade para editar.'
+                      : 'Defina as metas mensais individuais desta unidade.'}
+                  </p>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedGoalYear(y => y - 1)}
-                    className="p-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600"
-                    title="Ano anterior"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
+                <div className="flex flex-wrap items-center gap-2">
                   <select
-                    value={selectedGoalYear}
-                    onChange={(e) => setSelectedGoalYear(Number(e.target.value))}
-                    className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono font-bold text-slate-900 outline-none cursor-pointer"
+                    value={selectedGoalUnitId}
+                    onChange={(e) => {
+                      setSelectedGoalUnitId(e.target.value);
+                      setFocusedGoalKey(null);
+                    }}
+                    className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 outline-none cursor-pointer"
                   >
-                    {yearOptions.map(yr => (
-                      <option key={yr} value={yr}>{yr}</option>
+                    <option value="all">Todas as Unidades (Consolidado)</option>
+                    {activeUnits.map(u => (
+                      <option key={u.id} value={u.id}>
+                        {u.tipo === 'CENTRAL' ? '🏭 ' : '🏪 '}{u.nome}
+                      </option>
                     ))}
                   </select>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedGoalYear(y => y + 1)}
-                    className="p-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600"
-                    title="Próximo ano"
-                  >
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedGoalYear(y => y - 1)}
+                      className="p-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600"
+                      title="Ano anterior"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <select
+                      value={selectedGoalYear}
+                      onChange={(e) => setSelectedGoalYear(Number(e.target.value))}
+                      className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono font-bold text-slate-900 outline-none cursor-pointer"
+                    >
+                      {yearOptions.map(yr => (
+                        <option key={yr} value={yr}>{yr}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedGoalYear(y => y + 1)}
+                      className="p-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600"
+                      title="Próximo ano"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -890,12 +935,14 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                       placeholder="Ex: 50000"
                       value={bulkGoalValue}
                       onChange={(e) => setBulkGoalValue(e.target.value)}
-                      className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono focus:border-brand-500 outline-none"
+                      disabled={isConsolidated}
+                      className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono focus:border-brand-500 outline-none disabled:bg-slate-100 disabled:text-slate-400"
                     />
                     <button
                       type="button"
                       onClick={handleApplyBulk}
-                      className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg whitespace-nowrap transition-colors"
+                      disabled={isConsolidated}
+                      className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white text-xs font-semibold rounded-lg whitespace-nowrap transition-colors"
                     >
                       Aplicar p/ 12 meses
                     </button>
@@ -903,11 +950,59 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                 </div>
               </div>
 
+              {/* Per-Unit Annual Overview */}
+              {activeUnits.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {activeUnits.map(u => {
+                    const uGoal = getYearGoalForUnit(draftGoals, u.id, selectedGoalYear, activeUnits);
+                    const uRealized = orders
+                      .filter(o => o.status !== 'CANCELADO' && o.unidadeOrigemId === u.id && new Date(o.dataHoraEntrega || o.dataPedido).getFullYear() === selectedGoalYear)
+                      .reduce((sum, o) => sum + o.valorTotal, 0);
+                    const uPct = uGoal > 0 ? Math.min(100, (uRealized / uGoal) * 100) : 0;
+                    const isSelected = selectedGoalUnitId === u.id;
+                    return (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedGoalUnitId(u.id);
+                          setFocusedGoalKey(null);
+                        }}
+                        className={`text-left p-3 rounded-xl border transition-all cursor-pointer ${
+                          isSelected
+                            ? 'border-brand-500 bg-brand-50/40 ring-1 ring-brand-500/30'
+                            : 'border-slate-200 bg-slate-50/60 hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-bold text-slate-900 truncate">
+                            {u.tipo === 'CENTRAL' ? '🏭 ' : '🏪 '}{u.nome}
+                          </span>
+                          <span className="text-[10px] font-mono font-bold text-slate-600">
+                            {uGoal > 0 ? `${((uRealized / uGoal) * 100).toFixed(0)}%` : 'Sem meta'}
+                          </span>
+                        </div>
+                        <div className="mt-1 flex items-center justify-between text-[11px] font-mono text-slate-600">
+                          <span>Meta: R$ {uGoal.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}</span>
+                          <span>Real: R$ {uRealized.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}</span>
+                        </div>
+                        <div className="mt-1.5 h-1 w-full bg-slate-200 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${uPct >= 100 ? 'bg-emerald-500' : 'bg-brand-600'}`}
+                            style={{ width: `${uPct}%` }}
+                          />
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
               {/* 12 Months Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {monthNames.map((name, idx) => {
                   const key = getMonthKey(idx);
-                  const goalVal = draftGoals[key] ?? 0;
+                  const goalVal = getMonthGoalForUnit(draftGoals, selectedGoalUnitId, selectedGoalYear, idx, activeUnits);
                   const realized = realizedByMonth[idx];
                   const pct = goalVal > 0 ? Math.min(100, (realized / goalVal) * 100) : 0;
 
@@ -915,7 +1010,7 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                     <div key={key} className="p-4 rounded-xl border border-slate-200 bg-white hover:border-brand-400 transition-colors space-y-2.5">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold text-slate-900">{name}</span>
-                        <span className="text-[10px] font-mono text-slate-400">{key}</span>
+                        <span className="text-[10px] font-mono text-slate-400">{getMonthYearKey(selectedGoalYear, idx)}</span>
                       </div>
 
                       <div className="relative">
@@ -925,6 +1020,7 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                         <input
                           type="text"
                           inputMode="decimal"
+                          readOnly={isConsolidated}
                           value={
                             focusedGoalKey === key
                               ? focusedGoalText
@@ -934,23 +1030,31 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                           }
                           placeholder="0,00"
                           onFocus={() => {
+                            if (isConsolidated) return;
                             setFocusedGoalKey(key);
                             setFocusedGoalText(goalVal > 0 ? String(goalVal).replace('.', ',') : '');
                           }}
                           onChange={(e) => {
+                            if (isConsolidated) return;
                             const raw = e.target.value.replace(/[^\d.,]/g, '');
                             setFocusedGoalText(raw);
                             const normalized = raw.includes(',')
                               ? raw.replace(/\./g, '').replace(',', '.')
                               : raw;
                             const val = parseFloat(normalized);
-                            setDraftGoals(prev => ({
-                              ...prev,
-                              [key]: isNaN(val) ? 0 : Math.max(0, val)
-                            }));
+                            const nextVal = isNaN(val) ? 0 : Math.max(0, val);
+                            const updated = { ...draftGoals, [key]: nextVal };
+                            setDraftGoals(updated);
+                            if (onSaveRevenueGoals) {
+                              onSaveRevenueGoals(updated);
+                            }
                           }}
                           onBlur={() => setFocusedGoalKey(null)}
-                          className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono font-bold text-right text-slate-900 focus:bg-white focus:border-brand-500 outline-none"
+                          className={`w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg text-xs font-mono font-bold text-right text-slate-900 outline-none ${
+                            isConsolidated
+                              ? 'bg-slate-100 text-slate-600 cursor-default'
+                              : 'bg-slate-50 focus:bg-white focus:border-brand-500'
+                          }`}
                         />
                       </div>
 

@@ -4,6 +4,7 @@ import {
   Product,
   Category,
   StoreUnit,
+  StockItem,
   Order,
   OrderItem,
   Customer,
@@ -48,6 +49,7 @@ interface CardapioDigitalScreenProps {
   products: Product[];
   categories: Category[];
   units: StoreUnit[];
+  stock?: StockItem[];
   customers?: Customer[];
   onSubmitOrder: (order: Order, customer: Customer) => Promise<void> | void;
   onBackToAdmin?: () => void;
@@ -63,19 +65,62 @@ export const CardapioDigitalScreen: React.FC<CardapioDigitalScreenProps> = ({
   products,
   categories,
   units,
+  stock = [],
   customers = [],
   onSubmitOrder,
   onBackToAdmin
 }) => {
-  const activeProducts = useMemo(() => products.filter(p => p.ativo), [products]);
-  const activeCategories = useMemo(
-    () => categories.filter(c => c.ativo).sort((a, b) => a.ordem - b.ordem),
-    [categories]
-  );
+  const urlUnitId = useMemo(() => {
+    const raw = new URLSearchParams(window.location.search).get('unidade');
+    if (!raw) return null;
+    return units.some(u => u.id === raw && u.ativo) ? raw : null;
+  }, [units]);
+
   const storeUnits = useMemo(() => {
     const lojas = units.filter(u => u.ativo && u.tipo === 'LOJA');
     return lojas.length > 0 ? lojas : units.filter(u => u.ativo);
   }, [units]);
+
+  const [selectedUnitId, setSelectedUnitId] = useState<string>(() => urlUnitId || storeUnits[0]?.id || '');
+
+  useEffect(() => {
+    if (urlUnitId && selectedUnitId !== urlUnitId) {
+      setSelectedUnitId(urlUnitId);
+    }
+  }, [urlUnitId, selectedUnitId]);
+
+  const currentSellingUnit = useMemo(
+    () => units.find(u => u.id === selectedUnitId) || storeUnits[0],
+    [units, selectedUnitId, storeUnits]
+  );
+
+  const unitProductIds = useMemo(() => {
+    if (!selectedUnitId) return new Set<string>();
+    return new Set(stock.filter(s => s.unidadeId === selectedUnitId).map(s => s.produtoId));
+  }, [stock, selectedUnitId]);
+
+  const hasUnitSpecificProducts = unitProductIds.size > 0;
+
+  const activeProducts = useMemo(
+    () =>
+      products.filter(
+        p => p.ativo && (!hasUnitSpecificProducts || unitProductIds.has(p.id))
+      ),
+    [products, hasUnitSpecificProducts, unitProductIds]
+  );
+
+  const categoryMap = useMemo(
+    () => new Map(categories.map(c => [c.id, c.nome])),
+    [categories]
+  );
+
+  const activeCategories = useMemo(
+    () =>
+      categories
+        .filter(c => c.ativo && activeProducts.some(p => p.categoriaId === c.id))
+        .sort((a, b) => a.ordem - b.ordem),
+    [categories, activeProducts]
+  );
 
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('ALL');
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -95,7 +140,6 @@ export const CardapioDigitalScreen: React.FC<CardapioDigitalScreenProps> = ({
   const [logradouroBairro, setLogradouroBairro] = useState<string>('');
   const [enderecoCompleto, setEnderecoCompleto] = useState<string>('');
   const [detalheEntrega, setDetalheEntrega] = useState<string>('');
-  const [selectedUnitId, setSelectedUnitId] = useState<string>(() => storeUnits[0]?.id || '');
   const [distanceKm, setDistanceKm] = useState<number>(0);
   const [baseFeeMaxKm, setBaseFeeMaxKm] = useState<number>(
     () => getWhatsAppAutomationSettings().baseFeeMaxKm ?? 15
@@ -515,25 +559,89 @@ ${order.tipoEntrega === 'DELIVERY' ? `*Taxa de Entrega${distanceKm > 0 ? ` (~${d
             />
             <div>
               <h1 className="text-base font-bold text-slate-900 leading-tight">
-                Beju - Cardápio
+                Beju Caramelos • Cardápio
               </h1>
+              {currentSellingUnit && (
+                <p className="text-[11px] font-semibold text-brand-700 flex items-center gap-1 mt-0.5">
+                  <Store className="w-3 h-3 shrink-0" />
+                  <span>Unidade: {currentSellingUnit.nome}</span>
+                </p>
+              )}
             </div>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-brand-50 border border-brand-200 text-brand-800 text-xs font-bold">
+          <a
+            href="#checkout-panel"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-brand-50 border border-brand-200 text-brand-800 text-xs font-bold hover:bg-brand-100 transition-colors"
+          >
             <ShoppingBag className="w-3.5 h-3.5 text-brand-600" />
             <span>{cartItems.reduce((acc, i) => acc + i.quantidade, 0)} item(ns)</span>
             <span className="font-mono">• R$ {valorSubtotal.toFixed(2)}</span>
-          </span>
+          </a>
         </div>
       </header>
 
       {/* Main Layout */}
-      <div className="max-w-7xl w-full mx-auto flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 p-4 lg:p-6">
+      <div className="max-w-7xl w-full mx-auto flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 p-4 lg:p-6 pb-24 lg:pb-6">
         {/* Left 7 Cols: Product Catalog */}
         <div className="lg:col-span-7 space-y-5">
+          {/* Unit Context Banner */}
+          {currentSellingUnit && (
+            <div className="bg-white border border-emerald-200 bg-gradient-to-r from-emerald-50/70 via-white to-brand-50/40 rounded-2xl p-4 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start gap-3 min-w-0">
+                <div className="p-2.5 rounded-xl bg-emerald-100 text-emerald-700 shrink-0">
+                  <Store className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-extrabold text-slate-900">
+                      {currentSellingUnit.nome}
+                    </span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                      {activeProducts.length} {activeProducts.length === 1 ? 'produto disponível' : 'produtos disponíveis'}
+                    </span>
+                  </div>
+                  {currentSellingUnit.endereco && (
+                    <p className="text-[11px] text-slate-600 flex items-center gap-1 mt-1 truncate">
+                      <MapPin className="w-3 h-3 text-slate-400 shrink-0" />
+                      <span className="truncate">{currentSellingUnit.endereco}</span>
+                    </p>
+                  )}
+                  {currentSellingUnit.telefone && (
+                    <p className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
+                      <Phone className="w-3 h-3 text-slate-400 shrink-0" />
+                      <span>{currentSellingUnit.telefone}</span>
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {!urlUnitId && storeUnits.length > 1 && (
+                <div className="shrink-0">
+                  <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1">
+                    Trocar Unidade
+                  </label>
+                  <select
+                    value={selectedUnitId}
+                    onChange={e => {
+                      setSelectedUnitId(e.target.value);
+                      setCart({});
+                      setSelectedCategoryId('ALL');
+                    }}
+                    className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 outline-none focus:border-brand-500 cursor-pointer"
+                  >
+                    {storeUnits.map(u => (
+                      <option key={u.id} value={u.id}>
+                        {u.nome}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+          )}
           {/* Search & Category Tabs */}
           <div className="space-y-3">
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
@@ -577,9 +685,29 @@ ${order.tipoEntrega === 'DELIVERY' ? `*Taxa de Entrega${distanceKm > 0 ? ` (~${d
             </div>
 
             {/* Product Grid */}
+            {filteredProducts.length === 0 ? (
+              <div className="bg-white border border-dashed border-slate-300 rounded-2xl p-8 text-center space-y-2">
+                <p className="text-xs font-semibold text-slate-600">
+                  Nenhum produto encontrado para esta unidade ou filtro.
+                </p>
+                {(searchTerm || selectedCategoryId !== 'ALL') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchTerm('');
+                      setSelectedCategoryId('ALL');
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-bold cursor-pointer"
+                  >
+                    Limpar filtros
+                  </button>
+                )}
+              </div>
+            ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               {filteredProducts.map(prod => {
                 const qty = cart[prod.id] || 0;
+                const catName = categoryMap.get(prod.categoriaId);
                 return (
                   <div
                     key={prod.id}
@@ -595,7 +723,14 @@ ${order.tipoEntrega === 'DELIVERY' ? `*Taxa de Entrega${distanceKm > 0 ? ` (~${d
                       />
                     )}
                     <div className="flex-1 min-w-0 space-y-1">
-                      <span className="text-[10px] font-mono text-slate-400 block">{prod.sku}</span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] font-mono text-slate-400">{prod.sku}</span>
+                        {catName && (
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 truncate max-w-[120px]">
+                            {catName}
+                          </span>
+                        )}
+                      </div>
                       <h3 className="text-xs font-bold text-slate-900 leading-snug line-clamp-2">
                         {prod.descricao}
                       </h3>
@@ -643,11 +778,12 @@ ${order.tipoEntrega === 'DELIVERY' ? `*Taxa de Entrega${distanceKm > 0 ? ` (~${d
                 );
               })}
             </div>
+            )}
           </div>
         </div>
 
         {/* Right 5 Cols: Cart & Smart Checkout */}
-        <div className="lg:col-span-5">
+        <div id="checkout-panel" className="lg:col-span-5">
           <form
             onSubmit={handleCheckout}
             className="bg-white border border-slate-200 rounded-2xl shadow-sm p-5 space-y-4 sticky top-20"
@@ -1004,6 +1140,25 @@ ${order.tipoEntrega === 'DELIVERY' ? `*Taxa de Entrega${distanceKm > 0 ? ` (~${d
           </form>
         </div>
       </div>
+      {/* Mobile Sticky Cart Bar */}
+      {cartItems.length > 0 && (
+        <div className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur border-t border-slate-200 px-4 py-2.5 flex items-center justify-between shadow-lg">
+          <div>
+            <p className="text-[11px] text-slate-500 font-medium">
+              {cartItems.reduce((acc, i) => acc + i.quantidade, 0)} item(ns) • {currentSellingUnit?.nome || 'Beju'}
+            </p>
+            <p className="text-sm font-mono font-bold text-slate-900">
+              R$ {valorSubtotal.toFixed(2)}
+            </p>
+          </div>
+          <a
+            href="#checkout-panel"
+            className="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold shadow-xs"
+          >
+            Finalizar Pedido
+          </a>
+        </div>
+      )}
     </div>
   );
 };

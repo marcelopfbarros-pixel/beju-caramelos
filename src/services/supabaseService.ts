@@ -414,7 +414,6 @@ export class SupabaseService {
     if (!this.isConfigured() || stockItems.length === 0) return;
 
     const payload = stockItems.map(s => ({
-      id: s.id.startsWith('st-') ? undefined : s.id,
       unidade_id: s.unidadeId,
       produto_id: s.produtoId,
       quantidade_atual: s.quantidadeAtual,
@@ -1256,18 +1255,6 @@ export class SupabaseService {
       password,
       options: {
         data: { full_name: nome || email.split('@')[0] }
-      }
-    });
-    if (error) throw error;
-    return data;
-  }
-
-  static async signInWithGoogle() {
-    if (!this.isConfigured()) throw new Error('Supabase não configurado');
-    const { data, error } = await supabase!.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: window.location.origin
       }
     });
     if (error) throw error;
