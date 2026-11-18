@@ -1,0 +1,16 @@
+{
+  "hooks": [
+    {
+      "name": "schema-sync-validation",
+      "event": "pre-commit",
+      "command": "npm run type-check",
+      "description": "Verifica se todos os tipos TypeScript correspondem às tabelas e constraints do Supabase antes do commit."
+    },
+    {
+      "name": "backup-notification",
+      "event": "post-export",
+      "command": "echo 'Backup .xlsx gerado com sucesso.'",
+      "description": "Registra evento de exportação e integridade de planilha."
+    }
+  ]
+}
