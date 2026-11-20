@@ -1,9 +1,10 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { StoreUnit, Product, Category, StockItem, Order } from '../types';
-import { Building2, Plus, Phone, MapPin, Edit2, Trash2, X, CheckCircle, Shield, Printer, LayoutGrid, List, Layers, Filter, Search, Loader2, ClipboardList, AlertTriangle, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
+import { Building2, Plus, Phone, MapPin, Edit2, X, CheckCircle, Shield, Printer, LayoutGrid, List, Layers, Filter, Search, Loader2, ClipboardList, AlertTriangle, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
 import { PrintReportHeader } from '../components/PrintReportHeader';
 import { HybridFilterSort } from '../components/HybridFilterSort';
 import { useExpandedGroups } from '../hooks/useExpandedGroups';
+import { canManageUnits, UserRole } from '../utils/permissions';
 import {
   formatCep,
   lookupByCep,
@@ -18,8 +19,9 @@ interface LojasScreenProps {
   products?: Product[];
   categories?: Category[];
   stock?: StockItem[];
+  userRole?: UserRole;
   onSaveUnit: (unit: StoreUnit) => void;
-  onDeleteUnit: (unitId: string) => void;
+  onDeleteUnit?: (unitId: string) => void;
   onUpdateStock?: (stock: StockItem[]) => void;
   onDeleteStockItem?: (stockId: string) => void;
   onSaveOrder?: (order: Order) => Promise<void> | void;
@@ -30,12 +32,13 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
   products = [],
   categories = [],
   stock = [],
+  userRole = 'ADMIN',
   onSaveUnit,
-  onDeleteUnit,
   onUpdateStock,
   onDeleteStockItem,
   onSaveOrder
 }) => {
+  const canManage = canManageUnits(userRole);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [productsModalUnit, setProductsModalUnit] = useState<StoreUnit | null>(null);
   const [unitProductSearch, setUnitProductSearch] = useState('');
@@ -379,25 +382,27 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          <button
-            onClick={() => {
-              setEditingUnit({
-                codigo: `LOJA-0${units.length}`,
-                nome: '',
-                tipo: 'LOJA',
-                endereco: '',
-                cidade: 'São Paulo',
-                telefone: '',
-                chavePix: '',
-                ativo: true
-              });
-              setIsModalOpen(true);
-            }}
-            className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-all shadow-sm active:scale-95"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Unidade</span>
-          </button>
+          {canManage && (
+            <button
+              onClick={() => {
+                setEditingUnit({
+                  codigo: `LOJA-0${units.length}`,
+                  nome: '',
+                  tipo: 'LOJA',
+                  endereco: '',
+                  cidade: 'São Paulo',
+                  telefone: '',
+                  chavePix: '',
+                  ativo: true
+                });
+                setIsModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-all shadow-sm active:scale-95"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Unidade</span>
+            </button>
+          )}
 
           <button
             onClick={() => window.print()}
@@ -650,11 +655,27 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                       </td>
                       <td className="py-3 px-4 font-mono text-slate-700">{u.telefone || '—'}</td>
                       <td className="py-3 px-4">
-                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                          u.ativo ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500'
-                        }`}>
+                        <button
+                          type="button"
+                          disabled={!canManage}
+                          onClick={() => canManage && onSaveUnit({ ...u, ativo: !u.ativo })}
+                          title={
+                            !canManage
+                              ? 'Somente leitura'
+                              : u.ativo
+                              ? 'Clique para inativar unidade'
+                              : 'Clique para ativar unidade'
+                          }
+                          className={`text-[10px] font-semibold px-2.5 py-0.5 rounded-full border transition-colors ${
+                            canManage ? 'cursor-pointer' : 'cursor-default opacity-90'
+                          } ${
+                            u.ativo
+                              ? 'bg-blue-100 text-blue-700 border-blue-200 hover:bg-blue-200/80'
+                              : 'bg-red-100 text-red-700 border-red-200 hover:bg-red-200/80'
+                          }`}
+                        >
                           {u.ativo ? 'Ativa' : 'Inativa'}
-                        </span>
+                        </button>
                       </td>
                       <td className="py-3 px-4 text-right print:hidden">
                         <div className="inline-flex items-center gap-1">
@@ -674,6 +695,7 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                             <RefreshCw className="w-3.5 h-3.5" />
                             <span>Reposição</span>
                           </button>
+                          {canManage && (
                           <button
                             onClick={() => {
                               setEditingUnit(u);
@@ -684,18 +706,6 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                           >
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
-                          {u.tipo !== 'CENTRAL' && (
-                            <button
-                              onClick={() => {
-                                if (confirm(`Deseja remover a loja "${u.nome}"?`)) {
-                                  onDeleteUnit(u.id);
-                                }
-                              }}
-                              className="p-1.5 text-slate-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors"
-                              title="Excluir Loja"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
                           )}
                         </div>
                       </td>
@@ -750,11 +760,27 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                             </div>
                           </div>
 
-                          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                            unit.ativo ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500'
-                          }`}>
+                          <button
+                            type="button"
+                            disabled={!canManage}
+                            onClick={() => canManage && onSaveUnit({ ...unit, ativo: !unit.ativo })}
+                            title={
+                              !canManage
+                                ? 'Somente leitura'
+                                : unit.ativo
+                                ? 'Clique para inativar unidade'
+                                : 'Clique para ativar unidade'
+                            }
+                            className={`text-[10px] font-semibold px-2.5 py-0.5 rounded-full border transition-colors ${
+                              canManage ? 'cursor-pointer' : 'cursor-default opacity-90'
+                            } ${
+                              unit.ativo
+                                ? 'bg-blue-100 text-blue-700 border-blue-200 hover:bg-blue-200/80'
+                                : 'bg-red-100 text-red-700 border-red-200 hover:bg-red-200/80'
+                            }`}
+                          >
                             {unit.ativo ? 'Ativa' : 'Inativa'}
-                          </span>
+                          </button>
                         </div>
 
                         <div className="space-y-2 text-xs text-slate-600">
@@ -829,6 +855,7 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                         </div>
 
                         <div className="flex items-center gap-1 shrink-0 ml-auto">
+                          {canManage && (
                           <button
                             onClick={() => {
                               setEditingUnit(unit);
@@ -839,19 +866,7 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                           >
                             <Edit2 className="w-4 h-4" />
                           </button>
-                        {unit.tipo !== 'CENTRAL' && (
-                          <button
-                            onClick={() => {
-                              if (confirm(`Deseja remover a loja "${unit.nome}"?`)) {
-                                onDeleteUnit(unit.id);
-                              }
-                            }}
-                            className="p-1.5 text-slate-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors"
-                            title="Excluir Loja"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
+                          )}
                         </div>
                       </div>
                     </div>

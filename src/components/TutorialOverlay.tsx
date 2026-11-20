@@ -27,7 +27,6 @@ const SCREEN_NAMES: Record<ScreenId, string> = {
   entregas: 'Entregas',
   clientes: 'Clientes',
   produtos: 'Produtos',
-  relatorios: 'Relatórios',
   lojas: 'Unidades',
   configuracoes: 'Configurações',
 };
@@ -158,23 +157,6 @@ const SCREEN_TUTORIALS: Record<ScreenId, TutorialStep[]> = {
       title: 'Alternar Grade e Tabela',
       description: 'Alterne entre visualização em cards ou tabela e filtre por categoria ou ordenação.',
       findTarget: () => findInMainByText('button', 'Grade') || findInMainByText('button', 'Tabela') || findVisible('main'),
-    },
-  ],
-  relatorios: [
-    {
-      title: 'Escolher Período de Análise',
-      description: 'Defina o intervalo de datas ou atalhos rápidos para analisar faturamento, pedidos e estoque.',
-      findTarget: () => findVisible('main input[type="date"]') || findVisible('main'),
-    },
-    {
-      title: 'Indicadores Consolidados',
-      description: 'Acompanhe receita total, ticket médio, taxa de entrega e volume de pedidos no período.',
-      findTarget: () => findVisible('main .grid') || findVisible('main'),
-    },
-    {
-      title: 'Exportar ou Imprimir Relatório',
-      description: 'Gere planilhas Excel ou imprima o relatório gerencial formatado.',
-      findTarget: () => findInMainByText('button', 'Exportar') || findInMainByText('button', 'Imprimir') || findVisible('main'),
     },
   ],
   lojas: [

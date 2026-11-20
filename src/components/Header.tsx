@@ -3,6 +3,7 @@ import { StoreUnit, UserProfile, ProductionShift } from '../types';
 import { Store, Calendar, CheckCircle2, AlertCircle, Settings, Download, Sun, Moon } from 'lucide-react';
 import { AuthModal } from './AuthModal';
 import { getSeasonalDecoration } from '../utils/seasonalDecoration';
+import { canOpenSettings } from '../utils/permissions';
 
 interface HeaderProps {
   units: StoreUnit[];
@@ -43,6 +44,7 @@ export const Header: React.FC<HeaderProps> = ({
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [now, setNow] = useState<Date>(() => new Date());
   const [isHourlyBlink, setIsHourlyBlink] = useState(false);
+  const [isSpecialBlink, setIsSpecialBlink] = useState(false);
   const [showSeasonalDecoration, setShowSeasonalDecoration] = useState<boolean>(() => {
     try {
       return localStorage.getItem('juju_seasonal_decoration') !== 'false';
@@ -121,7 +123,29 @@ export const Header: React.FC<HeaderProps> = ({
     currentHour < 12 ? 'Turno Manhã' : currentHour < 18 ? 'Turno Tarde' : 'Turno Noite';
   const currentDateText = `${now.toLocaleDateString('pt-BR')} | ${currentShiftLabel}`;
   const isConnected = Boolean(supabaseUser || isOperatorAuthenticated);
-  const seasonal = getSeasonalDecoration(now);
+  const seasonal = getSeasonalDecoration(now, userProfile?.nome);
+
+  useEffect(() => {
+    if (!seasonal.blinkEvery10Min || !showSeasonalDecoration) {
+      setIsSpecialBlink(false);
+      return;
+    }
+
+    let blinkOffTimeout: ReturnType<typeof setTimeout> | undefined;
+    const triggerSpecialBlink = () => {
+      setIsSpecialBlink(true);
+      if (blinkOffTimeout) clearTimeout(blinkOffTimeout);
+      blinkOffTimeout = setTimeout(() => setIsSpecialBlink(false), 10000);
+    };
+
+    triggerSpecialBlink();
+    const interval = setInterval(triggerSpecialBlink, 10 * 60 * 1000);
+
+    return () => {
+      clearInterval(interval);
+      if (blinkOffTimeout) clearTimeout(blinkOffTimeout);
+    };
+  }, [seasonal.blinkEvery10Min, seasonal.id, showSeasonalDecoration]);
 
   return (
     <header className="h-14 md:h-16 bg-white border-b border-[#e2e8f0] px-2.5 md:px-4 flex items-center justify-between gap-2 z-20 shrink-0 print:hidden">
@@ -160,7 +184,7 @@ export const Header: React.FC<HeaderProps> = ({
               aria-pressed={showSeasonalDecoration}
               className={`hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] sm:text-xs font-semibold shadow-xs shrink-0 transition-all cursor-pointer ${
                 showSeasonalDecoration
-                  ? seasonal.badgeClass
+                  ? `${seasonal.badgeClass}${isSpecialBlink ? ' animate-pulse ring-2 ring-offset-1 ring-current' : ''}`
                   : 'bg-slate-100 border-slate-200 text-slate-400 opacity-60 hover:opacity-100 hover:text-slate-600'
               }`}
             >
@@ -301,13 +325,15 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </button>
 
-        <button
-          onClick={onOpenSettings}
-          className="hidden md:inline-flex p-2 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors"
-          title="Abrir Configurações do Sistema"
-        >
-          <Settings className="w-4 h-4" />
-        </button>
+        {canOpenSettings(userProfile.role) && (
+          <button
+            onClick={onOpenSettings}
+            className="hidden md:inline-flex p-2 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+            title="Abrir Configurações do Sistema"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       {/* Auth Modal */}

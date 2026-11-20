@@ -51,6 +51,8 @@ CREATE TABLE IF NOT EXISTS public.pedidos (
         CHECK (status IN ('PENDENTE', 'CONFIRMADO', 'EM_PRODUCAO', 'PRONTO', 'EM_ROTA', 'ENTREGUE', 'CANCELADO')),
     data_pedido TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     data_hora_entrega TIMESTAMPTZ NOT NULL,
+    data_hora_entrega_fim TIMESTAMPTZ,
+    turno_entrega VARCHAR(10) CHECK (turno_entrega IN ('MANHA', 'TARDE', 'NOITE')),
     tipo_entrega VARCHAR(15) NOT NULL CHECK (tipo_entrega IN ('DELIVERY', 'RETIRADA')),
     unidade_origem_id UUID NOT NULL REFERENCES public.empresas_unidades(id) ON DELETE RESTRICT,
     unidade_retirada_id UUID REFERENCES public.empresas_unidades(id) ON DELETE RESTRICT,
@@ -66,6 +68,7 @@ CREATE TABLE IF NOT EXISTS public.pedidos (
     troco_para NUMERIC(10,2),
     instrucoes_pagamento TEXT,
     observacoes TEXT,
+    detalhe_entrega TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

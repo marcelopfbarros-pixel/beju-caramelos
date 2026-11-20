@@ -25,10 +25,12 @@ import { PrintReportHeader } from '../components/PrintReportHeader';
 import { HybridFilterSort } from '../components/HybridFilterSort';
 import { useExpandedGroups } from '../hooks/useExpandedGroups';
 import { CurrencyInput } from '../components/CurrencyInput';
+import { canEditProducts, UserRole } from '../utils/permissions';
 
 interface ProdutosScreenProps {
   products: Product[];
   categories: Category[];
+  userRole?: UserRole;
   onSaveProduct: (product: Product) => void;
   onDeleteProduct: (productId: string) => void;
   onSaveCategory: (category: Category) => void;
@@ -39,12 +41,14 @@ interface ProdutosScreenProps {
 export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
   products,
   categories,
+  userRole = 'ADMIN',
   onSaveProduct,
   onDeleteProduct,
   onSaveCategory,
   onDeleteCategory,
   onBatchImportProducts
 }) => {
+  const canEdit = canEditProducts(userRole);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('TODAS');
   const [sortBy, setSortBy] = useState<'NOME_ASC' | 'PRECO_ASC' | 'PRECO_DESC' | 'TEMPO_ASC'>('NOME_ASC');
@@ -213,13 +217,15 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
             className="hidden"
           />
 
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-xs"
-          >
-            <Upload className="w-3.5 h-3.5 text-slate-500" />
-            <span>Importar .xlsx</span>
-          </button>
+          {canEdit && (
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-xs"
+            >
+              <Upload className="w-3.5 h-3.5 text-slate-500" />
+              <span>Importar .xlsx</span>
+            </button>
+          )}
 
           <button
             onClick={() => ExcelService.exportProducts(products, categories)}
@@ -229,33 +235,37 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
             <span>Exportar .xlsx</span>
           </button>
 
-          <button
-            onClick={() => setIsCategoryModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-purple-700 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100 transition-colors"
-          >
-            <FolderPlus className="w-3.5 h-3.5" />
-            <span>Categorias</span>
-          </button>
+          {canEdit && (
+            <>
+              <button
+                onClick={() => setIsCategoryModalOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-purple-700 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100 transition-colors"
+              >
+                <FolderPlus className="w-3.5 h-3.5" />
+                <span>Categorias</span>
+              </button>
 
-          <button
-            onClick={() => {
-              setEditingProduct({
-                sku: `SKU-${Math.floor(100 + Math.random() * 900)}`,
-                descricao: '',
-                fotoUrl: '/logo.jpg',
-                precoUnitario: 0,
-                unidade: 'UN',
-                categoriaId: categories[0]?.id || 'cat-1',
-                tempoProducaoMinutos: 30,
-                ativo: true
-              });
-              setIsProductModalOpen(true);
-            }}
-            className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-all shadow-sm active:scale-95"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Produto</span>
-          </button>
+              <button
+                onClick={() => {
+                  setEditingProduct({
+                    sku: `SKU-${Math.floor(100 + Math.random() * 900)}`,
+                    descricao: '',
+                    fotoUrl: '/logo.jpg',
+                    precoUnitario: 0,
+                    unidade: 'UN',
+                    categoriaId: categories[0]?.id || 'cat-1',
+                    tempoProducaoMinutos: 30,
+                    ativo: true
+                  });
+                  setIsProductModalOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-all shadow-sm active:scale-95"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Produto</span>
+              </button>
+            </>
+          )}
 
           <button
             onClick={() => window.print()}
@@ -425,13 +435,30 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
                               {prod.tempoProducaoMinutos} min
                             </td>
                             <td className="py-3 px-4 text-center">
-                              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                                prod.ativo ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
-                              }`}>
+                              <button
+                                type="button"
+                                disabled={!canEdit}
+                                onClick={() => canEdit && onSaveProduct({ ...prod, ativo: !prod.ativo })}
+                                title={
+                                  !canEdit
+                                    ? 'Somente leitura'
+                                    : prod.ativo
+                                    ? 'Clique para inativar produto'
+                                    : 'Clique para ativar produto'
+                                }
+                                className={`text-[10px] font-semibold px-2.5 py-0.5 rounded-full border transition-colors ${
+                                  canEdit ? 'cursor-pointer' : 'cursor-default opacity-90'
+                                } ${
+                                  prod.ativo
+                                    ? 'bg-blue-100 text-blue-700 border-blue-200 hover:bg-blue-200/80'
+                                    : 'bg-red-100 text-red-700 border-red-200 hover:bg-red-200/80'
+                                }`}
+                              >
                                 {prod.ativo ? 'Ativo' : 'Inativo'}
-                              </span>
+                              </button>
                             </td>
                             <td className="py-3 px-4 text-right print:hidden">
+                              {canEdit && (
                               <div className="inline-flex items-center gap-1">
                                 <button
                                   onClick={() => {
@@ -455,6 +482,7 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </button>
                               </div>
+                              )}
                             </td>
                           </tr>
                         );
@@ -488,7 +516,7 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
                 </button>
               )}
               {expanded && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
                 {group.items.map(prod => {
                   const cat = categories.find(c => c.id === prod.categoriaId);
                   return (
@@ -498,47 +526,64 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
                     >
                       <div>
                         {/* Image container */}
-                        <div className="h-40 w-full overflow-hidden bg-slate-100 relative group">
+                        <div className="h-28 w-full overflow-hidden bg-slate-100 relative group">
                           <img
                             src={prod.fotoUrl}
                             alt={prod.descricao}
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                           />
-                          <div className="absolute top-2 left-2 flex gap-1">
-                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-slate-900/80 text-white backdrop-blur-xs font-semibold">
+                          <div className="absolute top-1.5 left-1.5 flex gap-1">
+                            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-md bg-slate-900/80 text-white backdrop-blur-xs font-semibold">
                               {prod.sku}
-                            </span>
-                          </div>
-                          <div className="absolute top-2 right-2">
-                            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-md ${
-                              prod.ativo ? 'bg-emerald-500 text-white' : 'bg-slate-500 text-white'
-                            }`}>
-                              {prod.ativo ? 'Ativo' : 'Inativo'}
                             </span>
                           </div>
                         </div>
 
                         {/* Body Content */}
-                        <div className="p-3.5">
-                          <span className="text-[10px] font-medium text-brand-700 bg-brand-50 border border-brand-200/60 px-2 py-0.5 rounded-full inline-block mb-1.5">
-                            {cat?.nome || 'Sobremesas'}
-                          </span>
-                          <h3 className="text-xs font-bold text-slate-900 line-clamp-2 leading-tight">
+                        <div className="p-2.5">
+                          <div className="flex items-center flex-wrap gap-1 mb-1">
+                            <span className="text-[9px] font-medium text-brand-700 bg-brand-50 border border-brand-200/60 px-1.5 py-0.5 rounded-full inline-block">
+                              {cat?.nome || 'Sobremesas'}
+                            </span>
+                            <button
+                              type="button"
+                              disabled={!canEdit}
+                              onClick={() => canEdit && onSaveProduct({ ...prod, ativo: !prod.ativo })}
+                              title={
+                                !canEdit
+                                  ? 'Somente leitura'
+                                  : prod.ativo
+                                  ? 'Clique para inativar produto'
+                                  : 'Clique para ativar produto'
+                              }
+                              className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full border transition-colors ${
+                                canEdit ? 'cursor-pointer' : 'cursor-default opacity-90'
+                              } ${
+                                prod.ativo
+                                  ? 'bg-blue-100 text-blue-700 border-blue-200 hover:bg-blue-200/90'
+                                  : 'bg-red-100 text-red-700 border-red-200 hover:bg-red-200/90'
+                              }`}
+                            >
+                              {prod.ativo ? 'Ativo' : 'Inativo'}
+                            </button>
+                          </div>
+                          <h3 className="text-[11px] font-bold text-slate-900 line-clamp-2 leading-tight">
                             {prod.descricao}
                           </h3>
                         </div>
                       </div>
 
                       {/* Footer with Price and Actions */}
-                      <div className="p-3.5 pt-0 border-t border-slate-100 flex items-center justify-between mt-2">
+                      <div className="p-2.5 pt-1.5 border-t border-slate-100 flex items-center justify-between mt-1">
                         <div>
-                          <span className="text-[10px] text-slate-400 block">Preço Unitário</span>
-                          <span className="text-sm font-mono font-bold text-slate-900">
+                          <span className="text-[9px] text-slate-400 block">Preço</span>
+                          <span className="text-xs font-mono font-bold text-slate-900">
                             R$ {prod.precoUnitario.toFixed(2)}
-                            <span className="text-[10px] font-normal text-slate-500 ml-1">/{prod.unidade}</span>
+                            <span className="text-[9px] font-normal text-slate-500 ml-0.5">/{prod.unidade}</span>
                           </span>
                         </div>
 
+                        {canEdit && (
                         <div className="flex items-center gap-1">
                           <button
                             onClick={() => {
@@ -562,6 +607,7 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
+                        )}
                       </div>
                     </div>
                   );

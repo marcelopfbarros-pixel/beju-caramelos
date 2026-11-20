@@ -1,15 +1,23 @@
 import { supabase, isSupabaseConfigured } from './supabaseClient';
-import { Product, StoreUnit, DeliveryType, PaymentMethod, OrderItem } from '../types';
+import { Product, StoreUnit, DeliveryType, DeliveryShift, PaymentMethod, OrderItem } from '../types';
+import {
+  addHoursToDateTime,
+  inferDeliveryShiftFromDateTime,
+  toLocalDateTimeString
+} from '../utils/deliveryTimeRange';
 
 export interface ParsedWhatsAppOrder {
   clienteNome: string;
   clienteTelefone: string;
   tipoEntrega: DeliveryType;
+  turnoEntrega?: DeliveryShift;
   enderecoEntrega?: string;
   unidadeSugeridaId?: string;
   dataHoraEntrega: string;
+  dataHoraEntregaFim?: string;
   formaPagamento: PaymentMethod;
   trocoPara?: number;
+  desconto?: number;
   observacoes?: string;
   itens: OrderItem[];
   unmatchedItems: string[];
@@ -22,6 +30,143 @@ function normalizeText(text: string): string {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
+}
+
+function parseTimeToken(hourStr: string, minStr?: string, period?: string): { h: number; m: number } | null {
+  let h = parseInt(hourStr, 10);
+  const m = minStr && /^\d{2}$/.test(minStr) ? parseInt(minStr, 10) : 0;
+  if ((period === 'tarde' || period === 'noite') && h >= 1 && h <= 11) {
+    h += 12;
+  }
+  if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
+    return { h, m };
+  }
+  return null;
+}
+
+function extractDeliveryDateTimeRange(rawText: string): { start: string; end: string; hasExplicitEnd: boolean } {
+  const normFull = normalizeText(rawText);
+  const now = new Date();
+  let targetDate = new Date(now.getTime() + 3 * 3600000);
+  let hasExplicitDate = false;
+
+  // Data explícita DD/MM ou DD/MM/YYYY
+  const dateMatch = normFull.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
+  if (dateMatch) {
+    const day = parseInt(dateMatch[1], 10);
+    const month = parseInt(dateMatch[2], 10);
+    let year = dateMatch[3] ? parseInt(dateMatch[3], 10) : now.getFullYear();
+    if (year < 100) year += 2000;
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+      targetDate = new Date(year, month - 1, day, 12, 0, 0, 0);
+      hasExplicitDate = true;
+    }
+  } else if (/\bdepois de amanha\b/.test(normFull)) {
+    targetDate = new Date(now.getTime() + 48 * 3600000);
+    hasExplicitDate = true;
+  } else if (/\bamanha\b/.test(normFull)) {
+    targetDate = new Date(now.getTime() + 24 * 3600000);
+    hasExplicitDate = true;
+  } else if (/\bhoje\b/.test(normFull)) {
+    targetDate = new Date(now);
+    hasExplicitDate = true;
+  }
+
+  let startParsed: { h: number; m: number } | null = null;
+  let endParsed: { h: number; m: number } | null = null;
+
+  // 1. Faixa de horário: "das 14:30 às 17:30", "14h30 - 17h30", "entre 14h e 17h", "das 14 às 17"
+  const rangeMatch = normFull.match(
+    /\b(?:das?|de|entre)?\s*(\d{1,2})(?:\s*[:h]\s*(\d{2})|\s*(?:h|hs|hrs?|horas?))?\s*(?:as|a|ate|e|-|–)\s*(\d{1,2})(?:\s*[:h]\s*(\d{2})|\s*(?:h|hs|hrs?|horas?))(?:\s*da\s+(manha|tarde|noite))?\b/
+  ) || normFull.match(
+    /\b(?:das?|de|entre)\s*(\d{1,2})(?:\s*[:h]\s*(\d{2}))?\s*(?:as|a|ate|e|-|–)\s*(\d{1,2})(?:\s*[:h]\s*(\d{2}))?(?:\s*da\s+(manha|tarde|noite))?\b/
+  );
+
+  if (rangeMatch) {
+    const period = rangeMatch[5];
+    startParsed = parseTimeToken(rangeMatch[1], rangeMatch[2], period);
+    endParsed = parseTimeToken(rangeMatch[3], rangeMatch[4], period);
+  }
+
+  // 2. Horário único caso não haja faixa
+  if (!startParsed) {
+    if (/\bmeio[\s-]?dia\b/.test(normFull)) {
+      startParsed = { h: 12, m: 0 };
+    } else if (/\bmeia[\s-]?noite\b/.test(normFull)) {
+      startParsed = { h: 0, m: 0 };
+    } else {
+      const explicitTime =
+        normFull.match(/\b(\d{1,2})\s*[:h]\s*(\d{2})\b/) ||
+        normFull.match(/\b(\d{1,2})\s*(?:h|hs|hrs?|horas?)\b/) ||
+        normFull.match(/\b(?:as|para\s+as|para|por\s+volta\s+das?|entre(?:\s+as)?|horario\s*[:\-]?|hora\s*[:\-]?)\s*(\d{1,2})(?:\s*(?:da\s+(manha|tarde|noite)))?\b/);
+
+      if (explicitTime) {
+        const minToken = explicitTime[2] && /^\d{2}$/.test(explicitTime[2]) ? explicitTime[2] : undefined;
+        const period = explicitTime[2] === 'tarde' || explicitTime[2] === 'noite' ? explicitTime[2] : explicitTime[3];
+        startParsed = parseTimeToken(explicitTime[1], minToken, period);
+      }
+    }
+  }
+
+  if (startParsed) {
+    if (!hasExplicitDate) {
+      targetDate = new Date(now);
+    }
+    targetDate.setHours(startParsed.h, startParsed.m, 0, 0);
+  }
+
+  const startStr = toLocalDateTimeString(targetDate);
+
+  if (endParsed) {
+    const endDate = new Date(targetDate);
+    endDate.setHours(endParsed.h, endParsed.m, 0, 0);
+    if (endDate.getTime() <= targetDate.getTime()) {
+      return { start: startStr, end: addHoursToDateTime(startStr, 1), hasExplicitEnd: false };
+    }
+    return { start: startStr, end: toLocalDateTimeString(endDate), hasExplicitEnd: true };
+  }
+
+  return { start: startStr, end: addHoursToDateTime(startStr, 1), hasExplicitEnd: false };
+}
+
+function extractDiscountInfo(rawText: string, subtotal: number): { discount: number; explicitFinalTotal?: number } {
+  const normFull = normalizeText(rawText);
+
+  // 1. Desconto percentual: "10% de desconto" ou "desconto de 10%"
+  const pctMatch =
+    normFull.match(/desconto\s*(?:de|concedido(?:\s+de)?|:)?\s*(\d+(?:[.,]\d{1,2})?)\s*%/) ||
+    normFull.match(/(\d+(?:[.,]\d{1,2})?)\s*%\s*(?:de\s+)?desconto/);
+  if (pctMatch) {
+    const pct = parseFloat(pctMatch[1].replace(',', '.'));
+    if (pct > 0 && pct < 100 && subtotal > 0) {
+      return { discount: Number(((subtotal * pct) / 100).toFixed(2)) };
+    }
+  }
+
+  // 2. Caso informe o total final com desconto ("Valor total com desconto: 265,50", "com desconto fica R$ 120")
+  const totalWithDiscountMatch = normFull.match(
+    /(?:valor\s+total\s+com\s+desconto|total\s+com\s+desconto|valor\s+com\s+desconto|com\s+desconto\s+(?:fica|sai|e|eh)?)\s*(?::|por|fica)?\s*(?:r\$\s*)?(\d+(?:[.,]\d{1,2})?)/
+  );
+  if (totalWithDiscountMatch) {
+    const finalVal = parseFloat(totalWithDiscountMatch[1].replace(',', '.'));
+    if (finalVal > 0 && subtotal > finalVal) {
+      return { discount: Number((subtotal - finalVal).toFixed(2)), explicitFinalTotal: finalVal };
+    }
+    return { discount: 0, explicitFinalTotal: finalVal };
+  }
+
+  // 3. Desconto explícito em valor (ex: "desconto de R$ 20,00", "20 reais de desconto", "desc. de 15")
+  const explicitValMatch =
+    normFull.match(/(?<!\bcom\s)\b(?:desconto|desc\.?)\s+(?:de|concedido(?:\s+de)?|:)\s*(?:r\$\s*)?(\d+(?:[.,]\d{1,2})?)(?!\s*%)/) ||
+    normFull.match(/\b(\d+(?:[.,]\d{1,2})?)\s*(?:reais|r\$)?\s+de\s+desconto\b/);
+  if (explicitValMatch) {
+    const val = parseFloat(explicitValMatch[1].replace(',', '.'));
+    if (val > 0 && (subtotal <= 0 || val < subtotal)) {
+      return { discount: Number(val.toFixed(2)) };
+    }
+  }
+
+  return { discount: 0 };
 }
 
 function localFallbackParse(
@@ -81,70 +226,148 @@ function localFallbackParse(
     trocoPara = parseFloat(trocoMatch[1].replace(',', '.'));
   }
 
-  // 7. Data/Hora
-  const now = new Date();
-  let targetDate = new Date(now.getTime() + 3 * 3600000);
-  if (/\bamanha\b/.test(normFull)) {
-    targetDate = new Date(now.getTime() + 24 * 3600000);
-  }
-  const timeMatch = normFull.match(/(?:as|às|para)?\s*(\d{1,2})[:h](\d{2})?\b/);
-  if (timeMatch) {
-    const h = parseInt(timeMatch[1], 10);
-    const m = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
-    if (h >= 7 && h <= 22) {
-      targetDate.setHours(h, m, 0, 0);
-    }
-  }
-  const tzOffset = targetDate.getTimezoneOffset() * 60000;
-  const dataHoraEntrega = new Date(targetDate.getTime() - tzOffset).toISOString().slice(0, 16);
+  // 7. Data/Hora (faixa de horário)
+  const { start: dataHoraEntrega, end: dataHoraEntregaFim } = extractDeliveryDateTimeRange(rawText);
 
-  // 8. Casamento de Produtos
+  // 8. Casamento de Produtos (pontuação por cláusula para não duplicar variações)
   const itens: OrderItem[] = [];
   const unmatchedItems: string[] = [];
 
-  for (const prod of catalog) {
-    if (!prod.ativo) continue;
-    const descNorm = normalizeText(prod.descricao);
-    const keywords = descNorm
-      .replace(/[().,/]/g, ' ')
+  const STOP_WORDS = new Set([
+    'para', 'com', 'sem', 'tradicional', 'artesanal', 'caixa', 'cento',
+    'unidade', 'unidades', 'pacote', 'pote', 'mini', 'grande', 'pequeno', 'medio'
+  ]);
+
+  const extractKeywords = (text: string): string[] =>
+    normalizeText(text)
+      .replace(/[().,/\\\-+]/g, ' ')
       .split(/\s+/)
-      .filter(w => w.length >= 4 && !['para', 'com', 'tradicional', 'artesanal', 'caixa', 'cento'].includes(w));
+      .filter(w => w.length >= 3 && !STOP_WORDS.has(w) && !/^\d+$/.test(w));
 
-    // Match if at least 2 significant keywords appear or 1 very distinctive keyword (>= 6 chars)
-    const matchedKeywords = keywords.filter(k => normFull.includes(k));
-    const strongMatch = matchedKeywords.length >= 2 || matchedKeywords.some(k => k.length >= 6);
+  const activeCatalog = catalog.filter(p => p.ativo);
+  const catalogEntries = activeCatalog.map(prod => {
+    const descNorm = normalizeText(prod.descricao);
+    const keywords = Array.from(new Set(extractKeywords(prod.descricao)));
+    return { prod, descNorm, keywords };
+  });
 
-    if (strongMatch) {
-      // Try to find quantity right before the matched keyword
-      let qtd = 1;
-      for (const kw of matchedKeywords) {
-        const qtdRegex = new RegExp(`(\\d+)\\s*(?:x|un|cx|caixas?|centos?)?\\s*(?:de\\s+)?[a-z\\s]{0,20}${kw}`, 'i');
-        const qMatch = normFull.match(qtdRegex);
-        if (qMatch) {
-          qtd = Math.max(1, parseInt(qMatch[1], 10));
-          break;
-        }
+  // Frequência de cada palavra no catálogo (palavras comuns como "caramelo" pesam menos)
+  const docFreq = new Map<string, number>();
+  for (const entry of catalogEntries) {
+    for (const kw of entry.keywords) {
+      docFreq.set(kw, (docFreq.get(kw) || 0) + 1);
+    }
+  }
+
+  // Ignora linhas de metadados (endereço, totais, pagamento, data/hora) para não casar com nome da loja/rua
+  const isMetadataLine = (line: string): boolean => {
+    const n = normalizeText(line);
+    return (
+      /^(?:endereco|endere[cç]o|entregar\s+em|rua|av\.?|avenida|alameda|travessa|cep|bairro|nome|cliente|whatsapp|telefone|fone|pagamento|forma\s+de\s+pagamento|pix|troco|valor\s+total|total|subtotal|desconto|pedido\s+para|retirada|delivery|data|horario|hora)\b/.test(n) ||
+      /\bbeju\s+caramelos\b/.test(n)
+    );
+  };
+
+  // Divide a mensagem em segmentos/itens (por quebra de linha, vírgula, ponto-e-vírgula ou " e ")
+  const clauses = rawText
+    .split(/\r?\n/)
+    .filter(line => !isMetadataLine(line))
+    .flatMap(line => line.split(/[,;]+|\s+\be\b\s+/i))
+    .map(c => c.trim())
+    .filter(c => c.length >= 3);
+
+  const qtyByProductId = new Map<string, number>();
+
+  for (const clause of clauses) {
+    const clauseNorm = normalizeText(clause);
+    const clauseWords = new Set(extractKeywords(clause));
+    if (clauseWords.size === 0) continue;
+
+    let bestEntry: (typeof catalogEntries)[number] | null = null;
+    let bestScore = 0;
+
+    for (const entry of catalogEntries) {
+      if (entry.keywords.length === 0) continue;
+
+      if (clauseNorm.includes(entry.descNorm) && entry.descNorm.length >= 5) {
+        bestEntry = entry;
+        bestScore = 1000 + entry.descNorm.length;
+        break;
       }
 
-      itens.push({
-        id: `item-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        produtoId: prod.id,
-        quantidade: qtd,
-        precoUnitario: prod.precoUnitario,
-        subtotal: qtd * prod.precoUnitario
-      });
+      const matched = entry.keywords.filter(kw => clauseWords.has(kw));
+      if (matched.length === 0) continue;
+
+      const coverage = matched.length / entry.keywords.length;
+      const hasUniqueKeyword = matched.some(kw => (docFreq.get(kw) || 0) === 1 && kw.length >= 5);
+      const allNonGenericMatched = matched.some(kw => (docFreq.get(kw) || 0) <= 2);
+
+      // Exige cobertura forte (>= 50% das palavras do produto ou >= 2 palavras) ou palavra única no catálogo
+      if (matched.length < 2 && coverage < 0.5 && !hasUniqueKeyword) continue;
+      if (!allNonGenericMatched && matched.length < 2) continue;
+
+      let score = 0;
+      for (const kw of matched) {
+        const freq = docFreq.get(kw) || 1;
+        score += 10 / freq;
+      }
+      score += coverage * 15;
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestEntry = entry;
+      }
     }
+
+    if (bestEntry) {
+      const qMatch = clauseNorm.match(/(?:^|\s)(\d+)\s*(?:x|un|und|cx|caixas?|centos?|pct|pacotes?|potes?)?\b/);
+      let qtd = 1;
+      if (qMatch) {
+        const parsedQ = parseInt(qMatch[1], 10);
+        // Evita confundir CEP/telefone/número de endereço com quantidade
+        if (parsedQ >= 1 && parsedQ <= 500 && !/^\d{4,}$/.test(qMatch[1])) {
+          qtd = parsedQ;
+        }
+      }
+      qtyByProductId.set(bestEntry.prod.id, (qtyByProductId.get(bestEntry.prod.id) || 0) + qtd);
+    }
+  }
+
+  for (const [prodId, qtd] of qtyByProductId.entries()) {
+    const prod = activeCatalog.find(p => p.id === prodId);
+    if (!prod) continue;
+    itens.push({
+      id: `item-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      produtoId: prod.id,
+      quantidade: qtd,
+      precoUnitario: prod.precoUnitario,
+      subtotal: qtd * prod.precoUnitario
+    });
+  }
+
+  const itensSubtotal = itens.reduce((acc, i) => acc + i.subtotal, 0);
+  const { discount: desconto } = extractDiscountInfo(rawText, itensSubtotal);
+
+  let turnoEntrega: DeliveryShift | undefined;
+  if (tipoEntrega === 'DELIVERY') {
+    if (/\bmanha\b/.test(normFull)) turnoEntrega = 'MANHA';
+    else if (/\btarde\b/.test(normFull)) turnoEntrega = 'TARDE';
+    else if (/\bnoite\b/.test(normFull)) turnoEntrega = 'NOITE';
+    else turnoEntrega = inferDeliveryShiftFromDateTime(dataHoraEntrega);
   }
 
   return {
     clienteNome: clienteNome || 'Cliente WhatsApp',
     clienteTelefone,
     tipoEntrega,
+    turnoEntrega,
     enderecoEntrega,
     unidadeSugeridaId,
     dataHoraEntrega,
+    dataHoraEntregaFim,
     formaPagamento,
     trocoPara,
+    desconto,
     observacoes: `Importado via WhatsApp:\n${rawText.slice(0, 220)}${rawText.length > 220 ? '...' : ''}`,
     itens,
     unmatchedItems,
@@ -164,7 +387,9 @@ export class WhatsAppParserService {
     }
 
     try {
-      const { data, error } = await supabase.functions.invoke('parse-whatsapp-order', {
+      const EDGE_TIMEOUT_MS = 10000;
+          const localNow = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+          const invokePromise = supabase.functions.invoke('parse-whatsapp-order', {
         body: {
           rawText,
           catalog: catalog.filter(p => p.ativo).map(p => ({
@@ -179,9 +404,15 @@ export class WhatsAppParserService {
             nome: u.nome,
             tipo: u.tipo
           })),
-          currentDate: new Date().toISOString()
+          currentDate: localNow
         }
       });
+
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Tempo limite excedido na IA (10s), usando parser local.')), EDGE_TIMEOUT_MS)
+      );
+
+      const { data, error } = await Promise.race([invokePromise, timeoutPromise]);
 
       if (error) {
         console.warn('Edge function erro, usando fallback local:', error);
@@ -220,17 +451,56 @@ export class WhatsAppParserService {
         obs = obs ? `${aviso}\n${obs}` : aviso;
       }
 
+      const localRange = extractDeliveryDateTimeRange(rawText);
+      const resolvedStart =
+        parsed.dataHoraEntrega && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(parsed.dataHoraEntrega)
+          ? parsed.dataHoraEntrega.slice(0, 16)
+          : localRange.start;
+      const resolvedEnd =
+        parsed.dataHoraEntregaFim && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(parsed.dataHoraEntregaFim)
+          ? parsed.dataHoraEntregaFim.slice(0, 16)
+          : localRange.hasExplicitEnd
+          ? `${resolvedStart.slice(0, 10)}T${localRange.end.slice(11, 16)}`
+          : addHoursToDateTime(resolvedStart, 1);
+
+      const itensSubtotal = itens.reduce((acc, i) => acc + i.subtotal, 0);
+      const { discount: localDiscount, explicitFinalTotal } = extractDiscountInfo(rawText, itensSubtotal);
+      const aiDiscount = parsed.desconto != null ? Number(parsed.desconto) : 0;
+      const aiMistookFinalTotal =
+        explicitFinalTotal !== undefined && Math.abs(aiDiscount - explicitFinalTotal) < 0.01;
+      const resolvedDiscount =
+        !aiMistookFinalTotal && aiDiscount > 0 && (itensSubtotal <= 0 || aiDiscount < itensSubtotal)
+          ? aiDiscount
+          : localDiscount;
+
+      const resolvedTipoEntrega: DeliveryType =
+        parsed.tipoEntrega === 'RETIRADA' ? 'RETIRADA' : 'DELIVERY';
+      const normRaw = normalizeText(rawText);
+      const resolvedTurnoEntrega: DeliveryShift | undefined =
+        resolvedTipoEntrega === 'DELIVERY'
+          ? /\bmanha\b/.test(normRaw)
+            ? 'MANHA'
+            : /\btarde\b/.test(normRaw)
+            ? 'TARDE'
+            : /\bnoite\b/.test(normRaw)
+            ? 'NOITE'
+            : inferDeliveryShiftFromDateTime(resolvedStart)
+          : undefined;
+
       return {
         clienteNome: parsed.clienteNome || 'Cliente WhatsApp',
         clienteTelefone: parsed.clienteTelefone || '',
-        tipoEntrega: parsed.tipoEntrega === 'RETIRADA' ? 'RETIRADA' : 'DELIVERY',
+        tipoEntrega: resolvedTipoEntrega,
+        turnoEntrega: resolvedTurnoEntrega,
         enderecoEntrega: parsed.enderecoEntrega || '',
         unidadeSugeridaId: parsed.unidadeSugeridaId,
-        dataHoraEntrega: parsed.dataHoraEntrega || new Date(Date.now() + 3 * 3600000).toISOString().slice(0, 16),
+        dataHoraEntrega: resolvedStart,
+        dataHoraEntregaFim: resolvedEnd,
         formaPagamento: (['pix', 'debito', 'credito', 'dinheiro'].includes(parsed.formaPagamento)
           ? parsed.formaPagamento
           : 'pix') as PaymentMethod,
         trocoPara: parsed.trocoPara ? Number(parsed.trocoPara) : undefined,
+        desconto: resolvedDiscount,
         observacoes: obs,
         itens,
         unmatchedItems: unmatched,

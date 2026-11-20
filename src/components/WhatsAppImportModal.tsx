@@ -24,19 +24,6 @@ export const WhatsAppImportModal: React.FC<WhatsAppImportModalProps> = ({
 
   if (!isOpen) return null;
 
-  const buildDynamicSampleMessage = () => {
-    const activeProds = products.filter(p => p.ativo);
-    const prod1 = activeProds[0]?.descricao || 'Bolo Red Velvet';
-    const prod2 = activeProds[1]?.descricao || 'Macarons';
-    return `Olá! Gostaria de fazer um pedido para hoje às 17h30.
-Meu nome é Fernanda Albuquerque, WhatsApp (71) 99123-4567.
-Quero:
-- 2x ${prod1}
-- 1x ${prod2}
-Entregar na Av. Waldemar Falcão, 500, Horto Florestal, Salvador.
-Vou pagar no PIX! Por favor embalar para presente.`;
-  };
-
   const handleParse = async () => {
     if (!rawText.trim()) {
       setErrorMsg('Cole a mensagem do cliente do WhatsApp antes de continuar.');
@@ -89,13 +76,6 @@ Vou pagar no PIX! Por favor embalar para presente.`;
               <MessageSquare className="w-4 h-4 text-emerald-600" />
               <span>Cole a conversa ou mensagem do cliente:</span>
             </label>
-            <button
-              type="button"
-              onClick={() => setRawText(buildDynamicSampleMessage())}
-              className="text-[11px] font-semibold text-brand-700 hover:text-brand-800 hover:underline"
-            >
-              Usar mensagem de exemplo
-            </button>
           </div>
 
           <textarea

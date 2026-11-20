@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Order, OrderStatus, Product, StoreUnit, Customer, StockItem } from '../types';
 import { ORDER_CARD_STATUS_STYLES } from '../utils/orderStatusStyles';
+import { formatDeliveryTimeRange } from '../utils/deliveryTimeRange';
 import { Printer, Clock, MapPin, Phone, CheckCircle, Calendar, Tag, LayoutGrid, List, Layers, MessageSquare, ChevronDown, ChevronRight } from 'lucide-react';
 import { PrintReportHeader } from '../components/PrintReportHeader';
 import { HybridFilterSort } from '../components/HybridFilterSort';
@@ -549,78 +550,87 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                             </div>
 
                             {/* Actions */}
-                            <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                            <div className="mt-4 pt-3 border-t border-slate-100 space-y-2">
+                              <div className="grid grid-cols-3 gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const msg = formatStatusNotificationMessage(order, order.status, products, units);
+                                    dispatchWhatsAppMessage(order.clienteTelefone, msg);
+                                  }}
+                                  className="h-9 flex items-center justify-center gap-1 px-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-[11px] font-semibold rounded-lg transition-colors cursor-pointer"
+                                  title={`Notificar cliente no WhatsApp (${order.status})`}
+                                >
+                                  <MessageSquare className="w-3.5 h-3.5 shrink-0" />
+                                  <span className="truncate">WhatsApp</span>
+                                </button>
+
+                                {order.clienteTelefone && (
+                                  <a
+                                    href={`tel:${order.clienteTelefone.replace(/[^\d+]/g, '')}`}
+                                    className="md:hidden h-9 flex items-center justify-center gap-1 px-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-semibold rounded-lg transition-colors"
+                                    title="Ligar para cliente"
+                                  >
+                                    <Phone className="w-3.5 h-3.5 shrink-0" />
+                                    <span className="truncate">Ligar</span>
+                                  </a>
+                                )}
+
+                                {order.enderecoEntrega && (
+                                  <a
+                                    href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(order.enderecoEntrega)}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="md:hidden h-9 flex items-center justify-center gap-1 px-2 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 text-[11px] font-semibold rounded-lg transition-colors"
+                                    title="Abrir endereço no Google Maps"
+                                  >
+                                    <MapPin className="w-3.5 h-3.5 shrink-0" />
+                                    <span className="truncate">Mapa</span>
+                                  </a>
+                                )}
+
+                                <button
+                                  type="button"
+                                  onClick={() => handlePrint(order, 'receipt')}
+                                  className="hidden md:flex h-9 items-center justify-center gap-1 px-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-semibold rounded-lg transition-colors cursor-pointer"
+                                  title="Imprimir Comprovante"
+                                >
+                                  <Printer className="w-3.5 h-3.5 shrink-0" />
+                                  <span className="truncate">Recibo</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handlePrint(order, 'label')}
+                                  className="hidden md:flex h-9 items-center justify-center gap-1 px-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[11px] font-semibold rounded-lg transition-colors cursor-pointer"
+                                  title="Imprimir Etiqueta Adesiva Colorida"
+                                >
+                                  <Tag className="w-3.5 h-3.5 shrink-0" />
+                                  <span className="truncate">Etiqueta</span>
+                                </button>
+                              </div>
+
                               <button
                                 type="button"
-                                onClick={() => {
-                                  const msg = formatStatusNotificationMessage(order, order.status, products, units);
-                                  dispatchWhatsAppMessage(order.clienteTelefone, msg);
-                                }}
-                                className="min-h-[38px] min-w-[38px] flex items-center justify-center p-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg transition-colors"
-                                title={`Notificar cliente no WhatsApp (${order.status})`}
-                              >
-                                <MessageSquare className="w-4 h-4" />
-                              </button>
-
-                              {order.clienteTelefone && (
-                                <a
-                                  href={`tel:${order.clienteTelefone.replace(/[^\d+]/g, '')}`}
-                                  className="md:hidden min-h-[38px] min-w-[38px] flex items-center justify-center p-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg transition-colors"
-                                  title="Ligar para cliente"
-                                >
-                                  <Phone className="w-4 h-4" />
-                                </a>
-                              )}
-
-                              {order.enderecoEntrega && (
-                                <a
-                                  href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(order.enderecoEntrega)}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="md:hidden min-h-[38px] min-w-[38px] flex items-center justify-center p-2 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-lg transition-colors"
-                                  title="Abrir endereço no Google Maps"
-                                >
-                                  <MapPin className="w-4 h-4" />
-                                </a>
-                              )}
-
-                              <button
-                                onClick={() => handlePrint(order, 'receipt')}
-                                className="hidden md:flex flex-1 items-center justify-center gap-1.5 py-2 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-lg transition-colors"
-                              >
-                                <Printer className="w-3.5 h-3.5" />
-                                <span>Comprovante</span>
-                              </button>
-
-                              <button
-                                onClick={() => handlePrint(order, 'label')}
-                                className="hidden md:flex items-center justify-center gap-1 py-2 px-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold rounded-lg transition-colors"
-                                title="Imprimir Etiqueta Adesiva Colorida"
-                              >
-                                <Tag className="w-3.5 h-3.5" />
-                                <span>Etiqueta</span>
-                              </button>
-
-                              <button
                                 disabled={isDelivered}
                                 onClick={() => {
                                   if (isDelivered) return;
                                   const nextStatus: OrderStatus = order.status === 'EM_ROTA' ? 'ENTREGUE' : 'EM_ROTA';
                                   setPendingStatusConfirm({ order, nextStatus });
                                 }}
-                                className={`flex-1 md:flex-none min-h-[38px] py-2 px-3 text-xs font-bold rounded-lg transition-colors ${
+                                className={`w-full h-9 flex items-center justify-center gap-1.5 px-3 text-xs font-bold rounded-lg shadow-2xs transition-colors ${
                                   isDelivered
                                     ? 'bg-red-600 text-white opacity-90 cursor-not-allowed'
                                     : order.status === 'EM_ROTA'
-                                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                                    : 'bg-brand-600 hover:bg-brand-700 text-white'
+                                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer'
+                                    : 'bg-brand-600 hover:bg-brand-700 text-white cursor-pointer'
                                 }`}
                               >
                                 {isDelivered
                                   ? 'Entregue'
                                   : order.status === 'EM_ROTA'
                                   ? 'Concluir Entrega'
-                                  : 'Despachar (Em Rota)'}
+                                  : 'Despachar'}
                               </button>
                             </div>
                           </div>
@@ -723,7 +733,10 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                               </td>
                               <td className="py-3 px-4 text-slate-600 max-w-xs truncate">{order.enderecoEntrega || '-'}</td>
                               <td className="py-3 px-4 font-mono text-slate-700">
-                                {new Date(order.dataHoraEntrega).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                                {formatDeliveryTimeRange(order.dataHoraEntrega, order.dataHoraEntregaFim, {
+                                  tipoEntrega: order.tipoEntrega,
+                                  turnoEntrega: order.tipoEntrega === 'DELIVERY' ? order.turnoEntrega : undefined
+                                })}
                               </td>
                               <td className="py-3 px-4 font-mono text-[11px] font-bold">{order.status}</td>
                               <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
@@ -994,7 +1007,12 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                     </div>
                     <div className={`text-right shrink-0 text-[8px] font-mono font-semibold leading-tight ${isBW ? 'text-slate-900' : 'text-rose-800'}`}>
                       <div>{new Date(order.dataHoraEntrega).toLocaleDateString('pt-BR')}</div>
-                      <div>{new Date(order.dataHoraEntrega).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</div>
+                      <div>{formatDeliveryTimeRange(order.dataHoraEntrega, order.dataHoraEntregaFim, {
+                        includeDate: false,
+                        separator: '-',
+                        tipoEntrega: order.tipoEntrega,
+                        turnoEntrega: order.tipoEntrega === 'DELIVERY' ? order.turnoEntrega : undefined
+                      })}</div>
                     </div>
                   </div>
                 ) : (

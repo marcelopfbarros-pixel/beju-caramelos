@@ -5,6 +5,7 @@ export interface SeasonalDecoration {
   badgeClass: string;
   textGradientClass: string;
   dotColorClass: string;
+  blinkEvery10Min?: boolean;
 }
 
 /**
@@ -45,10 +46,38 @@ function isSameOrBetween(target: Date, start: Date, end: Date): boolean {
  * Returns a small colorful seasonal decoration for the Beju Caramelos brand
  * based on Brazilian holidays and seasons of the year.
  */
-export function getSeasonalDecoration(date: Date = new Date()): SeasonalDecoration {
+export function getSeasonalDecoration(date: Date = new Date(), userName?: string): SeasonalDecoration {
   const year = date.getFullYear();
   const month = date.getMonth() + 1; // 1-12
   const day = date.getDate();
+
+  const normalizedUser = (userName || '').trim().toLowerCase();
+  const isJulianaAbib = normalizedUser.includes('juliana') && normalizedUser.includes('abib');
+
+  // Datas especiais exclusivas para Juliana Abib
+  if (isJulianaAbib && month === 1 && day === 23) {
+    return {
+      id: 'aniversario-casamento',
+      label: 'Feliz Aniversário de Casamento. Te Amo!',
+      icons: ['💍', '❤️'],
+      badgeClass: 'bg-red-100 border-red-400 text-red-700',
+      textGradientClass: 'bg-gradient-to-r from-red-600 via-rose-600 to-red-500 bg-clip-text text-transparent',
+      dotColorClass: 'bg-red-500',
+      blinkEvery10Min: true,
+    };
+  }
+
+  if (isJulianaAbib && month === 6 && day === 20) {
+    return {
+      id: 'aniversario-juliana',
+      label: 'Feliz Aniversário! Te Amo!',
+      icons: ['🎂', '💙'],
+      badgeClass: 'bg-blue-100 border-blue-400 text-blue-700',
+      textGradientClass: 'bg-gradient-to-r from-blue-600 via-sky-600 to-indigo-600 bg-clip-text text-transparent',
+      dotColorClass: 'bg-blue-500',
+      blinkEvery10Min: true,
+    };
+  }
 
   // Ano Novo: Dec 26 - Jan 6
   if ((month === 12 && day >= 26) || (month === 1 && day <= 6)) {

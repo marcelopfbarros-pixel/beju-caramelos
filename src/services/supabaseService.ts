@@ -257,6 +257,8 @@ export class SupabaseService {
       status: o.status as OrderStatus,
       dataPedido: o.data_pedido,
       dataHoraEntrega: o.data_hora_entrega,
+      dataHoraEntregaFim: o.data_hora_entrega_fim || undefined,
+      turnoEntrega: o.turno_entrega || undefined,
       tipoEntrega: o.tipo_entrega,
       unidadeOrigemId: o.unidade_origem_id,
       unidadeRetiradaId: o.unidade_retirada_id || undefined,
@@ -295,11 +297,19 @@ export class SupabaseService {
       ? new Date(order.dataHoraEntrega).toISOString()
       : new Date().toISOString();
 
+    const normalizedDeliveryEndIso = order.dataHoraEntregaFim
+      ? new Date(order.dataHoraEntregaFim).toISOString()
+      : null;
+
     const orderPayload: Record<string, any> = {
       numero_pedido: order.numeroPedido,
       status: order.status,
       data_pedido: order.dataPedido ? new Date(order.dataPedido).toISOString() : new Date().toISOString(),
       data_hora_entrega: normalizedDeliveryIso,
+      ...(normalizedDeliveryEndIso ? { data_hora_entrega_fim: normalizedDeliveryEndIso } : {}),
+      ...(order.tipoEntrega === 'DELIVERY' && order.turnoEntrega
+        ? { turno_entrega: order.turnoEntrega }
+        : {}),
       tipo_entrega: order.tipoEntrega,
       unidade_origem_id: order.unidadeOrigemId,
       unidade_retirada_id: isUuid(order.unidadeRetiradaId) ? order.unidadeRetiradaId : null,
@@ -319,25 +329,28 @@ export class SupabaseService {
       updated_at: new Date().toISOString()
     };
 
-    let savedOrder: any;
-    if (hasValidId) {
-      const { data, error } = await supabase!
+    const executeSave = async (payload: Record<string, any>) => {
+      if (hasValidId) {
+        return supabase!
+          .from('pedidos')
+          .update(payload)
+          .eq('id', order.id)
+          .select()
+          .single();
+      }
+      return supabase!
         .from('pedidos')
-        .update(orderPayload)
-        .eq('id', order.id)
+        .upsert(payload, { onConflict: 'numero_pedido' })
         .select()
         .single();
-      if (error) throw error;
-      savedOrder = data;
-    } else {
-      const { data, error } = await supabase!
-        .from('pedidos')
-        .upsert(orderPayload, { onConflict: 'numero_pedido' })
-        .select()
-        .single();
-      if (error) throw error;
-      savedOrder = data;
+    };
+
+    let { data: savedOrder, error } = await executeSave(orderPayload);
+    if (error && (error.message?.includes('data_hora_entrega_fim') || error.message?.includes('turno_entrega'))) {
+      const { data_hora_entrega_fim: _omittedEnd, turno_entrega: _omittedTurno, ...fallbackPayload } = orderPayload;
+      ({ data: savedOrder, error } = await executeSave(fallbackPayload));
     }
+    if (error) throw error;
 
     // Remove old items and re-insert
     await supabase!.from('itens_pedido').delete().eq('pedido_id', savedOrder.id);
@@ -865,12 +878,12 @@ export class SupabaseService {
   }
 
   // ==========================================
-  // LIMPAR & POPULAR MOCK DATA (EXCETO USUÁRIOS E UNIDADES)
+  // LIMPAR & POPULAR MOCK DATA (PRESERVANDO PRODUTOS, CATEGORIAS, USUÁRIOS E UNIDADES)
   // ==========================================
   static async cleanMockData(): Promise<void> {
     if (!this.isConfigured()) throw new Error('Supabase não configurado');
 
-    // Ordem segura respeitando chaves estrangeiras; nunca remove usuarios_perfis nem empresas_unidades
+    // Ordem segura respeitando chaves estrangeiras; preserva produtos, categorias, usuarios_perfis e empresas_unidades
     const tablesToClean = [
       'itens_producao',
       'itens_pedido',
@@ -878,8 +891,6 @@ export class SupabaseService {
       'estoque_unidades',
       'ordens_producao',
       'pedidos',
-      'produtos',
-      'categorias',
       'clientes',
     ] as const;
 
@@ -912,7 +923,7 @@ export class SupabaseService {
       throw new Error('Nenhuma unidade cadastrada em empresas_unidades. Cadastre ao menos uma unidade antes de popular.');
     }
 
-    // Garante base limpa (sem tocar em usuarios_perfis e empresas_unidades)
+    // Garante base operacional limpa (preservando produtos, categorias, usuarios_perfis e empresas_unidades)
     await this.cleanMockData();
 
     const centralUnit = units.find(u => u.tipo === 'CENTRAL') || units[0];
@@ -920,73 +931,83 @@ export class SupabaseService {
     const unitPool = lojaUnits.length > 0 ? lojaUnits : units;
     const orderUnitPool = units;
 
-    // 1. Categorias (10 registros <= 50)
-    const categoryNames = [
-      'Bolos Artesanais',
-      'Tortas & Cheesecakes',
-      'Sobremesas Individuais',
-      'Doces Finos',
-      'Salgados & Quiches',
-      'Pães & Brioches',
-      'Sazonal & Presentes',
-      'Empório & Geleias',
-      'Bebidas & Cafés',
-      'Kits Festa',
-    ];
-    const { data: insertedCats, error: catErr } = await supabase!
-      .from('categorias')
-      .insert(categoryNames.map((nome, idx) => ({ nome, ordem: idx + 1, ativo: true })))
-      .select();
-    if (catErr || !insertedCats) throw new Error(`Erro ao popular categorias: ${catErr?.message}`);
+    // 1. Categorias: reutiliza existentes ou popula se vazio
+    const { data: existingCatRows } = await supabase!.from('categorias').select('*');
+    let insertedCats = existingCatRows || [];
+    if (insertedCats.length === 0) {
+      const categoryNames = [
+        'Bolos Artesanais',
+        'Tortas & Cheesecakes',
+        'Sobremesas Individuais',
+        'Doces Finos',
+        'Salgados & Quiches',
+        'Pães & Brioches',
+        'Sazonal & Presentes',
+        'Empório & Geleias',
+        'Bebidas & Cafés',
+        'Kits Festa',
+      ];
+      const { data: newCats, error: catErr } = await supabase!
+        .from('categorias')
+        .insert(categoryNames.map((nome, idx) => ({ nome, ordem: idx + 1, ativo: true })))
+        .select();
+      if (catErr || !newCats) throw new Error(`Erro ao popular categorias: ${catErr?.message}`);
+      insertedCats = newCats;
+    }
 
-    // 2. Produtos (30 registros <= 50)
-    const productTemplates: Array<[string, string, number, 'UN' | 'KG' | 'G' | 'CENTO' | 'CX', number, number]> = [
-      ['BOL-001', 'Bolo Red Velvet com Cream Cheese (1,5kg)', 168.00, 'UN', 0, 90],
-      ['BOL-002', 'Bolo Belga de Chocolate 70% Callebaut', 185.00, 'UN', 0, 95],
-      ['BOL-003', 'Bolo de Pistache com Framboesa', 210.00, 'UN', 0, 100],
-      ['BOL-004', 'Bolo de Cenoura com Brigadeiro Belga', 115.00, 'UN', 0, 60],
-      ['TRT-001', 'Torta Basca de Cream Cheese (San Sebastián)', 155.00, 'UN', 1, 75],
-      ['TRT-002', 'Torta Limão Siciliano com Merengue Suíço', 142.00, 'UN', 1, 65],
-      ['TRT-003', 'Banoffee Artesanal com Doce de Leite', 138.00, 'UN', 1, 55],
-      ['TRT-004', 'Cheesecake de Frutas Vermelhas', 162.00, 'UN', 1, 80],
-      ['SOB-001', 'Verrine de Tiramisù Clássico', 26.00, 'UN', 2, 20],
-      ['SOB-002', 'Mousse Trio de Chocolates Belgas', 28.00, 'UN', 2, 25],
-      ['SOB-003', 'Mil Folhas de Baunilha de Madagascar', 32.00, 'UN', 2, 35],
-      ['SOB-004', 'Éclair de Caramelo Salgado', 22.00, 'UN', 2, 30],
-      ['DOC-001', 'Caixa 12 Brigadeiros Gourmet Sortidos', 64.00, 'CX', 3, 40],
-      ['DOC-002', 'Cento de Brigadeiro Tradicional Belga', 190.00, 'CENTO', 3, 90],
-      ['DOC-003', 'Caixa 6 Macarons Parisienses', 58.00, 'CX', 3, 50],
-      ['DOC-004', 'Caixa Presenteável Bombons de Pistache (8un)', 72.00, 'CX', 3, 45],
-      ['SAL-001', 'Quiche Lorraine Artesanal (Inteira)', 118.00, 'UN', 4, 55],
-      ['SAL-002', 'Quiche de Alho-Poró e Queijo Brie', 124.00, 'UN', 4, 55],
-      ['SAL-003', 'Empadão Cremoso de Frango com Catupiry', 129.00, 'UN', 4, 65],
-      ['SAL-004', 'Cento de Mini Coxinhas Artesanais', 165.00, 'CENTO', 4, 80],
-      ['PAE-001', 'Brioche Francês Trançado (500g)', 34.00, 'UN', 5, 120],
-      ['PAE-002', 'Croissant de Manteiga Francesa', 18.00, 'UN', 5, 90],
-      ['PAE-003', 'Pão de Fermentação Natural Levain', 38.00, 'UN', 5, 180],
-      ['SAZ-001', 'Cesta Café da Manhã Especial JuJu', 245.00, 'UN', 6, 45],
-      ['SAZ-002', 'Caixa Degustação Especial da Chef', 135.00, 'CX', 6, 35],
-      ['EMP-001', 'Geleia Artesanal de Morango com Baunilha (220g)', 36.00, 'UN', 7, 40],
-      ['EMP-002', 'Creme de Avelã e Cacau da Casa (200g)', 44.00, 'UN', 7, 40],
-      ['BEB-001', 'Cold Brew Artesanal JuJu (300ml)', 16.00, 'UN', 8, 15],
-      ['BEB-002', 'Chocolate Quente Cremoso para Viagem', 19.00, 'UN', 8, 10],
-      ['KIT-001', 'Kit Festa P (1 Bolo + 50 Doces + 50 Salgados)', 340.00, 'UN', 9, 120],
-    ];
-    const { data: insertedProds, error: prodErr } = await supabase!
-      .from('produtos')
-      .insert(
-        productTemplates.map(([sku, desc, preco, um, catIdx, tempo]) => ({
-          codigo_sku: sku,
-          descricao: desc,
-          preco_unitario: preco,
-          unidade_medida: um,
-          categoria_id: insertedCats[catIdx % insertedCats.length].id,
-          tempo_producao_minutos: tempo,
-          ativo: true,
-        }))
-      )
-      .select();
-    if (prodErr || !insertedProds) throw new Error(`Erro ao popular produtos: ${prodErr?.message}`);
+    // 2. Produtos: reutiliza existentes ou popula se vazio
+    const { data: existingProdRows } = await supabase!.from('produtos').select('*');
+    let insertedProds = existingProdRows || [];
+    if (insertedProds.length === 0) {
+      const productTemplates: Array<[string, string, number, 'UN' | 'KG' | 'G' | 'CENTO' | 'CX', number, number]> = [
+        ['BOL-001', 'Bolo Red Velvet com Cream Cheese (1,5kg)', 168.00, 'UN', 0, 90],
+        ['BOL-002', 'Bolo Belga de Chocolate 70% Callebaut', 185.00, 'UN', 0, 95],
+        ['BOL-003', 'Bolo de Pistache com Framboesa', 210.00, 'UN', 0, 100],
+        ['BOL-004', 'Bolo de Cenoura com Brigadeiro Belga', 115.00, 'UN', 0, 60],
+        ['TRT-001', 'Torta Basca de Cream Cheese (San Sebastián)', 155.00, 'UN', 1, 75],
+        ['TRT-002', 'Torta Limão Siciliano com Merengue Suíço', 142.00, 'UN', 1, 65],
+        ['TRT-003', 'Banoffee Artesanal com Doce de Leite', 138.00, 'UN', 1, 55],
+        ['TRT-004', 'Cheesecake de Frutas Vermelhas', 162.00, 'UN', 1, 80],
+        ['SOB-001', 'Verrine de Tiramisù Clássico', 26.00, 'UN', 2, 20],
+        ['SOB-002', 'Mousse Trio de Chocolates Belgas', 28.00, 'UN', 2, 25],
+        ['SOB-003', 'Mil Folhas de Baunilha de Madagascar', 32.00, 'UN', 2, 35],
+        ['SOB-004', 'Éclair de Caramelo Salgado', 22.00, 'UN', 2, 30],
+        ['DOC-001', 'Caixa 12 Brigadeiros Gourmet Sortidos', 64.00, 'CX', 3, 40],
+        ['DOC-002', 'Cento de Brigadeiro Tradicional Belga', 190.00, 'CENTO', 3, 90],
+        ['DOC-003', 'Caixa 6 Macarons Parisienses', 58.00, 'CX', 3, 50],
+        ['DOC-004', 'Caixa Presenteável Bombons de Pistache (8un)', 72.00, 'CX', 3, 45],
+        ['SAL-001', 'Quiche Lorraine Artesanal (Inteira)', 118.00, 'UN', 4, 55],
+        ['SAL-002', 'Quiche de Alho-Poró e Queijo Brie', 124.00, 'UN', 4, 55],
+        ['SAL-003', 'Empadão Cremoso de Frango com Catupiry', 129.00, 'UN', 4, 65],
+        ['SAL-004', 'Cento de Mini Coxinhas Artesanais', 165.00, 'CENTO', 4, 80],
+        ['PAE-001', 'Brioche Francês Trançado (500g)', 34.00, 'UN', 5, 120],
+        ['PAE-002', 'Croissant de Manteiga Francesa', 18.00, 'UN', 5, 90],
+        ['PAE-003', 'Pão de Fermentação Natural Levain', 38.00, 'UN', 5, 180],
+        ['SAZ-001', 'Cesta Café da Manhã Especial JuJu', 245.00, 'UN', 6, 45],
+        ['SAZ-002', 'Caixa Degustação Especial da Chef', 135.00, 'CX', 6, 35],
+        ['EMP-001', 'Geleia Artesanal de Morango com Baunilha (220g)', 36.00, 'UN', 7, 40],
+        ['EMP-002', 'Creme de Avelã e Cacau da Casa (200g)', 44.00, 'UN', 7, 40],
+        ['BEB-001', 'Cold Brew Artesanal JuJu (300ml)', 16.00, 'UN', 8, 15],
+        ['BEB-002', 'Chocolate Quente Cremoso para Viagem', 19.00, 'UN', 8, 10],
+        ['KIT-001', 'Kit Festa P (1 Bolo + 50 Doces + 50 Salgados)', 340.00, 'UN', 9, 120],
+      ];
+      const { data: newProds, error: prodErr } = await supabase!
+        .from('produtos')
+        .insert(
+          productTemplates.map(([sku, desc, preco, um, catIdx, tempo]) => ({
+            codigo_sku: sku,
+            descricao: desc,
+            preco_unitario: preco,
+            unidade_medida: um,
+            categoria_id: insertedCats[catIdx % insertedCats.length].id,
+            tempo_producao_minutos: tempo,
+            ativo: true,
+          }))
+        )
+        .select();
+      if (prodErr || !newProds) throw new Error(`Erro ao popular produtos: ${prodErr?.message}`);
+      insertedProds = newProds;
+    }
 
     // 3. Clientes (45 registros <= 50)
     const firstNames = ['Ana', 'Beatriz', 'Camila', 'Daniela', 'Eduardo', 'Fernanda', 'Gabriel', 'Helena', 'Igor', 'Juliana', 'Lucas', 'Mariana', 'Natália', 'Pedro', 'Rafael'];

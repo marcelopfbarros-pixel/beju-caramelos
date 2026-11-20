@@ -1,8 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { HybridFilterSort } from '../components/HybridFilterSort';
 import { CurrencyInput } from '../components/CurrencyInput';
+import { TimeSelect15 } from '../components/TimeSelect15';
 import { useExpandedGroups } from '../hooks/useExpandedGroups';
 import { ORDER_CARD_STATUS_STYLES, isReplenishmentOrder, REPLENISHMENT_CARD_STYLE } from '../utils/orderStatusStyles';
+import {
+  addHoursToDateTime,
+  applyDeliveryShiftToDate,
+  combineDateWithTime,
+  extractTimeHHmm,
+  formatDeliveryTimeRange,
+  inferDeliveryShiftFromDateTime
+} from '../utils/deliveryTimeRange';
 import { 
   Order, 
   Product, 
@@ -10,6 +19,7 @@ import {
   Category, 
   OrderStatus, 
   DeliveryType, 
+  DeliveryShift,
   PaymentMethod,
   OrderItem,
   Customer
@@ -47,7 +57,8 @@ import {
   formatStatusNotificationMessage,
   dispatchWhatsAppMessage,
   getWhatsAppAutomationSettings,
-  calculateNearestUnitAndDeliveryFee
+  calculateNearestUnitAndDeliveryFee,
+  normalizePhoneForWhatsApp
 } from '../services/whatsappAutomationService';
 
 interface PedidosScreenProps {
@@ -58,6 +69,7 @@ interface PedidosScreenProps {
   customers: Customer[];
   activeUnitId: string;
   userPassword?: string;
+  requestedStatusFilter?: { status: string; expandGroups?: boolean; nonce: number } | null;
   onSaveOrder: (order: Order) => void;
   onSelectOrder: (order: Order) => void;
   onSaveCustomer: (customer: Customer) => void;
@@ -86,15 +98,30 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
   customers,
   activeUnitId,
   userPassword = '12345678',
+  requestedStatusFilter,
   onSaveOrder,
   onSelectOrder,
   onSaveCustomer
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('TODOS');
+  const [statusFilter, setStatusFilter] = useState<string>(() => requestedStatusFilter?.status || 'TODOS');
   const [sortBy, setSortBy] = useState<'ENTREGA_ASC' | 'ENTREGA_DESC' | 'VALOR_DESC' | 'CLIENTE_ASC'>('ENTREGA_ASC');
   const [groupBy, setGroupBy] = useState<'NENHUM' | 'MODALIDADE' | 'LOJA_ORIGEM'>('LOJA_ORIGEM');
-  const { isGroupExpanded, toggleGroup } = useExpandedGroups(groupBy);
+  const { isGroupExpanded, toggleGroup, expandAll } = useExpandedGroups(groupBy);
+
+  useEffect(() => {
+    if (requestedStatusFilter?.status) {
+      setStatusFilter(requestedStatusFilter.status);
+    }
+    if (requestedStatusFilter?.expandGroups) {
+      expandAll();
+    }
+  }, [
+    requestedStatusFilter?.nonce,
+    requestedStatusFilter?.status,
+    requestedStatusFilter?.expandGroups,
+    expandAll
+  ]);
   const [viewMode, setViewMode] = useState<'TABLE' | 'CARDS'>(() =>
     typeof window !== 'undefined' && window.innerWidth < 768 ? 'CARDS' : 'TABLE'
   );
@@ -123,7 +150,6 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
   const [discountType, setDiscountType] = useState<'R$' | '%'>('R$');
   const [discountValue, setDiscountValue] = useState<number>(0);
   const [saveCustomerToBase, setSaveCustomerToBase] = useState<boolean>(true);
-  const [customerSearch, setCustomerSearch] = useState<string>('');
   const [showCustomerSuggestions, setShowCustomerSuggestions] = useState<boolean>(false);
 
   // New Order Form State in Logical Order
@@ -132,6 +158,8 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
     status: 'PENDENTE',
     dataPedido: new Date().toISOString(),
     dataHoraEntrega: getCurrentLocalDateTime(),
+    dataHoraEntregaFim: addHoursToDateTime(getCurrentLocalDateTime(), 1),
+    turnoEntrega: inferDeliveryShiftFromDateTime(getCurrentLocalDateTime()),
     tipoEntrega: 'DELIVERY',
     unidadeOrigemId: activeUnitId !== 'all' ? activeUnitId : units[0]?.id || 'u-central',
     clienteNome: '',
@@ -219,8 +247,8 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
     const subtotalCalc = updatedItens.reduce((acc, i) => acc + (i.quantidade * i.precoUnitario), 0);
     const computedDesc = computeDiscountAmount(subtotalCalc, discountType, discountValue);
     const { subtotal, total } = calculateTotals(
-      updatedItens, 
-      editingOrder.taxaEntrega || 0, 
+      updatedItens,
+      editingOrder.taxaEntrega || 0,
       computedDesc
     );
 
@@ -248,8 +276,8 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
     const subtotalCalc = updatedItens.reduce((acc, i) => acc + (i.quantidade * i.precoUnitario), 0);
     const computedDesc = computeDiscountAmount(subtotalCalc, discountType, discountValue);
     const { subtotal, total } = calculateTotals(
-      updatedItens, 
-      editingOrder.taxaEntrega || 0, 
+      updatedItens,
+      editingOrder.taxaEntrega || 0,
       computedDesc
     );
 
@@ -300,8 +328,8 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
     const subtotalCalc = editingOrder.itens.reduce((acc, i) => acc + (i.quantidade * i.precoUnitario), 0);
     const finalDesc = computeDiscountAmount(subtotalCalc, discountType, discountValue);
     const { subtotal, total } = calculateTotals(
-      editingOrder.itens, 
-      editingOrder.taxaEntrega || 0, 
+      editingOrder.itens,
+      editingOrder.taxaEntrega || 0,
       finalDesc
     );
 
@@ -311,6 +339,13 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
       status: (editingOrder.status as OrderStatus) || 'PENDENTE',
       dataPedido: editingOrder.dataPedido || new Date().toISOString(),
       dataHoraEntrega: editingOrder.dataHoraEntrega || new Date().toISOString(),
+      dataHoraEntregaFim:
+        editingOrder.dataHoraEntregaFim ||
+        addHoursToDateTime(editingOrder.dataHoraEntrega || new Date().toISOString(), 1),
+      turnoEntrega:
+        editingOrder.tipoEntrega === 'DELIVERY'
+          ? editingOrder.turnoEntrega || inferDeliveryShiftFromDateTime(editingOrder.dataHoraEntrega)
+          : undefined,
       tipoEntrega: (editingOrder.tipoEntrega as DeliveryType) || 'DELIVERY',
       unidadeOrigemId: editingOrder.unidadeOrigemId || units[0].id,
       unidadeRetiradaId: editingOrder.unidadeRetiradaId,
@@ -347,6 +382,14 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
     setEditingOrder({
       ...order,
       dataHoraEntrega: toLocalDateTimeInput(order.dataHoraEntrega),
+      dataHoraEntregaFim: order.dataHoraEntregaFim
+        ? toLocalDateTimeInput(order.dataHoraEntregaFim)
+        : addHoursToDateTime(toLocalDateTimeInput(order.dataHoraEntrega), 1),
+      turnoEntrega:
+        order.turnoEntrega ||
+        (order.tipoEntrega === 'DELIVERY'
+          ? inferDeliveryShiftFromDateTime(order.dataHoraEntrega)
+          : undefined),
       itens: (order.itens || []).map(i => ({ ...i }))
     });
     setIsModalOpen(true);
@@ -365,13 +408,14 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
       setEditingOrder(prev => {
         const items = itensToCalc || prev.itens || [];
         const subtotal = items.reduce((acc, i) => acc + i.quantidade * i.precoUnitario, 0);
-        const computedDesc = computeDiscountAmount(subtotal, discountType, discountValue);
         const fee = prev.tipoEntrega === 'RETIRADA' ? 0 : res.deliveryFee;
+        const computedDesc = computeDiscountAmount(subtotal, discountType, discountValue);
         const total = Math.max(0, subtotal + fee - computedDesc);
         return {
           ...prev,
           unidadeOrigemId: preferExplicitUnitId || res.nearestUnit?.id || prev.unidadeOrigemId,
           taxaEntrega: fee,
+          desconto: computedDesc,
           valorSubtotal: subtotal,
           valorTotal: total
         };
@@ -387,14 +431,19 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
   const handleWhatsAppOrderParsed = (parsed: ParsedWhatsAppOrder) => {
     const defaultFee = getWhatsAppAutomationSettings().defaultDeliveryFee ?? 18.0;
     const taxa = parsed.tipoEntrega === 'DELIVERY' ? defaultFee : 0.00;
-    const { subtotal, total } = calculateTotals(parsed.itens, taxa, 0);
+    const desconto = parsed.desconto || 0;
+    const { subtotal, total } = calculateTotals(parsed.itens, taxa, desconto);
     setRouteCalcBadge(null);
+    setDiscountType('R$');
+    setDiscountValue(desconto);
 
     setEditingOrder({
       numeroPedido: `#PED-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
       status: 'PENDENTE',
       dataPedido: new Date().toISOString(),
       dataHoraEntrega: parsed.dataHoraEntrega,
+      dataHoraEntregaFim: parsed.dataHoraEntregaFim || addHoursToDateTime(parsed.dataHoraEntrega, 1),
+      turnoEntrega: parsed.turnoEntrega,
       tipoEntrega: parsed.tipoEntrega,
       unidadeOrigemId: parsed.unidadeSugeridaId || (activeUnitId !== 'all' ? activeUnitId : units[0]?.id || 'u-central'),
       unidadeRetiradaId: parsed.tipoEntrega === 'RETIRADA'
@@ -405,7 +454,7 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
       clienteEndereco: parsed.enderecoEntrega || '',
       enderecoEntrega: parsed.enderecoEntrega || '',
       taxaEntrega: taxa,
-      desconto: 0.00,
+      desconto,
       valorSubtotal: subtotal,
       valorTotal: total,
       formaPagamento: parsed.formaPagamento,
@@ -451,7 +500,7 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
 Olá, *${order.clienteNome || 'Cliente'}*! Segue o resumo do seu pedido:
 
 *Pedido:* ${order.numeroPedido}
-*Data/Horário:* ${order.dataHoraEntrega ? new Date(order.dataHoraEntrega).toLocaleString('pt-BR') : 'A combinar'}
+*Data/Horário:* ${order.dataHoraEntrega ? formatDeliveryTimeRange(order.dataHoraEntrega, order.dataHoraEntregaFim, { tipoEntrega: order.tipoEntrega, turnoEntrega: order.tipoEntrega === 'DELIVERY' ? order.turnoEntrega : undefined }) : 'A combinar'}
 *Modalidade:* ${order.tipoEntrega === 'DELIVERY' ? `Entrega (${order.enderecoEntrega || 'Endereço informado'})` : `Retirada no Balcão (${unit?.nome || 'Loja'})`}
 
 *Itens Solicitados:*
@@ -531,7 +580,7 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-[#f8f9ff] overflow-hidden">
+    <div className="flex-1 min-w-0 flex flex-col h-full bg-[#f8f9ff] overflow-hidden">
       {/* Top Action Bar */}
       <div className="bg-white border-b border-[#e2e8f0] px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -681,12 +730,12 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
       </div>
 
       {/* Orders Table / Cards */}
-      <div className="flex-1 overflow-auto p-6">
+      <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-4">
         <div
           id="print-report-area"
           className={
             viewMode === 'TABLE'
-              ? 'bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-hidden'
+              ? 'bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-x-auto max-w-full'
               : 'hidden print:block bg-white'
           }
         >
@@ -702,17 +751,17 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
             }
           />
           <table className="w-full text-left text-xs border-collapse">
-            <thead className="bg-[#f8f9ff] border-b border-[#e2e8f0] text-[11px] font-mono font-semibold uppercase text-slate-500 tracking-wider">
+            <thead className="bg-[#f8f9ff] border-b border-[#e2e8f0] text-[10px] font-mono font-semibold uppercase text-slate-500 tracking-wider">
               <tr>
-                <th className="py-3 px-4">Nº Pedido</th>
-                <th className="py-3 px-4">Entrega / Retirada</th>
-                <th className="py-3 px-4">Cliente & WhatsApp</th>
-                <th className="py-3 px-4">Modalidade</th>
-                <th className="py-3 px-4">Loja Origem</th>
-                <th className="py-3 px-4">Pagamento</th>
-                <th className="py-3 px-4 text-right">Total (R$)</th>
-                <th className="py-3 px-4 text-center">Status</th>
-                <th className="py-3 px-4 text-center print:hidden">Ações</th>
+                <th className="py-2.5 px-2">Nº Pedido</th>
+                <th className="py-2.5 px-2">Entrega / Retirada</th>
+                <th className="py-2.5 px-2">Cliente & WhatsApp</th>
+                <th className="py-2.5 px-2">Modalidade</th>
+                <th className="py-2.5 px-2">Loja Origem</th>
+                <th className="py-2.5 px-2">Pagamento</th>
+                <th className="py-2.5 px-2 text-right">Total (R$)</th>
+                <th className="py-2.5 px-2 text-center">Status</th>
+                <th className="py-2.5 px-2 text-center print:hidden">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#e2e8f0]">
@@ -802,7 +851,7 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                           : 'hover:bg-slate-50/80'
                       }`}
                     >
-                      <td className="py-3 px-4 font-mono font-bold text-slate-900">
+                      <td className="py-2.5 px-2 font-mono font-bold text-slate-900 whitespace-nowrap">
                         <div>{order.numeroPedido}</div>
                         {isRep && (
                           <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-sky-600 text-white text-[9px] font-sans font-bold uppercase tracking-wider">
@@ -810,17 +859,46 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                           </span>
                         )}
                       </td>
-                      <td className="py-3 px-4 font-mono text-slate-700">
-                        {new Date(order.dataHoraEntrega).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                      <td className="py-2.5 px-2.5 font-mono text-slate-700">
+                        <div>
+                          {formatDeliveryTimeRange(order.dataHoraEntrega, order.dataHoraEntregaFim, {
+                            tipoEntrega: order.tipoEntrega,
+                            turnoEntrega: order.tipoEntrega === 'DELIVERY' ? order.turnoEntrega : undefined
+                          })}
+                        </div>
+                        {order.detalheEntrega && (
+                          <div
+                            className="text-[11px] font-sans font-medium text-blue-600 mt-0.5 max-w-[190px] truncate"
+                            title={order.detalheEntrega}
+                          >
+                            {order.detalheEntrega}
+                          </div>
+                        )}
                       </td>
-                      <td className="py-3 px-4">
+                      <td className="py-2.5 px-2">
                         <div className="font-semibold text-slate-900">{order.clienteNome}</div>
                         <div className="text-[11px] font-mono text-emerald-700 flex items-center gap-1 mt-0.5">
-                          <Phone className="w-3 h-3" />
-                          <span>{order.clienteTelefone}</span>
+                          {normalizePhoneForWhatsApp(order.clienteTelefone) ? (
+                            <a
+                              href={`https://wa.me/${normalizePhoneForWhatsApp(order.clienteTelefone)}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              title="Abrir conversa no WhatsApp"
+                              className="inline-flex items-center gap-1 text-emerald-700 hover:text-emerald-800 hover:underline"
+                            >
+                              <Phone className="w-3 h-3" />
+                              <span>{order.clienteTelefone}</span>
+                            </a>
+                          ) : (
+                            <>
+                              <Phone className="w-3 h-3" />
+                              <span>{order.clienteTelefone}</span>
+                            </>
+                          )}
                         </div>
                       </td>
-                      <td className="py-3 px-4">
+                      <td className="py-2.5 px-2">
                         <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
                           order.tipoEntrega === 'DELIVERY'
                             ? 'bg-blue-50 text-blue-700 border-blue-200'
@@ -830,10 +908,10 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                           {order.tipoEntrega === 'DELIVERY' ? 'Entrega' : 'Retirada'}
                         </span>
                       </td>
-                      <td className={`py-3 px-4 font-semibold ${unitColorClass}`}>
+                      <td className={`py-2.5 px-2 font-semibold ${unitColorClass}`}>
                         {unit?.nome || '-'}
                       </td>
-                      <td className="py-3 px-4">
+                      <td className="py-2.5 px-2">
                         {isRep ? (
                           <span className="text-[11px] font-semibold text-sky-700">—</span>
                         ) : (
@@ -842,16 +920,19 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                           </span>
                         )}
                       </td>
-                      <td className="py-3 px-4 font-mono font-bold text-right text-slate-900">
+                      <td className="py-2.5 px-2 font-mono font-bold text-right text-slate-900 whitespace-nowrap">
                         R$ {order.valorTotal.toFixed(2)}
                       </td>
-                      <td className="py-3 px-4 text-center">
+                      <td className="py-2.5 px-2 text-center">
                         {renderStatusControl(order)}
                         <span className={`hidden print:inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold border ${STATUS_BADGES[order.status]}`}>
                           {order.status}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-center print:hidden" onClick={(e) => e.stopPropagation()}>
+                      <td
+                        className="py-2.5 px-2 text-center print:hidden"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         <div className="flex items-center justify-center gap-1">
                           <button
                             onClick={() => {
@@ -972,9 +1053,26 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                             </div>
                             <div className="space-y-1 text-xs">
                               <div className="font-bold text-slate-900">{order.clienteNome}</div>
-                              <div className="font-mono text-[11px] text-emerald-700">{order.clienteTelefone}</div>
+                              {normalizePhoneForWhatsApp(order.clienteTelefone) ? (
+                                <a
+                                  href={`https://wa.me/${normalizePhoneForWhatsApp(order.clienteTelefone)}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  title="Abrir conversa no WhatsApp"
+                                  className="inline-flex items-center gap-1 font-mono text-[11px] text-emerald-700 hover:text-emerald-800 hover:underline"
+                                >
+                                  <Phone className="w-3 h-3" />
+                                  <span>{order.clienteTelefone}</span>
+                                </a>
+                              ) : (
+                                <div className="font-mono text-[11px] text-emerald-700">{order.clienteTelefone}</div>
+                              )}
                               <div className="text-[11px] text-slate-500">
-                                {new Date(order.dataHoraEntrega).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })} •{' '}
+                                {formatDeliveryTimeRange(order.dataHoraEntrega, order.dataHoraEntregaFim, {
+                                  tipoEntrega: order.tipoEntrega,
+                                  turnoEntrega: order.tipoEntrega === 'DELIVERY' ? order.turnoEntrega : undefined
+                                })} •{' '}
                                 {order.tipoEntrega === 'DELIVERY' ? 'Entrega' : 'Retirada'}
                               </div>
                             </div>
@@ -1029,11 +1127,8 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
             <div className="px-6 py-4 bg-[#f8f9ff] border-b border-slate-200 flex items-center justify-between">
               <div>
                 <h2 className="text-base font-bold text-slate-900 font-sans">
-                  {editingOrder.id ? 'Editar Pedido' : 'Registro de Novo Pedido (WhatsApp / Balcão)'}
+                  {editingOrder.id ? 'Editar Pedido' : 'Novo Pedido'}
                 </h2>
-                <p className="text-xs text-slate-500">
-                  Campos organizados em ordem lógica de atendimento ao cliente
-                </p>
               </div>
               <button
                 onClick={() => setIsModalOpen(false)}
@@ -1076,19 +1171,15 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
 
               {/* PASSO 1: DADOS DO PEDIDO & LOJA */}
               <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-4">
-                <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-500 block mb-3">
-                  1. Identificação do Pedido
-                </span>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
-                  <div>
-                    <label className="font-semibold text-slate-700 block mb-1">Nº do Pedido</label>
-                    <input
-                      type="text"
-                      disabled
-                      value={editingOrder.numeroPedido || ''}
-                      className="w-full bg-slate-100 border border-slate-300 rounded-lg p-2 font-mono font-bold text-slate-800"
-                    />
-                  </div>
+                <div className="flex items-center justify-between gap-2 mb-3">
+                  <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-500">
+                    1. Dados do Pedido
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded-full bg-slate-200/80 border border-slate-300 text-slate-800 font-mono text-xs font-bold">
+                    {editingOrder.numeroPedido || ''}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                   <div>
                     <label className="font-semibold text-slate-700 block mb-1">Status</label>
                     <select
@@ -1151,49 +1242,47 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                       ))}
                     </select>
                   </div>
-                  <div>
-                    <label className="font-semibold text-slate-700 block mb-1">Data/Hora Combinada *</label>
-                    <input
-                      type="datetime-local"
-                      required
-                      min={!editingOrder.id ? getCurrentLocalDateTime() : undefined}
-                      value={editingOrder.dataHoraEntrega || ''}
-                      onChange={(e) => setEditingOrder({ ...editingOrder, dataHoraEntrega: e.target.value })}
-                      className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono"
-                    />
-                  </div>
                 </div>
               </div>
 
               {/* PASSO 2: DADOS DO CLIENTE */}
               <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-4 space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center justify-between gap-2">
                   <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-500">
-                    2. Dados do Cliente (WhatsApp)
+                    2. Dados do Cliente
                   </span>
+                </div>
 
-                  <div className="relative w-full sm:w-72">
-                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      value={customerSearch}
-                      onFocus={() => setShowCustomerSuggestions(true)}
-                      onBlur={() => setTimeout(() => setShowCustomerSuggestions(false), 180)}
-                      onChange={(e) => {
-                        setCustomerSearch(e.target.value);
-                        setShowCustomerSuggestions(true);
-                      }}
-                      placeholder="Pesquisar cliente por nome ou tel..."
-                      className="w-full bg-white border border-slate-300 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-700 focus:outline-none focus:border-brand-500"
-                    />
-                    {showCustomerSuggestions && (
-                      <div className="absolute right-0 left-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-48 overflow-y-auto z-30 divide-y divide-slate-100">
-                        {customers
-                          .filter(c =>
-                            c.nome.toLowerCase().includes(customerSearch.toLowerCase()) ||
-                            c.telefone.includes(customerSearch)
-                          )
-                          .map(c => (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                  <div className="relative">
+                    <label className="font-semibold text-slate-700 block mb-1">Nome Completo *</label>
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <input
+                        type="text"
+                        placeholder="Digite o nome ou pesquise por nome/tel..."
+                        value={editingOrder.clienteNome || ''}
+                        onFocus={() => setShowCustomerSuggestions(true)}
+                        onBlur={() => setTimeout(() => setShowCustomerSuggestions(false), 180)}
+                        onChange={(e) => {
+                          setEditingOrder({ ...editingOrder, clienteNome: e.target.value });
+                          setShowCustomerSuggestions(true);
+                        }}
+                        className="w-full bg-white border border-slate-300 rounded-lg pl-8 pr-3 py-2 focus:outline-none focus:border-brand-500"
+                      />
+                    </div>
+                    {showCustomerSuggestions && (() => {
+                      const query = (editingOrder.clienteNome || '').trim().toLowerCase();
+                      const rawQuery = (editingOrder.clienteNome || '').trim();
+                      const matched = customers.filter(c =>
+                        !query ||
+                        c.nome.toLowerCase().includes(query) ||
+                        c.telefone.includes(rawQuery)
+                      );
+                      if (matched.length === 0) return null;
+                      return (
+                        <div className="absolute right-0 left-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-48 overflow-y-auto z-30 divide-y divide-slate-100">
+                          {matched.map(c => (
                             <button
                               key={c.id}
                               type="button"
@@ -1207,41 +1296,20 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                                   enderecoEntrega: c.endereco,
                                   detalheEntrega: c.detalheEntrega || ''
                                 }));
-                                setCustomerSearch(c.nome);
                                 setShowCustomerSuggestions(false);
                                 if (c.endereco || c.cep) {
                                   recalculateNearestStoreAndFee(c.endereco, c.cep);
                                 }
                               }}
-                              className="w-full text-left px-3 py-2 hover:bg-brand-50 transition-colors text-xs"
+                              className="w-full text-left px-3 py-2 hover:bg-brand-50 transition-colors text-xs cursor-pointer"
                             >
                               <div className="font-bold text-slate-900">{c.nome}</div>
                               <div className="text-[10px] font-mono text-slate-500">{c.telefone}</div>
                             </button>
                           ))}
-                        {customers.filter(c =>
-                          c.nome.toLowerCase().includes(customerSearch.toLowerCase()) ||
-                          c.telefone.includes(customerSearch)
-                        ).length === 0 && (
-                          <div className="px-3 py-2 text-[11px] text-slate-400">
-                            Nenhum cliente encontrado.
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                  <div>
-                    <label className="font-semibold text-slate-700 block mb-1">Nome Completo *</label>
-                    <input
-                      type="text"
-                      placeholder="Ex: Ana Maria Santos"
-                      value={editingOrder.clienteNome || ''}
-                      onChange={(e) => setEditingOrder({ ...editingOrder, clienteNome: e.target.value })}
-                      className="w-full bg-white border border-slate-300 rounded-lg p-2"
-                    />
+                        </div>
+                      );
+                    })()}
                   </div>
                   <div>
                     <label className="font-semibold text-slate-700 block mb-1">Telefone WhatsApp *</label>
@@ -1269,7 +1337,7 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
               {/* PASSO 3: MODALIDADE & ENDEREÇO */}
               <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-4">
                 <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-500 block mb-3">
-                  3. Modalidade & Logística
+                  3. Dados da Entrega
                 </span>
                 <div className="space-y-3 text-xs">
                   <div className="flex items-center gap-4">
@@ -1278,25 +1346,105 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                         type="radio"
                         name="modalidade"
                         checked={editingOrder.tipoEntrega === 'DELIVERY'}
-                        onChange={() => setEditingOrder({ ...editingOrder, tipoEntrega: 'DELIVERY' })}
+                        onChange={() => {
+                          const currentDate = (editingOrder.dataHoraEntrega || getCurrentLocalDateTime()).slice(0, 10);
+                          const shift = editingOrder.turnoEntrega || inferDeliveryShiftFromDateTime(editingOrder.dataHoraEntrega);
+                          const { start, end } = applyDeliveryShiftToDate(currentDate, shift);
+                          setEditingOrder({
+                            ...editingOrder,
+                            tipoEntrega: 'DELIVERY',
+                            turnoEntrega: shift,
+                            dataHoraEntrega: start,
+                            dataHoraEntregaFim: end
+                          });
+                        }}
                         className="text-brand-600 focus:ring-brand-500"
                       />
-                      <span>🚚 Entrega (Delivery)</span>
+                      <span>🚚 Entrega</span>
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-800">
                       <input
                         type="radio"
                         name="modalidade"
                         checked={editingOrder.tipoEntrega === 'RETIRADA'}
-                        onChange={() => setEditingOrder({ ...editingOrder, tipoEntrega: 'RETIRADA', taxaEntrega: 0 })}
+                        onChange={() =>
+                          setEditingOrder({
+                            ...editingOrder,
+                            tipoEntrega: 'RETIRADA',
+                            turnoEntrega: undefined,
+                            taxaEntrega: 0
+                          })
+                        }
                         className="text-brand-600 focus:ring-brand-500"
                       />
-                      <span>🏪 Retirada (Loja / Ateliê)</span>
+                      <span>🏪 Retirada</span>
                     </label>
                   </div>
 
                   {editingOrder.tipoEntrega === 'DELIVERY' ? (
                     <div className="space-y-2.5">
+                      <div className="flex flex-wrap items-end gap-3">
+                        <div className="w-[155px] shrink-0">
+                          <label className="font-semibold text-slate-700 block mb-1">Data da Entrega *</label>
+                          <input
+                            type="date"
+                            required
+                            aria-label="Data da entrega"
+                            min={!editingOrder.id ? getCurrentLocalDateTime().slice(0, 10) : undefined}
+                            value={(editingOrder.dataHoraEntrega || getCurrentLocalDateTime()).slice(0, 10)}
+                            onChange={(e) => {
+                              const newDate = e.target.value;
+                              if (!newDate) return;
+                              const shift =
+                                editingOrder.turnoEntrega ||
+                                inferDeliveryShiftFromDateTime(editingOrder.dataHoraEntrega);
+                              const { start, end } = applyDeliveryShiftToDate(newDate, shift);
+                              setEditingOrder({
+                                ...editingOrder,
+                                turnoEntrega: shift,
+                                dataHoraEntrega: start,
+                                dataHoraEntregaFim: end
+                              });
+                            }}
+                            className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono text-xs"
+                          />
+                        </div>
+                        <div className="w-[130px] shrink-0">
+                          <label className="font-semibold text-slate-700 block mb-1">Turno *</label>
+                          <select
+                            value={
+                              editingOrder.turnoEntrega ||
+                              inferDeliveryShiftFromDateTime(editingOrder.dataHoraEntrega)
+                            }
+                            onChange={(e) => {
+                              const newShift = e.target.value as DeliveryShift;
+                              const currentDate = (editingOrder.dataHoraEntrega || getCurrentLocalDateTime()).slice(0, 10);
+                              const { start, end } = applyDeliveryShiftToDate(currentDate, newShift);
+                              setEditingOrder({
+                                ...editingOrder,
+                                turnoEntrega: newShift,
+                                dataHoraEntrega: start,
+                                dataHoraEntregaFim: end
+                              });
+                            }}
+                            className="w-full bg-white border border-slate-300 rounded-lg p-2 font-medium"
+                          >
+                            <option value="MANHA">Manhã</option>
+                            <option value="TARDE">Tarde</option>
+                            <option value="NOITE">Noite</option>
+                          </select>
+                        </div>
+                        <div className="flex-1 min-w-[200px]">
+                          <label className="font-semibold text-slate-700 block mb-1">Observação da Entrega</label>
+                          <input
+                            type="text"
+                            placeholder="Ex: Portaria, interfone 51, horário preferido..."
+                            value={editingOrder.detalheEntrega || ''}
+                            onChange={(e) => setEditingOrder({ ...editingOrder, detalheEntrega: e.target.value })}
+                            className="w-full bg-white border border-slate-300 rounded-lg p-2"
+                          />
+                        </div>
+                      </div>
                       {editingOrder.clienteEndereco && (
                         <div className="p-2.5 rounded-lg bg-white border border-slate-200 flex items-center justify-between gap-2">
                           <div className="text-[11px] text-slate-600 truncate">
@@ -1350,31 +1498,89 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                           </p>
                         )}
                       </div>
-                      <div>
-                        <label className="font-semibold text-slate-700 block mb-1">Detalhe da Entrega (Etiqueta / Portaria / Recado)</label>
-                        <input
-                          type="text"
-                          placeholder="Ex: Deixar na portaria, interfone 51, embalagem para presente..."
-                          value={editingOrder.detalheEntrega || ''}
-                          onChange={(e) => setEditingOrder({ ...editingOrder, detalheEntrega: e.target.value })}
-                          className="w-full bg-white border border-slate-300 rounded-lg p-2"
-                        />
-                      </div>
                     </div>
                   ) : (
-                    <div>
-                      <label className="font-semibold text-slate-700 block mb-1">Local de Retirada (Loja ou Ateliê de Produção)</label>
-                      <select
-                        value={editingOrder.unidadeRetiradaId || editingOrder.unidadeOrigemId}
-                        onChange={(e) => setEditingOrder({ ...editingOrder, unidadeRetiradaId: e.target.value })}
-                        className="w-full bg-white border border-slate-300 rounded-lg p-2 font-medium"
-                      >
-                        {units.filter(u => u.ativo).map(u => (
-                          <option key={u.id} value={u.id}>
-                            {u.tipo === 'CENTRAL' ? '🏭 [Ateliê] ' : '🏪 '}{u.nome} - {u.endereco}
-                          </option>
-                        ))}
-                      </select>
+                    <div className="space-y-2.5">
+                      <div className="flex flex-wrap items-end gap-3">
+                        <div className="w-[155px] shrink-0">
+                          <label className="font-semibold text-slate-700 block mb-1">Data da Retirada *</label>
+                          <input
+                            type="date"
+                            required
+                            aria-label="Data da retirada"
+                            min={!editingOrder.id ? getCurrentLocalDateTime().slice(0, 10) : undefined}
+                            value={(editingOrder.dataHoraEntrega || getCurrentLocalDateTime()).slice(0, 10)}
+                            onChange={(e) => {
+                              const newDate = e.target.value;
+                              if (!newDate) return;
+                              const startTime = extractTimeHHmm(editingOrder.dataHoraEntrega) || '12:00';
+                              const endTime = extractTimeHHmm(
+                                editingOrder.dataHoraEntregaFim ||
+                                  addHoursToDateTime(editingOrder.dataHoraEntrega || getCurrentLocalDateTime(), 1)
+                              ) || '13:00';
+                              setEditingOrder({
+                                ...editingOrder,
+                                dataHoraEntrega: `${newDate}T${startTime}`,
+                                dataHoraEntregaFim: `${newDate}T${endTime}`
+                              });
+                            }}
+                            className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono text-xs"
+                          />
+                        </div>
+                        <div>
+                          <label className="font-semibold text-slate-700 block mb-1">Das *</label>
+                          <TimeSelect15
+                            ariaLabel="Hora inicial da retirada"
+                            value={extractTimeHHmm(editingOrder.dataHoraEntrega || getCurrentLocalDateTime())}
+                            onChange={(hhmm) => {
+                              const newStart = combineDateWithTime(
+                                editingOrder.dataHoraEntrega || getCurrentLocalDateTime(),
+                                hhmm
+                              );
+                              if (newStart) {
+                                setEditingOrder({
+                                  ...editingOrder,
+                                  dataHoraEntrega: newStart,
+                                  dataHoraEntregaFim: addHoursToDateTime(newStart, 1)
+                                });
+                              }
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <label className="font-semibold text-slate-700 block mb-1">Às</label>
+                          <TimeSelect15
+                            ariaLabel="Hora final da retirada"
+                            value={extractTimeHHmm(
+                              editingOrder.dataHoraEntregaFim ||
+                                addHoursToDateTime(editingOrder.dataHoraEntrega || getCurrentLocalDateTime(), 1)
+                            )}
+                            onChange={(hhmm) => {
+                              const newEnd = combineDateWithTime(
+                                editingOrder.dataHoraEntrega || getCurrentLocalDateTime(),
+                                hhmm
+                              );
+                              if (newEnd) {
+                                setEditingOrder({ ...editingOrder, dataHoraEntregaFim: newEnd });
+                              }
+                            }}
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="font-semibold text-slate-700 block mb-1">Local de Retirada (Loja ou Ateliê de Produção)</label>
+                        <select
+                          value={editingOrder.unidadeRetiradaId || editingOrder.unidadeOrigemId}
+                          onChange={(e) => setEditingOrder({ ...editingOrder, unidadeRetiradaId: e.target.value })}
+                          className="w-full bg-white border border-slate-300 rounded-lg p-2 font-medium"
+                        >
+                          {units.filter(u => u.ativo).map(u => (
+                            <option key={u.id} value={u.id}>
+                              {u.tipo === 'CENTRAL' ? '🏭 [Ateliê] ' : '🏪 '}{u.nome} - {u.endereco}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
                   )}
                 </div>

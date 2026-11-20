@@ -4,6 +4,7 @@ import { Users, Plus, Search, Phone, MapPin, Edit2, Trash2, X, Save, Printer, La
 import { PrintReportHeader } from '../components/PrintReportHeader';
 import { HybridFilterSort } from '../components/HybridFilterSort';
 import { useExpandedGroups } from '../hooks/useExpandedGroups';
+import { normalizePhoneForWhatsApp } from '../services/whatsappAutomationService';
 import {
   formatCep,
   lookupByCep,
@@ -396,8 +397,23 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
                               )}
                             </div>
                             <div className="flex items-center gap-1.5 text-xs font-mono text-slate-700">
-                              <Phone className="w-3.5 h-3.5 text-emerald-600" />
-                              <span>{customer.telefone}</span>
+                              {normalizePhoneForWhatsApp(customer.telefone) ? (
+                                <a
+                                  href={`https://wa.me/${normalizePhoneForWhatsApp(customer.telefone)}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title="Abrir conversa no WhatsApp"
+                                  className="inline-flex items-center gap-1.5 text-emerald-700 hover:text-emerald-800 hover:underline"
+                                >
+                                  <Phone className="w-3.5 h-3.5 text-emerald-600" />
+                                  <span>{customer.telefone}</span>
+                                </a>
+                              ) : (
+                                <>
+                                  <Phone className="w-3.5 h-3.5 text-emerald-600" />
+                                  <span>{customer.telefone}</span>
+                                </>
+                              )}
                             </div>
                             <div className="flex items-start gap-1.5 text-xs text-slate-600">
                               <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0 mt-0.5" />
@@ -495,10 +511,23 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
                       <tr key={customer.id} className="hover:bg-slate-50/70 transition-colors">
                         <td className="py-3.5 px-4 font-bold text-slate-900">{customer.nome}</td>
                         <td className="py-3.5 px-4 font-mono text-slate-700">
-                          <span className="inline-flex items-center gap-1.5">
-                            <Phone className="w-3.5 h-3.5 text-emerald-600" />
-                            {customer.telefone}
-                          </span>
+                          {normalizePhoneForWhatsApp(customer.telefone) ? (
+                            <a
+                              href={`https://wa.me/${normalizePhoneForWhatsApp(customer.telefone)}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title="Abrir conversa no WhatsApp"
+                              className="inline-flex items-center gap-1.5 text-emerald-700 hover:text-emerald-800 hover:underline"
+                            >
+                              <Phone className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>{customer.telefone}</span>
+                            </a>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5">
+                              <Phone className="w-3.5 h-3.5 text-emerald-600" />
+                              {customer.telefone}
+                            </span>
+                          )}
                         </td>
                         <td className="py-3.5 px-4 text-slate-600">
                           <span className="inline-flex items-center gap-1.5">

@@ -7,10 +7,6 @@ import {
   Loader2,
   AlertCircle,
   CheckCircle2,
-  ShoppingBag,
-  ChefHat,
-  Package,
-  Truck,
   Sparkles,
   User as UserIcon,
 } from 'lucide-react';
@@ -151,16 +147,7 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({
   return (
     <div className="min-h-screen w-screen bg-gradient-to-br from-[#f8f9ff] via-white to-emerald-50/40 text-[#0f172a] flex flex-col justify-between p-4 sm:p-6 lg:p-10 font-sans overflow-y-auto">
       {/* Top Status Bar */}
-      <div className="max-w-5xl w-full mx-auto flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <span
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-semibold ${seasonal.badgeClass}`}
-          >
-            <span aria-hidden="true">{seasonal.icons[0]}</span>
-            <span>{seasonal.label}</span>
-            <span aria-hidden="true">{seasonal.icons[1]}</span>
-          </span>
-        </div>
+      <div className="max-w-5xl w-full mx-auto flex items-center justify-end gap-3">
         <div
           className={`inline-flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-full border ${
             isSupabaseOnline
@@ -183,56 +170,17 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({
               alt="Beju Caramelos"
               className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl object-cover shadow-md ring-4 ring-white"
             />
-            <div className="text-left">
+            <div className="text-left space-y-1.5">
               <h1 className={`text-3xl sm:text-4xl font-extrabold tracking-tight ${seasonal.textGradientClass}`}>
                 Beju Caramelos
               </h1>
-              <p className="text-xs sm:text-sm font-medium text-slate-500 mt-0.5">
-                Sistema Integrado de Gestão & Delivery
-              </p>
-            </div>
-          </div>
-
-          <p className="text-sm sm:text-base text-slate-600 leading-relaxed max-w-lg mx-auto lg:mx-0">
-            Controle completo de pedidos, programação de produção do ateliê, estoque por unidade e rotas de entrega em tempo real.
-          </p>
-
-          <div className="grid grid-cols-2 gap-2.5 max-w-md mx-auto lg:mx-0 text-left">
-            <div className="flex items-center gap-2.5 p-2.5 rounded-xl bg-white border border-slate-200/80 shadow-xs">
-              <div className="p-2 rounded-lg bg-brand-50 text-brand-600 shrink-0">
-                <ShoppingBag className="w-4 h-4" />
-              </div>
-              <div>
-                <p className="text-xs font-bold text-slate-800">Pedidos</p>
-                <p className="text-[11px] text-slate-500">Balcão, WhatsApp e Web</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2.5 p-2.5 rounded-xl bg-white border border-slate-200/80 shadow-xs">
-              <div className="p-2 rounded-lg bg-amber-50 text-amber-600 shrink-0">
-                <ChefHat className="w-4 h-4" />
-              </div>
-              <div>
-                <p className="text-xs font-bold text-slate-800">Produção</p>
-                <p className="text-[11px] text-slate-500">Turnos e Reposição</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2.5 p-2.5 rounded-xl bg-white border border-slate-200/80 shadow-xs">
-              <div className="p-2 rounded-lg bg-emerald-50 text-emerald-600 shrink-0">
-                <Package className="w-4 h-4" />
-              </div>
-              <div>
-                <p className="text-xs font-bold text-slate-800">Estoque</p>
-                <p className="text-[11px] text-slate-500">Multi-unidades e Mínimos</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2.5 p-2.5 rounded-xl bg-white border border-slate-200/80 shadow-xs">
-              <div className="p-2 rounded-lg bg-sky-50 text-sky-600 shrink-0">
-                <Truck className="w-4 h-4" />
-              </div>
-              <div>
-                <p className="text-xs font-bold text-slate-800">Entregas</p>
-                <p className="text-[11px] text-slate-500">Roteiro e Romaneio</p>
-              </div>
+              <span
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-semibold ${seasonal.badgeClass}`}
+              >
+                <span aria-hidden="true">{seasonal.icons[0]}</span>
+                <span>{seasonal.label}</span>
+                <span aria-hidden="true">{seasonal.icons[1]}</span>
+              </span>
             </div>
           </div>
 
@@ -254,7 +202,7 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({
             <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
               <div>
                 <h2 className="font-bold text-sm">
-                  {isSignUp ? 'Cadastrar Novo Operador' : 'Acesso do Operador'}
+                  {isSignUp ? 'Cadastrar Novo Operador' : 'LogIn'}
                 </h2>
                 <p className="text-[11px] text-slate-400">
                   Entre com seu e-mail e senha numérica de 8 dígitos

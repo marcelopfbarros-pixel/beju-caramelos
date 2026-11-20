@@ -15,6 +15,7 @@ import { PrintReportHeader } from '../components/PrintReportHeader';
 import { HybridFilterSort } from '../components/HybridFilterSort';
 import { useExpandedGroups } from '../hooks/useExpandedGroups';
 import { isReplenishmentOrder } from '../utils/orderStatusStyles';
+import { canEditProduction, UserRole } from '../utils/permissions';
 
 interface ProducaoScreenProps {
   orders: Order[];
@@ -22,6 +23,7 @@ interface ProducaoScreenProps {
   units: StoreUnit[];
   categories: Category[];
   productionOrders: ProductionOrder[];
+  userRole?: UserRole;
   onSaveProductionOrder: (po: ProductionOrder) => void;
   onUpdateOrderStatus: (orderId: string, status: OrderStatus) => void;
 }
@@ -63,9 +65,11 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
   units,
   categories,
   productionOrders,
+  userRole = 'ADMIN',
   onSaveProductionOrder,
   onUpdateOrderStatus
 }) => {
+  const canEdit = canEditProduction(userRole);
   const [selectedDateFilter, setSelectedDateFilter] = useState<'TODAS' | 'HOJE' | 'AMANHA'>('TODAS');
   const [selectedShift, setSelectedShift] = useState<'TODOS' | ProductionShift>('TODOS');
   const [sortBy, setSortBy] = useState<'DATA_TURNO_ASC' | 'DATA_TURNO_DESC' | 'QTD_DESC' | 'PRODUTO_ASC'>('DATA_TURNO_ASC');
@@ -566,6 +570,14 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
     const nextStage = idx >= 0 && idx < STAGE_FLOW.length - 1 ? STAGE_FLOW[idx + 1] : null;
     const stInfo = statusConfig[item.status];
 
+    if (!canEdit) {
+      return (
+        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold border print:hidden ${stInfo.color}`}>
+          {stInfo.label}
+        </span>
+      );
+    }
+
     return (
       <div className="inline-flex items-center gap-0.5 print:hidden">
         <button
@@ -667,21 +679,23 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
             <span>Exportar (.xlsx)</span>
           </button>
 
-          <button
-            onClick={() => {
-              setManualDate(todayKey);
-              setManualUnitId(units.find(u => u.ativo)?.id || centralUnitId);
-              setManualProdId(products.find(p => p.ativo)?.id || products[0]?.id || '');
-              setManualQty(1);
-              setManualItems([]);
-              setManualObs('');
-              setIsManualModalOpen(true);
-            }}
-            className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-all shadow-sm active:scale-95"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Produção</span>
-          </button>
+          {canEdit && (
+            <button
+              onClick={() => {
+                setManualDate(todayKey);
+                setManualUnitId(units.find(u => u.ativo)?.id || centralUnitId);
+                setManualProdId(products.find(p => p.ativo)?.id || products[0]?.id || '');
+                setManualQty(1);
+                setManualItems([]);
+                setManualObs('');
+                setIsManualModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-all shadow-sm active:scale-95"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Produção</span>
+            </button>
+          )}
 
           <button
             onClick={() => window.print()}
@@ -889,6 +903,7 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
                         </span>
                       </td>
                       <td className="py-3.5 px-4 text-right print:hidden">
+                        {canEdit && (
                         <button
                           onClick={() => openEditModal(item)}
                           title="Editar"
@@ -897,6 +912,7 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
                         >
                           <Edit3 className="w-3.5 h-3.5" />
                         </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -973,6 +989,7 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
                               {item.quantidadeTotal} {item.unidadeMedida}
                             </div>
                           </div>
+                          {canEdit && (
                           <div className="pt-2 border-t border-slate-100 flex items-center justify-end">
                             <button
                               onClick={() => openEditModal(item)}
@@ -983,6 +1000,7 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
                               <Edit3 className="w-3.5 h-3.5" />
                             </button>
                           </div>
+                          )}
                         </div>
                       );
                     })}

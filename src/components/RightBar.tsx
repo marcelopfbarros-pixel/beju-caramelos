@@ -4,6 +4,8 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Order, Product, Category, StoreUnit, StockItem, MonthlyRevenueGoals, ProductionShift } from '../types';
 import { getMonthGoalForUnit, getYearGoalForUnit } from '../utils/revenueGoals';
+import { formatDeliveryTimeRange } from '../utils/deliveryTimeRange';
+import { canEditRevenueGoals, canViewFinancials, UserRole } from '../utils/permissions';
 import { ScreenId } from './Sidebar';
 import { ProgramacaoProducaoModal, toLocalDateKey } from './ProgramacaoProducaoModal';
 import { TutorialOverlay } from './TutorialOverlay';
@@ -56,6 +58,7 @@ interface RightBarProps {
   onChangeSelectedDeliveryIds?: (ids: string[]) => void;
   lowStockCount: number;
   revenueGoals?: MonthlyRevenueGoals;
+  userRole?: UserRole;
   currentScreen?: ScreenId;
   onNavigate?: (screen: ScreenId) => void;
   isMobileDrawer?: boolean;
@@ -78,6 +81,7 @@ export const RightBar: React.FC<RightBarProps> = ({
   onChangeSelectedDeliveryIds,
   lowStockCount,
   revenueGoals = {},
+  userRole = 'ADMIN',
   currentScreen = 'pedidos',
   onNavigate,
   isMobileDrawer = false,
@@ -92,8 +96,8 @@ export const RightBar: React.FC<RightBarProps> = ({
   const [activeTab, setActiveTab] = useState<'INDICADORES' | 'FERRAMENTAS'>(() =>
     focusRoteiroSignal > 0 ? 'FERRAMENTAS' : 'INDICADORES'
   );
-  const [expandedTool, setExpandedTool] = useState<'WHATSAPP' | 'ROTEIRIZADOR' | 'BUSCA_CEP' | 'PLANEJAMENTO_PRODUCAO' | 'CARDAPIO_CLIENTES' | 'TUTORIAL'>(() =>
-    focusRoteiroSignal > 0 ? 'ROTEIRIZADOR' : 'WHATSAPP'
+  const [expandedTool, setExpandedTool] = useState<'WHATSAPP' | 'ROTEIRIZADOR' | 'BUSCA_CEP' | 'PLANEJAMENTO_PRODUCAO' | 'CARDAPIO_CLIENTES' | 'TUTORIAL' | null>(() =>
+    focusRoteiroSignal > 0 ? 'ROTEIRIZADOR' : null
   );
   const [isProgramacaoModalOpen, setIsProgramacaoModalOpen] = useState(false);
   const [isTutorialOpen, setIsTutorialOpen] = useState(false);
@@ -251,7 +255,10 @@ export const RightBar: React.FC<RightBarProps> = ({
 Olá, *${order.clienteNome}*! Confirmamos o seu pedido:
 
 *Pedido:* ${order.numeroPedido}
-*Data/Horário:* ${new Date(order.dataHoraEntrega).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+*Data/Horário:* ${formatDeliveryTimeRange(order.dataHoraEntrega, order.dataHoraEntregaFim, {
+  tipoEntrega: order.tipoEntrega,
+  turnoEntrega: order.tipoEntrega === 'DELIVERY' ? order.turnoEntrega : undefined
+})}
 *Modalidade:* ${order.tipoEntrega === 'DELIVERY' ? `Entrega (${order.enderecoEntrega || 'Endereço informado'})` : `Retirada no Balcão (${unit?.nome || 'Loja'})`}
 
 *Itens Solicitados:*
@@ -383,12 +390,13 @@ Obrigado por escolher a Beju Caramelos! ✨`;
         {activeTab === 'INDICADORES' && (
           <div>
             <div className="grid grid-cols-2 gap-2">
-            {/* KPI 1: Faturamento */}
+            {/* KPI 1: Faturamento (ADMIN e GERENTE) */}
+            {canViewFinancials(userRole) && (
             <button
               type="button"
-              onClick={() => onNavigate?.('relatorios')}
+              onClick={() => onNavigate?.('pedidos')}
               className="text-left bg-[#f8f9ff] hover:bg-indigo-50/70 border border-slate-200/90 rounded-lg p-2 transition-colors cursor-pointer"
-              title="Ver relatórios financeiros"
+              title="Ver pedidos"
             >
               <span className="text-[9px] font-medium text-slate-500 uppercase block leading-tight">Faturamento</span>
               <div className="text-xs font-bold font-mono text-slate-900 mt-0.5 leading-tight">
@@ -398,6 +406,7 @@ Obrigado por escolher a Beju Caramelos! ✨`;
                 {validOrders.length} ped. • TM R$ {avgTicket.toFixed(0)}
               </span>
             </button>
+            )}
 
             {/* KPI 2: Pedidos Pendentes */}
             <button
@@ -467,7 +476,8 @@ Obrigado por escolher a Beju Caramelos! ✨`;
             </button>
           </div>
 
-          {/* Intelligent Revenue Goal Tracking Card */}
+          {/* Intelligent Revenue Goal Tracking Card (ADMIN e GERENTE) */}
+          {canViewFinancials(userRole) && (
           <div className="mt-3 rounded-xl border border-slate-200 bg-gradient-to-br from-[#f8f9ff] to-white p-3.5 shadow-2xs space-y-2.5">
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
@@ -511,7 +521,7 @@ Obrigado por escolher a Beju Caramelos! ✨`;
                 <p className="text-[11px] text-slate-500">
                   Nenhuma meta definida para {goalAnalytics.periodLabel}.
                 </p>
-                {!isMobileDrawer && (
+                {!isMobileDrawer && canEditRevenueGoals(userRole) && (
                   <button
                     type="button"
                     onClick={() => onNavigate?.('configuracoes')}
@@ -613,6 +623,7 @@ Obrigado por escolher a Beju Caramelos! ✨`;
               </>
             )}
           </div>
+          )}
         </div>
         )}
 
@@ -620,17 +631,17 @@ Obrigado por escolher a Beju Caramelos! ✨`;
         {activeTab === 'FERRAMENTAS' && (
           <div className="space-y-3">
             {/* Card 1: Resumo do WhatsApp */}
-            <div className="rounded-xl border border-[#e2e8f0] bg-white shadow-2xs overflow-hidden">
+            <div className="rounded-xl border-2 border-emerald-500 bg-emerald-50/60 shadow-2xs overflow-hidden">
               <button
                 type="button"
                 onClick={() =>
-                  setExpandedTool(prev => (prev === 'WHATSAPP' ? 'ROTEIRIZADOR' : 'WHATSAPP'))
+                  setExpandedTool(prev => (prev === 'WHATSAPP' ? null : 'WHATSAPP'))
                 }
-                className="w-full flex items-center justify-between px-3.5 py-2.5 bg-slate-50/80 hover:bg-slate-100/80 transition-colors cursor-pointer text-left"
+                className="w-full flex items-center justify-between px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100/80 transition-colors cursor-pointer text-left"
               >
                 <div className="flex items-center gap-2">
                   <MessageSquare className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span className="text-xs font-bold text-slate-900">Resumo do WhatsApp</span>
+                  <span className="text-xs font-bold text-slate-900">Resumo Pedido</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   {targetOrder && (
@@ -729,7 +740,7 @@ Obrigado por escolher a Beju Caramelos! ✨`;
               onNavigate={onNavigate}
               isExpanded={expandedTool === 'ROTEIRIZADOR'}
               onToggleExpand={() =>
-                setExpandedTool(prev => (prev === 'ROTEIRIZADOR' ? 'WHATSAPP' : 'ROTEIRIZADOR'))
+                setExpandedTool(prev => (prev === 'ROTEIRIZADOR' ? null : 'ROTEIRIZADOR'))
               }
             />
 
@@ -739,20 +750,20 @@ Obrigado por escolher a Beju Caramelos! ✨`;
               onSaveCustomer={onSaveCustomer}
               isExpanded={expandedTool === 'BUSCA_CEP'}
               onToggleExpand={() =>
-                setExpandedTool(prev => (prev === 'BUSCA_CEP' ? 'WHATSAPP' : 'BUSCA_CEP'))
+                setExpandedTool(prev => (prev === 'BUSCA_CEP' ? null : 'BUSCA_CEP'))
               }
             />
 
             {/* Card 4: Planejamento de Produção (Tabela Dinâmica) */}
-            <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
+            <div className="bg-emerald-50/60 border-2 border-emerald-500 rounded-xl shadow-xs overflow-hidden">
               <button
                 type="button"
                 onClick={() =>
                   setExpandedTool(prev =>
-                    prev === 'PLANEJAMENTO_PRODUCAO' ? 'WHATSAPP' : 'PLANEJAMENTO_PRODUCAO'
+                    prev === 'PLANEJAMENTO_PRODUCAO' ? null : 'PLANEJAMENTO_PRODUCAO'
                   )
                 }
-                className="w-full px-3.5 py-2.5 bg-slate-50/80 hover:bg-slate-100/80 flex items-center justify-between text-left transition-colors cursor-pointer"
+                className="w-full px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100/80 flex items-center justify-between text-left transition-colors cursor-pointer"
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <ChefHat className="w-4 h-4 text-brand-600 shrink-0" />
@@ -848,13 +859,13 @@ Obrigado por escolher a Beju Caramelos! ✨`;
             </div>
 
             {/* Card 5: Tutorial Interativo da Tela Atual */}
-            <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
+            <div className="bg-emerald-50/60 border-2 border-emerald-500 rounded-xl shadow-xs overflow-hidden">
               <button
                 type="button"
                 onClick={() =>
-                  setExpandedTool(prev => (prev === 'TUTORIAL' ? 'WHATSAPP' : 'TUTORIAL'))
+                  setExpandedTool(prev => (prev === 'TUTORIAL' ? null : 'TUTORIAL'))
                 }
-                className="w-full px-3.5 py-2.5 bg-slate-50/80 hover:bg-slate-100/80 flex items-center justify-between text-left transition-colors cursor-pointer"
+                className="w-full px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100/80 flex items-center justify-between text-left transition-colors cursor-pointer"
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <HelpCircle className="w-4 h-4 text-brand-600 shrink-0" />
@@ -896,13 +907,13 @@ Obrigado por escolher a Beju Caramelos! ✨`;
             </div>
 
             {/* Card 6: Cardápio Clientes */}
-            <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
+            <div className="bg-emerald-50/60 border-2 border-emerald-500 rounded-xl shadow-xs overflow-hidden">
               <button
                 type="button"
                 onClick={() =>
-                  setExpandedTool(prev => (prev === 'CARDAPIO_CLIENTES' ? 'WHATSAPP' : 'CARDAPIO_CLIENTES'))
+                  setExpandedTool(prev => (prev === 'CARDAPIO_CLIENTES' ? null : 'CARDAPIO_CLIENTES'))
                 }
-                className="w-full px-3.5 py-2.5 bg-slate-50/80 hover:bg-slate-100/80 flex items-center justify-between text-left transition-colors cursor-pointer"
+                className="w-full px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100/80 flex items-center justify-between text-left transition-colors cursor-pointer"
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <ShoppingBag className="w-4 h-4 text-brand-600 shrink-0" />
@@ -1163,11 +1174,11 @@ const CepFinderTool: React.FC<CepFinderToolProps> = ({
   };
 
   return (
-    <div className="rounded-xl border border-[#e2e8f0] bg-white shadow-2xs overflow-hidden">
+    <div className="rounded-xl border-2 border-emerald-500 bg-emerald-50/60 shadow-2xs overflow-hidden">
       <button
         type="button"
         onClick={onToggleExpand}
-        className="w-full flex items-center justify-between px-3.5 py-2.5 bg-slate-50/80 hover:bg-slate-100/80 transition-colors cursor-pointer text-left"
+        className="w-full flex items-center justify-between px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100/80 transition-colors cursor-pointer text-left"
       >
         <div className="flex items-center gap-2">
           <Search className="w-4 h-4 text-indigo-600 shrink-0" />
@@ -1830,14 +1841,14 @@ const RoutePlannerTool: React.FC<RoutePlannerToolProps> = ({
   };
 
   return (
-    <div className="rounded-xl border border-[#e2e8f0] bg-white shadow-2xs overflow-hidden">
+    <div className="rounded-xl border-2 border-emerald-500 bg-emerald-50/60 shadow-2xs overflow-hidden">
       <button
         type="button"
         onClick={onToggleExpand}
-        className="w-full flex items-center justify-between px-3.5 py-2.5 bg-slate-50/80 hover:bg-slate-100/80 transition-colors cursor-pointer text-left"
+        className="w-full flex items-center justify-between px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100/80 transition-colors cursor-pointer text-left"
       >
         <div className="flex items-center gap-2">
-          <Navigation className="w-4 h-4 text-brand-600 shrink-0" />
+          <Navigation className="w-4 h-4 text-sky-600 shrink-0" />
           <span className="text-xs font-bold text-slate-900">Roteiro</span>
         </div>
         <div className="flex items-center gap-1.5">

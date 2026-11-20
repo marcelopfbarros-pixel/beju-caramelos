@@ -8,16 +8,19 @@ import {
   Building2, 
   Settings,
   Users,
-  BarChart3,
   ChevronLeft,
   ChevronRight
 } from 'lucide-react';
 
-export type ScreenId = 'pedidos' | 'producao' | 'estoque' | 'entregas' | 'clientes' | 'relatorios' | 'produtos' | 'lojas' | 'configuracoes';
+import { UserProfile } from '../types';
+import { canAccessScreen } from '../utils/permissions';
+
+export type ScreenId = 'pedidos' | 'producao' | 'estoque' | 'entregas' | 'clientes' | 'produtos' | 'lojas' | 'configuracoes';
 
 interface SidebarProps {
   currentScreen: ScreenId;
   onNavigate: (screen: ScreenId) => void;
+  userRole?: UserProfile['role'];
   pendingOrdersCount: number;
   itemsToProduceCount: number;
   lowStockCount: number;
@@ -28,6 +31,7 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({
   currentScreen,
   onNavigate,
+  userRole = 'ADMIN',
   pendingOrdersCount,
   itemsToProduceCount,
   lowStockCount,
@@ -78,11 +82,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: CakeSlice
     },
     {
-      id: 'relatorios' as ScreenId,
-      label: 'Relatórios',
-      icon: BarChart3
-    },
-    {
       id: 'lojas' as ScreenId,
       label: 'Unidades',
       icon: Building2
@@ -92,7 +91,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Configurações',
       icon: Settings
     }
-  ];
+  ].filter(item => canAccessScreen(userRole, item.id));
 
   return (
     <aside

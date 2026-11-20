@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { Order, Product, Category, StoreUnit, StockItem, Customer, ProductionOrder, UserProfile } from '../types';
+import { formatDeliveryTimeRange } from '../utils/deliveryTimeRange';
 
 export class ExcelService {
   /**
@@ -71,12 +72,17 @@ export class ExcelService {
         'Nº Pedido': o.numeroPedido,
         'Status': o.status,
         'Data do Registro': new Date(o.dataPedido).toLocaleString('pt-BR'),
-        'Data/Hora Entrega': new Date(o.dataHoraEntrega).toLocaleString('pt-BR'),
+        'Data/Hora Entrega': formatDeliveryTimeRange(o.dataHoraEntrega, o.dataHoraEntregaFim, {
+          tipoEntrega: o.tipoEntrega,
+          turnoEntrega: o.tipoEntrega === 'DELIVERY' ? o.turnoEntrega : undefined
+        }),
+        'Turno Entrega': o.tipoEntrega === 'DELIVERY' ? (o.turnoEntrega || '-') : '-',
         'Modalidade': o.tipoEntrega === 'DELIVERY' ? 'Entrega' : 'Retirada',
         'Unidade': unitMap.get(o.unidadeOrigemId) || 'Não especificada',
         'Cliente': o.clienteNome,
         'Telefone WhatsApp': o.clienteTelefone,
         'Endereço de Entrega': o.enderecoEntrega || o.clienteEndereco || '-',
+        'Detalhe de Entrega': o.detalheEntrega || '-',
         'Itens do Pedido': itensDesc,
         'Subtotal (R$)': o.valorSubtotal,
         'Taxa de Entrega (R$)': o.taxaEntrega,
@@ -180,11 +186,15 @@ export class ExcelService {
       'Status': o.status,
       'Data do Pedido': o.dataPedido,
       'Data/Hora Entrega': o.dataHoraEntrega,
+      'Data/Hora Entrega Fim': o.dataHoraEntregaFim || '',
+      'Turno Entrega': o.turnoEntrega || '',
       'Tipo de Entrega': o.tipoEntrega,
       'Unidade ID': o.unidadeOrigemId,
+      'Unidade Retirada ID': o.unidadeRetiradaId || '',
       'Cliente': o.clienteNome,
       'Telefone': o.clienteTelefone,
       'Endereço': o.enderecoEntrega || o.clienteEndereco || '',
+      'Detalhe Entrega': o.detalheEntrega || '',
       'Subtotal': o.valorSubtotal,
       'Taxa Entrega': o.taxaEntrega,
       'Desconto': o.desconto,
@@ -212,7 +222,9 @@ export class ExcelService {
       'ID': c.id,
       'Nome': c.nome,
       'Telefone': c.telefone,
+      'CEP': c.cep || '',
       'Endereço': c.endereco,
+      'Detalhe Entrega': c.detalheEntrega || '',
       'Observações': c.observacoes || '',
       'Criado Em': c.createdAt || ''
     })));
@@ -241,7 +253,8 @@ export class ExcelService {
       'Unidade Padrão ID': u.unidadePadraoId || '',
       'Unidades Permitidas JSON': JSON.stringify(u.unidadesPermitidas || []),
       'Ativo': u.ativo !== false ? 'SIM' : 'NÃO',
-      'Avatar URL': u.avatarUrl || ''
+      'Avatar URL': u.avatarUrl || '',
+      'Senha': u.senha || ''
     })));
     XLSX.utils.book_append_sheet(wb, wsUsers, 'Usuarios');
 
@@ -320,11 +333,15 @@ export class ExcelService {
           status: (r['Status'] || 'PENDENTE') as any,
           dataPedido: String(r['Data do Pedido'] || new Date().toISOString()),
           dataHoraEntrega: String(r['Data/Hora Entrega'] || new Date().toISOString()),
+          dataHoraEntregaFim: r['Data/Hora Entrega Fim'] ? String(r['Data/Hora Entrega Fim']) : undefined,
+          turnoEntrega: r['Turno Entrega'] ? (String(r['Turno Entrega']) as any) : undefined,
           tipoEntrega: (r['Tipo de Entrega'] || 'DELIVERY') as any,
           unidadeOrigemId: String(r['Unidade ID'] || 'u-central'),
+          unidadeRetiradaId: r['Unidade Retirada ID'] ? String(r['Unidade Retirada ID']) : undefined,
           clienteNome: String(r['Cliente'] || 'Cliente'),
           clienteTelefone: String(r['Telefone'] || ''),
           enderecoEntrega: String(r['Endereço'] || ''),
+          detalheEntrega: r['Detalhe Entrega'] ? String(r['Detalhe Entrega']) : undefined,
           valorSubtotal: Number(r['Subtotal'] || 0),
           taxaEntrega: Number(r['Taxa Entrega'] || 0),
           desconto: Number(r['Desconto'] || 0),
@@ -355,7 +372,9 @@ export class ExcelService {
         id: String(r['ID'] || `cli-${Date.now()}`),
         nome: String(r['Nome'] || ''),
         telefone: String(r['Telefone'] || ''),
+        cep: String(r['CEP'] || '') || undefined,
         endereco: String(r['Endereço'] || ''),
+        detalheEntrega: String(r['Detalhe Entrega'] || '') || undefined,
         observacoes: String(r['Observações'] || '') || undefined,
         createdAt: String(r['Criado Em'] || '') || undefined
       }));
@@ -396,6 +415,7 @@ export class ExcelService {
           unidadesPermitidas,
           ativo: String(r['Ativo'] || 'SIM').toUpperCase() === 'SIM',
           avatarUrl: String(r['Avatar URL'] || ''),
+          senha: String(r['Senha'] || '') || undefined,
           autenticadoGoogle: false
         };
       });

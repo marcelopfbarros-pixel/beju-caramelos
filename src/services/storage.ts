@@ -275,7 +275,7 @@ export class AppStorage {
   }
 
   static getOrders(): Order[] {
-    return this.load('orders', INITIAL_ORDERS);
+    return this.load('orders', []);
   }
 
   static saveOrders(orders: Order[]): void {
@@ -283,7 +283,7 @@ export class AppStorage {
   }
 
   static getStock(): StockItem[] {
-    return this.load('stock', INITIAL_STOCK);
+    return this.load('stock', []);
   }
 
   static saveStock(stock: StockItem[]): void {
@@ -315,26 +315,7 @@ export class AppStorage {
   }
 
   static getCustomers(): Customer[] {
-    return this.load('customers', [
-      {
-        id: 'cli-1',
-        nome: 'Mariana Guimarães',
-        telefone: '+55 11 98765-4321',
-        endereco: 'Rua Bela Cintra, 890, Apto 51 - Consolação'
-      },
-      {
-        id: 'cli-2',
-        nome: 'Rodrigo Antunes',
-        telefone: '+55 11 99123-8877',
-        endereco: 'Av. Ibirapuera, 1400'
-      },
-      {
-        id: 'cli-3',
-        nome: 'Carla Vasconcellos',
-        telefone: '+55 11 97654-1122',
-        endereco: 'Alameda Lorena, 1420 - Cerqueira César'
-      }
-    ]);
+    return this.load('customers', []);
   }
 
   static saveCustomers(customers: Customer[]): void {

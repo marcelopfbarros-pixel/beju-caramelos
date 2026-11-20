@@ -1,5 +1,6 @@
 import { Order, OrderStatus, Product, StoreUnit } from '../types';
 import { resolveCoordinates, haversineKm } from './routeOptimizerService';
+import { formatDeliveryTimeRange } from '../utils/deliveryTimeRange';
 
 export interface WhatsAppAutomationSettings {
   autoPromptOnStatusChange: boolean;
@@ -127,9 +128,9 @@ export function formatStatusNotificationMessage(
       ? `*Chave PIX:* ${unit?.chavePix || 'financeiro@bejucaramelos.com.br'}`
       : '';
 
-  const horarioText = new Date(order.dataHoraEntrega).toLocaleString('pt-BR', {
-    dateStyle: 'short',
-    timeStyle: 'short'
+  const horarioText = formatDeliveryTimeRange(order.dataHoraEntrega, order.dataHoraEntregaFim, {
+    tipoEntrega: order.tipoEntrega,
+    turnoEntrega: order.tipoEntrega === 'DELIVERY' ? order.turnoEntrega : undefined
   });
 
   return template

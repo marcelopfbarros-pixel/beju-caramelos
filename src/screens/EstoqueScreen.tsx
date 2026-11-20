@@ -22,12 +22,14 @@ import { PrintReportHeader } from '../components/PrintReportHeader';
 import { HybridFilterSort } from '../components/HybridFilterSort';
 import { useExpandedGroups } from '../hooks/useExpandedGroups';
 import { ChevronDown, ChevronRight } from 'lucide-react';
+import { canEditStock, UserRole } from '../utils/permissions';
 
 interface EstoqueScreenProps {
   stock: StockItem[];
   products: Product[];
   units: StoreUnit[];
   activeUnitId: string;
+  userRole?: UserRole;
   onUpdateStock: (updatedStock: StockItem[]) => void;
   onDeleteStockItem?: (stockId: string) => void;
 }
@@ -37,9 +39,11 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
   products,
   units,
   activeUnitId,
+  userRole = 'ADMIN',
   onUpdateStock,
   onDeleteStockItem
 }) => {
+  const canEdit = canEditStock(userRole);
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
   const [transferOrigin, setTransferOrigin] = useState<string>(units[0]?.id || 'u-central');
   const [transferDestination, setTransferDestination] = useState<string>(units[1]?.id || 'u-loja1');
@@ -272,21 +276,25 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
             <span>Exportar Estoque (.xlsx)</span>
           </button>
 
-          <button
-            onClick={handleOpenAddStock}
-            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-lg transition-colors shadow-xs"
-          >
-            <Plus className="w-4 h-4 text-emerald-600" />
-            <span>Estoque</span>
-          </button>
+          {canEdit && (
+            <>
+              <button
+                onClick={handleOpenAddStock}
+                className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-lg transition-colors shadow-xs"
+              >
+                <Plus className="w-4 h-4 text-emerald-600" />
+                <span>Estoque</span>
+              </button>
 
-          <button
-            onClick={() => setIsTransferModalOpen(true)}
-            className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-all shadow-sm active:scale-95"
-          >
-            <ArrowLeftRight className="w-4 h-4" />
-            <span>Transferir entre Lojas</span>
-          </button>
+              <button
+                onClick={() => setIsTransferModalOpen(true)}
+                className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-all shadow-sm active:scale-95"
+              >
+                <ArrowLeftRight className="w-4 h-4" />
+                <span>Transferir entre Lojas</span>
+              </button>
+            </>
+          )}
 
           <button
             onClick={() => window.print()}
@@ -439,6 +447,7 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
                             </div>
                           </div>
 
+                          {canEdit && (
                           <div className="inline-flex items-center gap-1.5">
                             <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1">
                               <button
@@ -467,6 +476,7 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
+                          )}
                         </div>
                       </div>
                     );
@@ -494,7 +504,7 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
                 <th className="py-3 px-4 text-center">Saldo Atual</th>
                 <th className="py-3 px-4 text-center">Estoque Mínimo</th>
                 <th className="py-3 px-4 text-center">Situação</th>
-                <th className="py-3 px-4 text-right print:hidden">Ajuste Rápido (+/-)</th>
+                <th className="py-3 px-4 text-right print:hidden">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#e2e8f0]">
@@ -533,13 +543,29 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
                           {prod?.descricao || 'Produto não encontrado'}
                         </td>
                         <td className="py-3 px-4 text-center">
-                          <span className={`inline-block font-mono font-bold px-3 py-1 rounded-lg text-sm ${
-                            isLow 
-                              ? 'bg-rose-100 text-rose-800 border border-rose-200' 
-                              : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                          }`}>
-                            {item.quantidadeAtual} {prod?.unidade || 'UN'}
-                          </span>
+                          <div className="inline-flex items-center justify-center gap-2">
+                            <span className={`inline-block font-mono font-bold px-3 py-1 rounded-lg text-sm ${
+                              isLow 
+                                ? 'bg-rose-100 text-rose-800 border border-rose-200' 
+                                : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                            }`}>
+                              {item.quantidadeAtual} {prod?.unidade || 'UN'}
+                            </span>
+                            {canEdit && (
+                            <div className="inline-flex flex-col items-center bg-slate-100 border border-slate-200 rounded-lg p-0.5 print:hidden">
+                              <button
+                                onClick={() => handleAdjustQuantity(item.id, 1)}
+                                className="px-2 py-0.5 text-slate-600 hover:text-black hover:bg-white rounded font-bold text-xs leading-none cursor-pointer transition-colors"
+                                title="Adicionar 1"
+                              >+</button>
+                              <button
+                                onClick={() => handleAdjustQuantity(item.id, -1)}
+                                className="px-2 py-0.5 text-slate-600 hover:text-black hover:bg-white rounded font-bold text-xs leading-none cursor-pointer transition-colors"
+                                title="Subtrair 1"
+                              >-</button>
+                            </div>
+                            )}
+                          </div>
                         </td>
                         <td className="py-3 px-4 text-center font-mono text-slate-500">
                           {item.quantidadeMinima} {prod?.unidade || 'UN'}
@@ -558,19 +584,8 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
                           )}
                         </td>
                         <td className="py-3 px-4 text-right print:hidden">
-                          <div className="inline-flex items-center gap-2">
-                            <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1">
-                              <button
-                                onClick={() => handleAdjustQuantity(item.id, -1)}
-                                className="px-2 py-0.5 text-slate-600 hover:text-black font-bold text-xs"
-                                title="Subtrair 1"
-                              >-</button>
-                              <button
-                                onClick={() => handleAdjustQuantity(item.id, 1)}
-                                className="px-2 py-0.5 text-slate-600 hover:text-black font-bold text-xs"
-                                title="Adicionar 1"
-                              >+</button>
-                            </div>
+                          {canEdit && (
+                          <div className="inline-flex items-center gap-1.5">
                             <button
                               onClick={() => handleOpenEditStock(item)}
                               className="p-1.5 text-slate-500 hover:text-brand-700 hover:bg-brand-50 rounded-lg transition-colors"
@@ -586,6 +601,7 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
+                          )}
                         </td>
                       </tr>
                     );

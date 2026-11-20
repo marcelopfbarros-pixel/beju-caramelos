@@ -4,6 +4,8 @@ import { Sidebar, ScreenId } from './components/Sidebar';
 import { RightBar } from './components/RightBar';
 import { LandingScreen } from './components/LandingScreen';
 import { TutorialOverlay } from './components/TutorialOverlay';
+import { ButterflyFlight } from './components/ButterflyFlight';
+import { canAccessScreen, getDefaultScreenForRole } from './utils/permissions';
 import { PedidosScreen } from './screens/PedidosScreen';
 import { ProdutosScreen } from './screens/ProdutosScreen';
 import { EntregasScreen } from './screens/EntregasScreen';
@@ -11,7 +13,6 @@ import { ProducaoScreen } from './screens/ProducaoScreen';
 import { EstoqueScreen } from './screens/EstoqueScreen';
 import { LojasScreen } from './screens/LojasScreen';
 import { ClientesScreen } from './screens/ClientesScreen';
-import { RelatoriosScreen } from './screens/RelatoriosScreen';
 import { ConfiguracoesScreen } from './screens/ConfiguracoesScreen';
 import { CardapioDigitalScreen } from './screens/CardapioDigitalScreen';
 import { AppStorage } from './services/storage';
@@ -22,7 +23,20 @@ import {
   formatStatusNotificationMessage,
   dispatchWhatsAppMessage
 } from './services/whatsappAutomationService';
-import { MessageSquare, Send, X, ShoppingBag, ChefHat, Package, Truck, Wrench } from 'lucide-react';
+import {
+  MessageSquare,
+  Send,
+  X,
+  ShoppingBag,
+  ChefHat,
+  Package,
+  Truck,
+  Wrench,
+  Users,
+  CakeSlice,
+  Building2,
+  Settings
+} from 'lucide-react';
 import { 
   StoreUnit, 
   Category, 
@@ -36,7 +50,9 @@ import {
   ProductionShift,
   ProductionStatus,
   Customer,
-  MonthlyRevenueGoals
+  MonthlyRevenueGoals,
+  CardapioIntroConfig,
+  CardapioThankYouConfig
 } from './types';
 
 export const App: React.FC = () => {
@@ -69,6 +85,86 @@ export const App: React.FC = () => {
     }
   }, []);
 
+  const [cardapioIntroConfig, setCardapioIntroConfig] = useState<CardapioIntroConfig>(() => {
+    const defaults: CardapioIntroConfig = {
+      imageUrl: '/logo.jpg',
+      phrase: 'Beju Caramelos',
+      durationSeconds: 5
+    };
+    try {
+      const saved = localStorage.getItem('juju_cardapio_intro_config');
+      if (!saved) return defaults;
+      const parsed = JSON.parse(saved) as Partial<CardapioIntroConfig>;
+      return {
+        imageUrl: typeof parsed.imageUrl === 'string' ? parsed.imageUrl : defaults.imageUrl,
+        phrase: typeof parsed.phrase === 'string' ? parsed.phrase : defaults.phrase,
+        durationSeconds:
+          typeof parsed.durationSeconds === 'number' && parsed.durationSeconds > 0
+            ? parsed.durationSeconds
+            : defaults.durationSeconds
+      };
+    } catch {
+      return defaults;
+    }
+  });
+
+  const handleSaveCardapioIntroConfig = useCallback((config: CardapioIntroConfig) => {
+    const normalized: CardapioIntroConfig = {
+      imageUrl: typeof config.imageUrl === 'string' ? config.imageUrl : '/logo.jpg',
+      phrase: typeof config.phrase === 'string' ? config.phrase : 'Beju Caramelos',
+      durationSeconds:
+        typeof config.durationSeconds === 'number' && config.durationSeconds > 0
+          ? config.durationSeconds
+          : 5
+    };
+    setCardapioIntroConfig(normalized);
+    try {
+      localStorage.setItem('juju_cardapio_intro_config', JSON.stringify(normalized));
+    } catch (err) {
+      console.error('Erro ao salvar configuração de abertura do cardápio:', err);
+    }
+  }, []);
+
+  const [cardapioThankYouConfig, setCardapioThankYouConfig] = useState<CardapioThankYouConfig>(() => {
+    const defaults: CardapioThankYouConfig = {
+      imageUrl: '/logo.jpg',
+      phrase: 'Muito obrigado!',
+      durationSeconds: 3
+    };
+    try {
+      const saved = localStorage.getItem('juju_cardapio_thankyou_config');
+      if (!saved) return defaults;
+      const parsed = JSON.parse(saved) as Partial<CardapioThankYouConfig>;
+      return {
+        imageUrl: typeof parsed.imageUrl === 'string' ? parsed.imageUrl : defaults.imageUrl,
+        phrase: typeof parsed.phrase === 'string' ? parsed.phrase : defaults.phrase,
+        durationSeconds:
+          typeof parsed.durationSeconds === 'number' && parsed.durationSeconds > 0
+            ? parsed.durationSeconds
+            : defaults.durationSeconds
+      };
+    } catch {
+      return defaults;
+    }
+  });
+
+  const handleSaveCardapioThankYouConfig = useCallback((config: CardapioThankYouConfig) => {
+    const normalized: CardapioThankYouConfig = {
+      imageUrl: typeof config.imageUrl === 'string' ? config.imageUrl : '/logo.jpg',
+      phrase: typeof config.phrase === 'string' ? config.phrase : 'Muito obrigado!',
+      durationSeconds:
+        typeof config.durationSeconds === 'number' && config.durationSeconds > 0
+          ? config.durationSeconds
+          : 3
+    };
+    setCardapioThankYouConfig(normalized);
+    try {
+      localStorage.setItem('juju_cardapio_thankyou_config', JSON.stringify(normalized));
+    } catch (err) {
+      console.error('Erro ao salvar configuração de agradecimento do cardápio:', err);
+    }
+  }, []);
+
   const [activeUnitId, setActiveUnitId] = useState<string>(() => AppStorage.getActiveUnitId());
   const [activeDate, setActiveDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
   const [activeShift, setActiveShift] = useState<ProductionShift | 'TODOS'>('TODOS');
@@ -93,25 +189,17 @@ export const App: React.FC = () => {
     status: OrderStatus;
   } | null>(null);
 
-  // Enforce mobile operational screen scope (Pedidos, Produção, Estoque, Entregas)
-  useEffect(() => {
-    const enforceMobileScope = () => {
-      if (window.innerWidth < 1024) {
-        const allowedMobileScreens: ScreenId[] = ['pedidos', 'producao', 'estoque', 'entregas'];
-        if (!allowedMobileScreens.includes(currentScreen)) {
-          setCurrentScreen('pedidos');
-        }
-      }
-    };
-    enforceMobileScope();
-    window.addEventListener('resize', enforceMobileScope);
-    return () => window.removeEventListener('resize', enforceMobileScope);
-  }, [currentScreen]);
-
   // Supabase Online Status & User Session
   const [isSupabaseOnline, setIsSupabaseOnline] = useState<boolean>(SupabaseService.isConfigured());
   const [supabaseUser, setSupabaseUser] = useState<any>(null);
   const [isOperatorAuthenticated, setIsOperatorAuthenticated] = useState<boolean>(false);
+  const [showJulianaButterfly, setShowJulianaButterfly] = useState<boolean>(false);
+
+  const triggerButterflyIfJuliana = React.useCallback((nome?: string) => {
+    if (nome && nome.toLowerCase().includes('juliana')) {
+      setShowJulianaButterfly(true);
+    }
+  }, []);
 
   // Load data from Supabase Cloud
   const loadDataFromSupabase = useCallback(async () => {
@@ -922,11 +1010,74 @@ export const App: React.FC = () => {
     [allowedStock, activeUnitId]
   );
 
+  // Ensure currentScreen is always allowed for the logged-in user's role
+  useEffect(() => {
+    if (!canAccessScreen(effectiveUserProfile.role, currentScreen)) {
+      setCurrentScreen(getDefaultScreenForRole(effectiveUserProfile.role));
+    }
+  }, [effectiveUserProfile.role, currentScreen]);
+
   // Dynamic navigation badges synced with activeUnitId and live order/stock statuses
   const pendingOrdersCount = React.useMemo(
     () => scopedOrders.filter(o => o.status === 'PENDENTE').length,
     [scopedOrders]
   );
+
+  const pendingOrdersByStore = React.useMemo(() => {
+    const pending = allowedOrders.filter(o => o.status === 'PENDENTE');
+    const counts = new Map<string, { unitId: string; unitName: string; count: number }>();
+    for (const ord of pending) {
+      const unitId = ord.unidadeOrigemId || 'sem-unidade';
+      const unit = allowedUnits.find(u => u.id === unitId) || units.find(u => u.id === unitId);
+      const unitName = unit?.nome || 'Loja não identificada';
+      const existing = counts.get(unitId);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        counts.set(unitId, { unitId, unitName, count: 1 });
+      }
+    }
+    return Array.from(counts.values()).sort(
+      (a, b) => b.count - a.count || a.unitName.localeCompare(b.unitName)
+    );
+  }, [allowedOrders, allowedUnits, units]);
+
+  const totalPendingOrdersForAppOpen = React.useMemo(
+    () => pendingOrdersByStore.reduce((sum, item) => sum + item.count, 0),
+    [pendingOrdersByStore]
+  );
+
+  const pendingPromptShownRef = useRef(false);
+  const [isPendingOrdersDialogOpen, setIsPendingOrdersDialogOpen] = useState(false);
+  const [pedidosStatusFilterRequest, setPedidosStatusFilterRequest] = useState<{
+    status: string;
+    expandGroups?: boolean;
+    nonce: number;
+  } | null>(null);
+
+  useEffect(() => {
+    const isInWebApp =
+      !isCardapioDigitalOpen &&
+      (Boolean(supabaseUser) || isOperatorAuthenticated) &&
+      effectiveUserProfile.ativo !== false;
+
+    if (!isInWebApp) {
+      pendingPromptShownRef.current = false;
+      return;
+    }
+
+    if (pendingPromptShownRef.current) return;
+    pendingPromptShownRef.current = true;
+    if (totalPendingOrdersForAppOpen > 0) {
+      setIsPendingOrdersDialogOpen(true);
+    }
+  }, [
+    isCardapioDigitalOpen,
+    supabaseUser,
+    isOperatorAuthenticated,
+    effectiveUserProfile.ativo,
+    totalPendingOrdersForAppOpen
+  ]);
 
   const itemsToProduceCount = React.useMemo(() => {
     const getLocalDate = (iso: string) => {
@@ -1066,6 +1217,8 @@ export const App: React.FC = () => {
         units={units}
         stock={stock}
         customers={customers}
+        introConfig={cardapioIntroConfig}
+        thankYouConfig={cardapioThankYouConfig}
         onSubmitOrder={async (newOrder, customerRecord) => {
           await handleSaveOrder(newOrder);
           const normPhone = customerRecord.telefone.replace(/\D/g, '');
@@ -1100,6 +1253,7 @@ export const App: React.FC = () => {
           setUserProfile(profile);
           AppStorage.saveUserProfile(profile);
           setIsOperatorAuthenticated(true);
+          triggerButterflyIfJuliana(profile.nome);
         }}
         onRegisterUser={handleSaveUser}
         onSupabaseAuthChange={handleRefreshAuth}
@@ -1127,6 +1281,7 @@ export const App: React.FC = () => {
         onUpdateUserProfile={(profile) => {
           setUserProfile(profile);
           setIsOperatorAuthenticated(true);
+          triggerButterflyIfJuliana(profile.nome);
         }}
         onRegisterUser={handleSaveUser}
         onRefreshAuth={handleRefreshAuth}
@@ -1143,6 +1298,7 @@ export const App: React.FC = () => {
         <Sidebar
           currentScreen={currentScreen}
           onNavigate={setCurrentScreen}
+          userRole={effectiveUserProfile.role}
           pendingOrdersCount={pendingOrdersCount}
           itemsToProduceCount={itemsToProduceCount}
           lowStockCount={lowStockCount}
@@ -1151,7 +1307,7 @@ export const App: React.FC = () => {
         />
 
         {/* Column 2: Center Main Content Screen */}
-        <main className="flex-1 flex flex-col overflow-hidden pb-20 lg:pb-0">
+        <main className="flex-1 min-w-0 flex flex-col overflow-hidden pb-20 lg:pb-0">
           {currentScreen === 'pedidos' && (
             <PedidosScreen
               orders={allowedOrders}
@@ -1161,6 +1317,7 @@ export const App: React.FC = () => {
               customers={customers}
               activeUnitId={activeUnitId}
               userPassword={effectiveUserProfile.senha || '12345678'}
+              requestedStatusFilter={pedidosStatusFilterRequest}
               onSaveOrder={handleSaveOrder}
               onSelectOrder={setSelectedOrder}
               onSaveCustomer={handleSaveCustomer}
@@ -1174,6 +1331,7 @@ export const App: React.FC = () => {
               units={units}
               categories={categories}
               productionOrders={productionOrders}
+              userRole={effectiveUserProfile.role}
               onSaveProductionOrder={handleSaveProductionOrder}
               onUpdateOrderStatus={handleUpdateOrderStatus}
             />
@@ -1185,6 +1343,7 @@ export const App: React.FC = () => {
               products={products}
               units={allowedUnits}
               activeUnitId={activeUnitId}
+              userRole={effectiveUserProfile.role}
               onUpdateStock={async (newStock) => {
                 setStock(newStock);
                 AppStorage.saveStock(newStock);
@@ -1234,22 +1393,11 @@ export const App: React.FC = () => {
             />
           )}
 
-          {currentScreen === 'relatorios' && (
-            <RelatoriosScreen
-              orders={allowedOrders}
-              products={products}
-              units={allowedUnits}
-              stock={allowedStock}
-              stockMovements={stockMovements}
-              productionOrders={productionOrders}
-              customers={customers}
-            />
-          )}
-
           {currentScreen === 'produtos' && (
             <ProdutosScreen
               products={products}
               categories={categories}
+              userRole={effectiveUserProfile.role}
               onSaveProduct={handleSaveProduct}
               onDeleteProduct={handleDeleteProduct}
               onSaveCategory={handleSaveCategory}
@@ -1264,6 +1412,7 @@ export const App: React.FC = () => {
               products={products}
               categories={categories}
               stock={stock}
+              userRole={effectiveUserProfile.role}
               onSaveUnit={handleSaveUnit}
               onDeleteUnit={handleDeleteUnit}
               onSaveOrder={handleSaveOrder}
@@ -1293,7 +1442,7 @@ export const App: React.FC = () => {
             />
           )}
 
-          {currentScreen === 'configuracoes' && (
+          {currentScreen === 'configuracoes' && canAccessScreen(effectiveUserProfile.role, 'configuracoes') && (
             <ConfiguracoesScreen
               userProfile={effectiveUserProfile}
               units={units}
@@ -1312,6 +1461,10 @@ export const App: React.FC = () => {
               onSyncSupabase={loadDataFromSupabase}
               revenueGoals={revenueGoals}
               onSaveRevenueGoals={handleSaveRevenueGoals}
+              cardapioIntroConfig={cardapioIntroConfig}
+              onSaveCardapioIntroConfig={handleSaveCardapioIntroConfig}
+              cardapioThankYouConfig={cardapioThankYouConfig}
+              onSaveCardapioThankYouConfig={handleSaveCardapioThankYouConfig}
               activeUnitId={activeUnitId}
               onOpenCardapioDigital={() => setIsCardapioDigitalOpen(true)}
             />
@@ -1333,6 +1486,7 @@ export const App: React.FC = () => {
           onChangeSelectedDeliveryIds={setSelectedDeliveryIds}
           lowStockCount={lowStockCount}
           revenueGoals={revenueGoals}
+          userRole={effectiveUserProfile.role}
           currentScreen={currentScreen}
           onNavigate={setCurrentScreen}
           focusRoteiroSignal={focusRoteiroSignal}
@@ -1340,18 +1494,24 @@ export const App: React.FC = () => {
         />
       </div>
 
-      {/* Mobile Bottom Operational Navigation Bar (Pedidos, Produção, Estoque, Entregas + Painel/Ferramentas) */}
+      {/* Mobile Bottom Navigation Bar */}
       <nav
         aria-label="Navegação Mobile"
         style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
-        className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-[#e2e8f0] px-1.5 py-1.5 grid grid-cols-5 gap-1 z-40 shadow-[0_-4px_12px_rgba(15,23,42,0.08)] print:hidden"
+        className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-[#e2e8f0] px-1.5 py-1.5 flex items-center justify-around overflow-x-auto gap-1 z-40 shadow-[0_-4px_12px_rgba(15,23,42,0.08)] print:hidden"
       >
         {[
           { id: 'pedidos' as ScreenId, label: 'Pedidos', icon: ShoppingBag, badge: pendingOrdersCount },
           { id: 'producao' as ScreenId, label: 'Produção', icon: ChefHat, badge: itemsToProduceCount },
           { id: 'estoque' as ScreenId, label: 'Estoque', icon: Package, badge: lowStockCount, alert: lowStockCount > 0 },
-          { id: 'entregas' as ScreenId, label: 'Entregas', icon: Truck, badge: pendingDeliveriesCount }
-        ].map(tab => {
+          { id: 'entregas' as ScreenId, label: 'Entregas', icon: Truck, badge: pendingDeliveriesCount },
+          { id: 'clientes' as ScreenId, label: 'Clientes', icon: Users, badge: pendingCustomersCount },
+          { id: 'produtos' as ScreenId, label: 'Produtos', icon: CakeSlice, badge: 0 },
+          { id: 'lojas' as ScreenId, label: 'Unidades', icon: Building2, badge: 0 },
+          { id: 'configuracoes' as ScreenId, label: 'Config.', icon: Settings, badge: 0 }
+        ]
+          .filter(tab => canAccessScreen(effectiveUserProfile.role, tab.id))
+          .map(tab => {
           const Icon = tab.icon;
           const isActive = currentScreen === tab.id && !isMobileRightDrawerOpen;
           return (
@@ -1362,7 +1522,7 @@ export const App: React.FC = () => {
                 setCurrentScreen(tab.id);
                 setIsMobileRightDrawerOpen(false);
               }}
-              className={`relative flex flex-col items-center justify-center py-1.5 px-1 rounded-xl transition-all ${
+              className={`relative min-w-[54px] shrink-0 flex flex-col items-center justify-center py-1.5 px-1.5 rounded-xl transition-all ${
                 isActive
                   ? 'bg-brand-600 text-white font-bold shadow-2xs'
                   : 'text-slate-600 hover:bg-slate-100 font-medium'
@@ -1390,7 +1550,7 @@ export const App: React.FC = () => {
         <button
           type="button"
           onClick={() => setIsMobileRightDrawerOpen(prev => !prev)}
-          className={`relative flex flex-col items-center justify-center py-1.5 px-1 rounded-xl transition-all ${
+          className={`relative min-w-[54px] shrink-0 flex flex-col items-center justify-center py-1.5 px-1.5 rounded-xl transition-all ${
             isMobileRightDrawerOpen
               ? 'bg-slate-900 text-white font-bold shadow-2xs'
               : 'text-slate-600 hover:bg-slate-100 font-medium'
@@ -1424,6 +1584,7 @@ export const App: React.FC = () => {
               onChangeSelectedDeliveryIds={setSelectedDeliveryIds}
               lowStockCount={lowStockCount}
               revenueGoals={revenueGoals}
+              userRole={effectiveUserProfile.role}
               currentScreen={currentScreen}
               onNavigate={(scr) => {
                 const allowedMobile: ScreenId[] = ['pedidos', 'producao', 'estoque', 'entregas'];
@@ -1501,6 +1662,74 @@ export const App: React.FC = () => {
           </div>
         </div>
       )}
+      {isPendingOrdersDialogOpen && totalPendingOrdersForAppOpen > 0 && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-red-50 border-2 border-red-200 rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-red-100 border border-red-200 text-red-700 flex items-center justify-center shrink-0 font-mono font-extrabold text-sm">
+                {totalPendingOrdersForAppOpen}
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-red-950">
+                  Pedidos Pendentes por Loja
+                </h2>
+                <p className="text-xs text-red-800 mt-0.5">
+                  Existem <strong>{totalPendingOrdersForAppOpen}</strong>{' '}
+                  {totalPendingOrdersForAppOpen === 1 ? 'pedido pendente' : 'pedidos pendentes'} aguardando atendimento:
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-white/80 border border-red-200/80 rounded-xl divide-y divide-red-100">
+              {pendingOrdersByStore.map(item => (
+                <div
+                  key={item.unitId}
+                  className="px-3.5 py-2.5 flex items-center justify-between text-xs"
+                >
+                  <span className="font-semibold text-red-950">{item.unitName}</span>
+                  <span className="font-mono font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-800">
+                    {item.count} {item.count === 1 ? 'pendente' : 'pendentes'}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <p className="text-xs font-semibold text-red-950">
+              Deseja ver a lista de pedidos pendentes?
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setIsPendingOrdersDialogOpen(false)}
+                className="px-4 py-2 rounded-xl bg-white hover:bg-red-100 border border-red-200 text-red-900 text-xs font-bold cursor-pointer transition-colors"
+              >
+                Não
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setCurrentScreen('pedidos');
+                  setPedidosStatusFilterRequest({
+                    status: 'PENDENTE',
+                    expandGroups: true,
+                    nonce: Date.now()
+                  });
+                  setIsPendingOrdersDialogOpen(false);
+                }}
+                className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-xs cursor-pointer transition-colors"
+              >
+                Sim
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ButterflyFlight
+        active={showJulianaButterfly}
+        onComplete={() => setShowJulianaButterfly(false)}
+      />
     </div>
   );
 };

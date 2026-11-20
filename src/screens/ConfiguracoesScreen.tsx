@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { UserProfile, StoreUnit, Category, Product, Order, StockItem, Customer, ProductionOrder, MonthlyRevenueGoals } from '../types';
+import { UserProfile, StoreUnit, Category, Product, Order, StockItem, Customer, ProductionOrder, MonthlyRevenueGoals, CardapioIntroConfig, CardapioThankYouConfig } from '../types';
 import { getMonthGoalForUnit, getMonthYearKey, getUnitMonthGoalKey, getYearGoalForUnit } from '../utils/revenueGoals';
 import { 
   User, 
@@ -64,6 +64,10 @@ interface ConfiguracoesScreenProps {
   onSyncSupabase?: () => Promise<void> | void;
   revenueGoals?: MonthlyRevenueGoals;
   onSaveRevenueGoals?: (goals: MonthlyRevenueGoals) => void;
+  cardapioIntroConfig?: CardapioIntroConfig;
+  onSaveCardapioIntroConfig?: (config: CardapioIntroConfig) => void;
+  cardapioThankYouConfig?: CardapioThankYouConfig;
+  onSaveCardapioThankYouConfig?: (config: CardapioThankYouConfig) => void;
   onOpenCardapioDigital?: () => void;
   activeUnitId?: string;
 }
@@ -86,15 +90,31 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
   onSyncSupabase,
   revenueGoals = {},
   onSaveRevenueGoals,
+  cardapioIntroConfig = { imageUrl: '/logo.jpg', phrase: 'Beju Caramelos', durationSeconds: 5 },
+  onSaveCardapioIntroConfig,
+  cardapioThankYouConfig = { imageUrl: '/logo.jpg', phrase: 'Muito obrigado!', durationSeconds: 3 },
+  onSaveCardapioThankYouConfig,
   onOpenCardapioDigital,
   activeUnitId
 }) => {
-  const [activeTab, setActiveTab] = useState<'perfil' | 'empresas' | 'metas' | 'whatsapp' | 'banco'>('perfil');
+  const [activeTab, setActiveTab] = useState<'perfil' | 'usuarios' | 'empresas' | 'metas' | 'whatsapp' | 'banco'>('perfil');
   const [waSettings, setWaSettings] = useState<WhatsAppAutomationSettings>(() =>
     getWhatsAppAutomationSettings()
   );
   const [waSavedSuccess, setWaSavedSuccess] = useState(false);
   const [catalogLinkCopied, setCatalogLinkCopied] = useState(false);
+  const [draftIntroConfig, setDraftIntroConfig] = useState<CardapioIntroConfig>(cardapioIntroConfig);
+  const [introSavedSuccess, setIntroSavedSuccess] = useState(false);
+  const [draftThankYouConfig, setDraftThankYouConfig] = useState<CardapioThankYouConfig>(cardapioThankYouConfig);
+  const [thankYouSavedSuccess, setThankYouSavedSuccess] = useState(false);
+
+  useEffect(() => {
+    setDraftIntroConfig(cardapioIntroConfig);
+  }, [cardapioIntroConfig]);
+
+  useEffect(() => {
+    setDraftThankYouConfig(cardapioThankYouConfig);
+  }, [cardapioThankYouConfig]);
   const [selectedGoalYear, setSelectedGoalYear] = useState<number>(new Date().getFullYear());
   const [selectedGoalUnitId, setSelectedGoalUnitId] = useState<string>(
     () => activeUnitId || units.find(u => u.ativo)?.id || 'all'
@@ -344,7 +364,7 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
     try {
       await SupabaseService.cleanMockData();
       if (onSyncSupabase) await onSyncSupabase();
-      setMockMessage('Dados mock limpos com sucesso! As tabelas de Usuários e Unidades foram preservadas.');
+      setMockMessage('Dados operacionais limpos com sucesso! As tabelas de Produtos, Categorias, Usuários e Unidades foram preservadas.');
     } catch (err: any) {
       console.error('Erro ao limpar mock data:', err);
       setMockMessage(`Erro ao limpar mock data: ${err.message || 'Verifique as permissões do banco'}`);
@@ -373,8 +393,22 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
               }`}
             >
               <User className="w-3.5 h-3.5" />
-              <span>Usuários</span>
+              <span>Perfil</span>
             </button>
+
+            {userProfile.role === 'ADMIN' && (
+              <button
+                onClick={() => setActiveTab('usuarios')}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  activeTab === 'usuarios'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>Usuários</span>
+              </button>
+            )}
 
             <button
               onClick={() => setActiveTab('empresas')}
@@ -409,7 +443,7 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
               }`}
             >
               <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Whatsapp</span>
+              <span>WhatsApp & Cardápio</span>
             </button>
 
             <button
@@ -574,7 +608,7 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
         )}
 
         {/* GESTÃO DE USUÁRIOS DO SISTEMA (APENAS ADMIN) */}
-        {activeTab === 'perfil' && userProfile.role === 'ADMIN' && (
+        {activeTab === 'usuarios' && userProfile.role === 'ADMIN' && (
           <div className="bg-white border border-[#e2e8f0] rounded-xl p-6 shadow-xs space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
               <div className="flex items-center gap-2.5">
@@ -1157,7 +1191,7 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                 )}
               </div>
               <p className="text-[11px] text-slate-600 leading-relaxed">
-                Popule o banco de dados com registros fictícios realistas (até 50 registros por tabela) para testes ou limpe os dados operacionais. As tabelas de <strong>Usuários</strong> e <strong>Unidades</strong> não são populadas nem apagadas por estas ações.
+                Popule o banco de dados com registros fictícios realistas (até 50 registros por tabela) para testes ou limpe os dados operacionais. As tabelas de <strong>Produtos</strong>, <strong>Categorias</strong>, <strong>Usuários</strong> e <strong>Unidades</strong> são preservadas pela limpeza.
               </p>
               <div className="flex flex-wrap items-center gap-3">
                 <button
@@ -1266,7 +1300,11 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                 {onOpenCardapioDigital && (
                   <button
                     type="button"
-                    onClick={onOpenCardapioDigital}
+                    onClick={() => {
+                      onSaveCardapioIntroConfig?.(draftIntroConfig);
+                      onSaveCardapioThankYouConfig?.(draftThankYouConfig);
+                      onOpenCardapioDigital();
+                    }}
                     className="flex items-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-xs font-bold shrink-0 cursor-pointer"
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
@@ -1306,6 +1344,354 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                   <MessageSquare className="w-3.5 h-3.5" />
                   <span>Compartilhar no WhatsApp</span>
                 </button>
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 space-y-3">
+                <div>
+                  <h3 className="text-xs font-bold text-slate-900">
+                    Animação de Abertura do Cardápio Digital
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Exibida toda vez que o cardápio é aberto: foto centralizada no terço do meio da tela e frase logo abaixo, com entrada suave e saída com fade-out.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-start">
+                  <div className="md:col-span-3 flex flex-col items-center gap-2 p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                    <img
+                      src={draftIntroConfig.imageUrl || '/logo.jpg'}
+                      alt="Prévia da abertura"
+                      className="w-20 h-20 rounded-xl object-contain bg-white border border-slate-200 shadow-2xs"
+                    />
+                    <div className="flex flex-wrap items-center justify-center gap-1.5">
+                      <label className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-[11px] font-semibold text-slate-700 cursor-pointer">
+                        <span>Enviar Foto</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={e => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                              if (typeof reader.result !== 'string') return;
+                              const rawDataUrl = reader.result;
+                              const img = new Image();
+                              img.onload = () => {
+                                const maxDim = 480;
+                                let { width, height } = img;
+                                if (width > maxDim || height > maxDim) {
+                                  const ratio = Math.min(maxDim / width, maxDim / height);
+                                  width = Math.round(width * ratio);
+                                  height = Math.round(height * ratio);
+                                }
+                                const canvas = document.createElement('canvas');
+                                canvas.width = width;
+                                canvas.height = height;
+                                const ctx = canvas.getContext('2d');
+                                const finalUrl = ctx
+                                  ? (() => {
+                                      ctx.drawImage(img, 0, 0, width, height);
+                                      return canvas.toDataURL('image/jpeg', 0.75);
+                                    })()
+                                  : rawDataUrl;
+                                setDraftIntroConfig(prev => {
+                                  const next = { ...prev, imageUrl: finalUrl };
+                                  onSaveCardapioIntroConfig?.(next);
+                                  return next;
+                                });
+                              };
+                              img.onerror = () => {
+                                setDraftIntroConfig(prev => {
+                                  const next = { ...prev, imageUrl: rawDataUrl };
+                                  onSaveCardapioIntroConfig?.(next);
+                                  return next;
+                                });
+                              };
+                              img.src = rawDataUrl;
+                            };
+                            reader.readAsDataURL(file);
+                            e.target.value = '';
+                          }}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = { ...draftIntroConfig, imageUrl: '/logo.jpg' };
+                          setDraftIntroConfig(next);
+                          onSaveCardapioIntroConfig?.(next);
+                        }}
+                        className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-[11px] font-semibold text-slate-600 cursor-pointer"
+                      >
+                        Restaurar Logo
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="md:col-span-9 space-y-3">
+                    <div>
+                      <label
+                        htmlFor="cardapio-intro-image-url"
+                        className="block text-[11px] font-bold text-slate-700 mb-1"
+                      >
+                        URL da Foto (padrão: /logo.jpg)
+                      </label>
+                      <input
+                        id="cardapio-intro-image-url"
+                        type="text"
+                        value={draftIntroConfig.imageUrl}
+                        onChange={e => {
+                          const next = { ...draftIntroConfig, imageUrl: e.target.value };
+                          setDraftIntroConfig(next);
+                          onSaveCardapioIntroConfig?.(next);
+                        }}
+                        placeholder="/logo.jpg"
+                        className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="sm:col-span-2">
+                        <label
+                          htmlFor="cardapio-intro-phrase"
+                          className="block text-[11px] font-bold text-slate-700 mb-1"
+                        >
+                          Frase abaixo da foto
+                        </label>
+                        <input
+                          id="cardapio-intro-phrase"
+                          type="text"
+                          value={draftIntroConfig.phrase}
+                          onChange={e => {
+                            const next = { ...draftIntroConfig, phrase: e.target.value };
+                            setDraftIntroConfig(next);
+                            onSaveCardapioIntroConfig?.(next);
+                          }}
+                          placeholder="Beju Caramelos"
+                          className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label
+                          htmlFor="cardapio-intro-duration"
+                          className="block text-[11px] font-bold text-slate-700 mb-1"
+                        >
+                          Duração (segundos)
+                        </label>
+                        <input
+                          id="cardapio-intro-duration"
+                          type="number"
+                          min={1}
+                          max={30}
+                          step={0.5}
+                          value={draftIntroConfig.durationSeconds}
+                          onChange={e => {
+                            const val = parseFloat(e.target.value);
+                            const next = {
+                              ...draftIntroConfig,
+                              durationSeconds: Number.isFinite(val) && val > 0 ? val : 5
+                            };
+                            setDraftIntroConfig(next);
+                            onSaveCardapioIntroConfig?.(next);
+                          }}
+                          className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onSaveCardapioIntroConfig?.(draftIntroConfig);
+                          setIntroSavedSuccess(true);
+                          setTimeout(() => setIntroSavedSuccess(false), 2000);
+                        }}
+                        className="flex items-center justify-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-xs font-bold cursor-pointer"
+                      >
+                        {introSavedSuccess ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
+                        <span>{introSavedSuccess ? 'Configuração Salva!' : 'Salvar Abertura'}</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 space-y-3">
+                <div>
+                  <h3 className="text-xs font-bold text-slate-900">
+                    Animação ao Finalizar Pedido (Cardápio Digital)
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Exibida ao clicar em &quot;Finalizar Pedido...&quot;: mostra a logo e a frase em várias cores pela duração definida.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-start">
+                  <div className="md:col-span-3 flex flex-col items-center gap-2 p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                    <img
+                      src={draftThankYouConfig.imageUrl || '/logo.jpg'}
+                      alt="Prévia do agradecimento"
+                      className="w-20 h-20 rounded-xl object-contain bg-white border border-slate-200 shadow-2xs"
+                    />
+                    <div className="flex flex-wrap items-center justify-center gap-1.5">
+                      <label className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-[11px] font-semibold text-slate-700 cursor-pointer">
+                        <span>Enviar Logo</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={e => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                              if (typeof reader.result !== 'string') return;
+                              const rawDataUrl = reader.result;
+                              const img = new Image();
+                              img.onload = () => {
+                                const maxDim = 480;
+                                let { width, height } = img;
+                                if (width > maxDim || height > maxDim) {
+                                  const ratio = Math.min(maxDim / width, maxDim / height);
+                                  width = Math.round(width * ratio);
+                                  height = Math.round(height * ratio);
+                                }
+                                const canvas = document.createElement('canvas');
+                                canvas.width = width;
+                                canvas.height = height;
+                                const ctx = canvas.getContext('2d');
+                                const finalUrl = ctx
+                                  ? (() => {
+                                      ctx.drawImage(img, 0, 0, width, height);
+                                      return canvas.toDataURL('image/jpeg', 0.75);
+                                    })()
+                                  : rawDataUrl;
+                                setDraftThankYouConfig(prev => {
+                                  const next = { ...prev, imageUrl: finalUrl };
+                                  onSaveCardapioThankYouConfig?.(next);
+                                  return next;
+                                });
+                              };
+                              img.onerror = () => {
+                                setDraftThankYouConfig(prev => {
+                                  const next = { ...prev, imageUrl: rawDataUrl };
+                                  onSaveCardapioThankYouConfig?.(next);
+                                  return next;
+                                });
+                              };
+                              img.src = rawDataUrl;
+                            };
+                            reader.readAsDataURL(file);
+                            e.target.value = '';
+                          }}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = { ...draftThankYouConfig, imageUrl: '/logo.jpg' };
+                          setDraftThankYouConfig(next);
+                          onSaveCardapioThankYouConfig?.(next);
+                        }}
+                        className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-[11px] font-semibold text-slate-600 cursor-pointer"
+                      >
+                        Restaurar Logo
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="md:col-span-9 space-y-3">
+                    <div>
+                      <label
+                        htmlFor="cardapio-thankyou-image-url"
+                        className="block text-[11px] font-bold text-slate-700 mb-1"
+                      >
+                        URL da Logo (padrão: /logo.jpg)
+                      </label>
+                      <input
+                        id="cardapio-thankyou-image-url"
+                        type="text"
+                        value={draftThankYouConfig.imageUrl}
+                        onChange={e => {
+                          const next = { ...draftThankYouConfig, imageUrl: e.target.value };
+                          setDraftThankYouConfig(next);
+                          onSaveCardapioThankYouConfig?.(next);
+                        }}
+                        placeholder="/logo.jpg"
+                        className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="sm:col-span-2">
+                        <label
+                          htmlFor="cardapio-thankyou-phrase"
+                          className="block text-[11px] font-bold text-slate-700 mb-1"
+                        >
+                          Frase de agradecimento (colorida)
+                        </label>
+                        <input
+                          id="cardapio-thankyou-phrase"
+                          type="text"
+                          value={draftThankYouConfig.phrase}
+                          onChange={e => {
+                            const next = { ...draftThankYouConfig, phrase: e.target.value };
+                            setDraftThankYouConfig(next);
+                            onSaveCardapioThankYouConfig?.(next);
+                          }}
+                          placeholder="Muito obrigado!"
+                          className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label
+                          htmlFor="cardapio-thankyou-duration"
+                          className="block text-[11px] font-bold text-slate-700 mb-1"
+                        >
+                          Duração (segundos)
+                        </label>
+                        <input
+                          id="cardapio-thankyou-duration"
+                          type="number"
+                          min={1}
+                          max={30}
+                          step={0.5}
+                          value={draftThankYouConfig.durationSeconds}
+                          onChange={e => {
+                            const val = parseFloat(e.target.value);
+                            const next = {
+                              ...draftThankYouConfig,
+                              durationSeconds: Number.isFinite(val) && val > 0 ? val : 3
+                            };
+                            setDraftThankYouConfig(next);
+                            onSaveCardapioThankYouConfig?.(next);
+                          }}
+                          className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onSaveCardapioThankYouConfig?.(draftThankYouConfig);
+                          setThankYouSavedSuccess(true);
+                          setTimeout(() => setThankYouSavedSuccess(false), 2000);
+                        }}
+                        className="flex items-center justify-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-xs font-bold cursor-pointer"
+                      >
+                        {thankYouSavedSuccess ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
+                        <span>{thankYouSavedSuccess ? 'Configuração Salva!' : 'Salvar Agradecimento'}</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 

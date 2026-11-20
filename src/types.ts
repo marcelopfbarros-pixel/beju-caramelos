@@ -11,6 +11,8 @@ export type OrderStatus =
 
 export type DeliveryType = 'DELIVERY' | 'RETIRADA';
 
+export type DeliveryShift = 'MANHA' | 'TARDE' | 'NOITE';
+
 export type ProductUnit = 'UN' | 'KG' | 'G' | 'CENTO' | 'CX';
 
 export interface StoreUnit {
@@ -60,6 +62,8 @@ export interface Order {
   status: OrderStatus;
   dataPedido: string;
   dataHoraEntrega: string;
+  dataHoraEntregaFim?: string;
+  turnoEntrega?: DeliveryShift;
   tipoEntrega: DeliveryType;
   unidadeOrigemId: string;
   unidadeRetiradaId?: string;
@@ -151,3 +155,15 @@ export interface Customer {
 
 // Key format: "YYYY-MM" (e.g. "2026-11"), value: target revenue in BRL
 export type MonthlyRevenueGoals = Record<string, number>;
+
+export interface CardapioIntroConfig {
+  imageUrl: string;
+  phrase: string;
+  durationSeconds: number;
+}
+
+export interface CardapioThankYouConfig {
+  imageUrl: string;
+  phrase: string;
+  durationSeconds: number;
+}
