@@ -9,13 +9,14 @@ import {
   Settings,
   Users,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Wrench
 } from 'lucide-react';
 
 import { UserProfile } from '../types';
 import { canAccessScreen } from '../utils/permissions';
 
-export type ScreenId = 'pedidos' | 'producao' | 'estoque' | 'entregas' | 'clientes' | 'produtos' | 'lojas' | 'configuracoes';
+export type ScreenId = 'pedidos' | 'producao' | 'estoque' | 'entregas' | 'clientes' | 'produtos' | 'lojas' | 'configuracoes' | 'painel';
 
 interface SidebarProps {
   currentScreen: ScreenId;
@@ -26,6 +27,7 @@ interface SidebarProps {
   lowStockCount: number;
   pendingDeliveriesCount: number;
   pendingCustomersCount: number;
+  selectedDeliveriesCount?: number;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -36,11 +38,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
   itemsToProduceCount,
   lowStockCount,
   pendingDeliveriesCount,
-  pendingCustomersCount
+  pendingCustomersCount,
+  selectedDeliveriesCount = 0
 }) => {
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState<boolean>(
+    () => typeof window !== 'undefined' && window.innerWidth < 1024
+  );
 
-  const navItems = [
+  interface NavItem {
+    id: ScreenId;
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+    badge?: number;
+    badgeColor?: string;
+    mobileOnly?: boolean;
+    title?: string;
+  }
+
+  const navItems: NavItem[] = ([
     {
       id: 'pedidos' as ScreenId,
       label: 'Pedidos',
@@ -87,26 +102,42 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: Building2
     },
     {
+      id: 'painel' as ScreenId,
+      label: 'Painel',
+      title: 'Indicadores & Ferramentas',
+      icon: Wrench,
+      badge: selectedDeliveriesCount > 0 ? selectedDeliveriesCount : undefined,
+      badgeColor: 'bg-brand-100 text-brand-800 border-brand-200',
+      mobileOnly: true
+    },
+    {
       id: 'configuracoes' as ScreenId,
       label: 'Configurações',
       icon: Settings
     }
-  ].filter(item => canAccessScreen(userRole, item.id));
+  ] as NavItem[]).filter(item => canAccessScreen(userRole, item.id));
 
   return (
-    <aside
-      className={`hidden lg:flex ${
-        isCollapsed ? 'w-16' : 'w-64'
-      } bg-white border-r border-[#e2e8f0] flex-col justify-between shrink-0 h-[calc(100vh-4rem)] transition-all duration-200 relative print:hidden`}
+    <div
+      className={`relative shrink-0 print:hidden ${
+        isCollapsed ? 'w-14 sm:w-16' : 'w-14 sm:w-16 lg:w-64'
+      } h-[calc(100vh-3.5rem)] md:h-[calc(100vh-4rem)] transition-all duration-200`}
     >
+      {!isCollapsed && (
+        <div
+          onClick={() => setIsCollapsed(true)}
+          className="lg:hidden fixed inset-0 top-14 md:top-16 bg-slate-900/25 z-30"
+          aria-hidden="true"
+        />
+      )}
+      <aside
+        className={`flex ${
+          isCollapsed ? 'w-14 sm:w-16' : 'w-60 sm:w-64 shadow-2xl lg:shadow-none'
+        } bg-white border-r border-[#e2e8f0] flex-col justify-between h-full transition-all duration-200 absolute left-0 top-0 z-40 lg:relative`}
+      >
       {/* Navigation Items */}
       <div className="p-2.5 space-y-1 overflow-y-auto">
-        <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'justify-between px-2'} py-2`}>
-          {!isCollapsed && (
-            <span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-[#64748b]">
-              MENU
-            </span>
-          )}
+        <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'gap-1.5 px-1.5'} py-2`}>
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
             title={isCollapsed ? 'Expandir Menu' : 'Recolher Menu'}
@@ -114,6 +145,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
           </button>
+          {!isCollapsed && (
+            <span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-[#64748b]">
+              MENU
+            </span>
+          )}
         </div>
 
         {navItems.map((item) => {
@@ -123,9 +159,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
           return (
             <button
               key={item.id}
-              onClick={() => onNavigate(item.id)}
-              title={isCollapsed ? item.label : undefined}
-              className={`w-full flex items-center ${
+              type="button"
+              onClick={() => {
+                onNavigate(item.id);
+                if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                  setIsCollapsed(true);
+                }
+              }}
+              title={isCollapsed ? (item.title || item.label) : undefined}
+              className={`${item.mobileOnly ? 'lg:hidden ' : ''}w-full flex items-center ${
                 isCollapsed ? 'justify-center px-2' : 'justify-between px-3'
               } py-2.5 rounded-lg text-xs font-medium transition-all relative ${
                 isActive
@@ -165,5 +207,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       )}
     </aside>
+    </div>
   );
 };

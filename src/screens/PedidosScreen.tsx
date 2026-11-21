@@ -1,9 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { HybridFilterSort } from '../components/HybridFilterSort';
-import { CurrencyInput } from '../components/CurrencyInput';
+import { CurrencyInput, formatCurrencyBR } from '../components/CurrencyInput';
 import { TimeSelect15 } from '../components/TimeSelect15';
 import { useExpandedGroups } from '../hooks/useExpandedGroups';
 import { ORDER_CARD_STATUS_STYLES, isReplenishmentOrder, REPLENISHMENT_CARD_STYLE } from '../utils/orderStatusStyles';
+import { computeReservedStockMap, getUnitProductAvailability } from '../utils/stockAvailability';
+import {
+  PAYMENT_STATUS_BADGE_CLASSES,
+  PAYMENT_STATUS_LABELS,
+  getEffectivePaymentStatus,
+  getOrderPaidAmount,
+  getOrderRemainingAmount,
+} from '../utils/paymentStatus';
 import {
   addHoursToDateTime,
   applyDeliveryShiftToDate,
@@ -21,8 +29,10 @@ import {
   DeliveryType, 
   DeliveryShift,
   PaymentMethod,
+  PaymentStatus,
   OrderItem,
-  Customer
+  Customer,
+  StockItem
 } from '../types';
 import { 
   Plus, 
@@ -67,10 +77,13 @@ interface PedidosScreenProps {
   units: StoreUnit[];
   categories: Category[];
   customers: Customer[];
+  stock?: StockItem[];
   activeUnitId: string;
   userPassword?: string;
   requestedStatusFilter?: { status: string; expandGroups?: boolean; nonce: number } | null;
   onSaveOrder: (order: Order) => void;
+  onDeleteOrder?: (orderId: string) => void;
+  selectedOrderId?: string;
   onSelectOrder: (order: Order) => void;
   onSaveCustomer: (customer: Customer) => void;
 }
@@ -96,10 +109,13 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
   units,
   categories,
   customers,
+  stock = [],
   activeUnitId,
   userPassword = '12345678',
   requestedStatusFilter,
   onSaveOrder,
+  onDeleteOrder,
+  selectedOrderId,
   onSelectOrder,
   onSaveCustomer
 }) => {
@@ -132,6 +148,7 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
     nextStatus: OrderStatus;
   } | null>(null);
   const [pendingModalStatusConfirm, setPendingModalStatusConfirm] = useState<OrderStatus | null>(null);
+  const [orderToDelete, setOrderToDelete] = useState<Order | null>(null);
   const [statusAuthPin, setStatusAuthPin] = useState('');
   const [statusAuthError, setStatusAuthError] = useState('');
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
@@ -174,6 +191,11 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
     observacoes: '',
     itens: []
   });
+
+  const modalReservedMap = useMemo(
+    () => computeReservedStockMap(orders, editingOrder.id),
+    [orders, editingOrder.id]
+  );
 
   // Filtered & sorted orders
   const filteredOrders = orders
@@ -358,6 +380,13 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
       desconto: finalDesc,
       valorTotal: total,
       formaPagamento: (editingOrder.formaPagamento as PaymentMethod) || 'pix',
+      statusPagamento: getEffectivePaymentStatus(editingOrder),
+      valorPago:
+        getEffectivePaymentStatus(editingOrder) === 'PAGO'
+          ? total
+          : getEffectivePaymentStatus(editingOrder) === 'SINAL'
+          ? getOrderPaidAmount({ ...editingOrder, valorTotal: total })
+          : 0,
       trocoPara: editingOrder.trocoPara,
       instrucoesPagamento: editingOrder.instrucoesPagamento,
       observacoes: editingOrder.observacoes,
@@ -421,7 +450,7 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
         };
       });
       setRouteCalcBadge(
-        `Loja mais próxima: ${res.nearestUnit?.nome} (~${res.distanceKm} km) • Taxa: R$ ${res.deliveryFee.toFixed(2)}`
+        `Loja mais próxima: ${res.nearestUnit?.nome} (~${res.distanceKm} km) • Taxa: R$ ${formatCurrencyBR(res.deliveryFee)}`
       );
     } catch {
       setRouteCalcBadge(null);
@@ -486,7 +515,7 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
     const unit = units.find(u => u.id === order.unidadeOrigemId) || units[0];
 
     const itensText = (order.itens || [])
-      .map(i => `• ${i.quantidade}x ${prodMap.get(i.produtoId)?.descricao || 'Item'} (R$ ${i.subtotal.toFixed(2)})`)
+      .map(i => `• ${i.quantidade}x ${prodMap.get(i.produtoId)?.descricao || 'Item'} (R$ ${formatCurrencyBR(i.subtotal)})`)
       .join('\n');
 
     const paymentLabel = {
@@ -495,6 +524,15 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
       credito: 'Cartão de Crédito',
       dinheiro: 'Dinheiro'
     }[order.formaPagamento || 'pix'];
+
+    const payStatus = getEffectivePaymentStatus(order);
+    const remainingAmt = getOrderRemainingAmount(order);
+    const paymentStatusNote =
+      payStatus === 'PAGO'
+        ? ' • [PAGO]'
+        : payStatus === 'SINAL'
+        ? ` • [Sinal pago: R$ ${formatCurrencyBR(getOrderPaidAmount(order))} | Restante: R$ ${formatCurrencyBR(remainingAmt)}]`
+        : '';
 
     const summary = `🍰 *Beju Caramelos*
 Olá, *${order.clienteNome || 'Cliente'}*! Segue o resumo do seu pedido:
@@ -506,12 +544,12 @@ Olá, *${order.clienteNome || 'Cliente'}*! Segue o resumo do seu pedido:
 *Itens Solicitados:*
 ${itensText}
 
-*Subtotal:* R$ ${(order.valorSubtotal || 0).toFixed(2)}
-*Taxa de Entrega:* R$ ${(order.taxaEntrega || 0).toFixed(2)}
-${(order.desconto || 0) > 0 ? `*Desconto:* -R$ ${order.desconto?.toFixed(2)}\n` : ''}*TOTAL:* R$ ${(order.valorTotal || 0).toFixed(2)}
+*Subtotal:* R$ ${formatCurrencyBR(order.valorSubtotal || 0)}
+*Taxa de Entrega:* R$ ${formatCurrencyBR(order.taxaEntrega || 0)}
+${(order.desconto || 0) > 0 ? `*Desconto:* -R$ ${formatCurrencyBR(order.desconto || 0)}\n` : ''}*TOTAL:* R$ ${formatCurrencyBR(order.valorTotal || 0)}
 
-*Pagamento:* ${paymentLabel}${order.trocoPara ? ` (Troco para R$ ${order.trocoPara.toFixed(2)})` : ''}
-${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro@bejucaramelos.com.br'}\n_Envie o comprovante por aqui para confirmação!_` : ''}`;
+*Pagamento:* ${paymentLabel}${paymentStatusNote}${order.trocoPara ? ` (Troco para R$ ${formatCurrencyBR(order.trocoPara)})` : ''}
+${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro@bejucaramelos.com.br'}\n_Envie o comprovante por aqui para confirmação!_` : ''}`;
 
     navigator.clipboard.writeText(summary);
     setCopyFeedback(true);
@@ -582,32 +620,68 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
   return (
     <div className="flex-1 min-w-0 flex flex-col h-full bg-[#f8f9ff] overflow-hidden">
       {/* Top Action Bar */}
-      <div className="bg-white border-b border-[#e2e8f0] px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex items-center gap-2">
+      <div className="flex flex-col md:flex-row md:items-center justify-between md:bg-white md:border-b md:border-[#e2e8f0] md:px-6 md:py-4 md:gap-4 print:hidden">
+        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2.5 md:p-0 md:bg-transparent md:border-b-0">
+          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex flex-wrap items-center gap-2">
             <span>Pedidos</span>
-            <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700">
+            <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800">
               {filteredOrders.length} pedidos
             </span>
           </h1>
         </div>
 
         {/* Buttons */}
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex flex-wrap items-center gap-2">
+          <div className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-white p-0.5 shadow-2xs shrink-0" role="group" aria-label="Modo de visualização">
+            <button
+              type="button"
+              onClick={() => setViewMode('CARDS')}
+              title="Cards"
+              aria-label="Cards"
+              className={`h-full flex items-center justify-center px-2 rounded-md text-xs font-semibold transition-colors ${
+                viewMode === 'CARDS' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('TABLE')}
+              title="Tabela"
+              aria-label="Tabela"
+              className={`h-full flex items-center justify-center px-2 rounded-md text-xs font-semibold transition-colors ${
+                viewMode === 'TABLE' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <TableIcon className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
           <button
             onClick={() => ExcelService.exportOrders(orders, products, units)}
-            className="hidden md:flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-xs"
+            title="Exportar"
+            aria-label="Exportar"
+            className="hidden md:flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-xs"
           >
-            <Download className="w-3.5 h-3.5 text-slate-500" />
-            <span>Exportar .xlsx</span>
+            <Download className="w-4 h-4 text-slate-500" />
           </button>
 
           <button
             onClick={() => setIsWhatsAppModalOpen(true)}
-            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-lg transition-all shadow-xs active:scale-95"
+            title="Importar"
+            aria-label="Importar"
+            className="flex items-center justify-center gap-1.5 h-8 w-8 md:w-auto px-0 md:px-3 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-lg transition-all shadow-xs active:scale-95"
           >
-            <Sparkles className="w-4 h-4 text-emerald-600" />
-            <span>Importar WhatsApp (IA)</span>
+            <svg
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              fillRule="evenodd"
+              aria-hidden="true"
+              className="w-4 h-4 text-emerald-600 shrink-0"
+            >
+              <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21 5.46 0 9.91-4.45 9.91-9.91C21.95 6.45 17.5 2 12.04 2zm5.79 14.12c-.24.68-1.38 1.3-1.91 1.38-.5.07-1.13.1-1.82-.12-.42-.13-.96-.31-1.65-.61-2.9-1.25-4.79-4.18-4.94-4.38-.14-.2-1.18-1.57-1.18-3s.75-2.12 1.01-2.41c.27-.29.58-.36.77-.36.2 0 .39 0 .56.01.18.01.42-.07.66.5.24.59.82 2.01.89 2.15.07.15.12.32.02.52-.1.2-.15.32-.29.49-.15.17-.3.38-.44.51-.14.14-.3.3-.13.59.17.29.76 1.26 1.64 2.04 1.13 1 2.08 1.31 2.38 1.46.29.15.46.12.63-.07.17-.2.73-.85.92-1.14.2-.29.39-.24.66-.14.27.1 1.71.81 2 .95.29.15.49.22.56.34.08.13.08.73-.16 1.41z" />
+            </svg>
+            <span className="hidden md:inline">Importar</span>
           </button>
 
           <button
@@ -639,17 +713,19 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
               });
               setIsModalOpen(true);
             }}
-            className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-all shadow-sm active:scale-95"
+            title="Novo Pedido"
+            aria-label="Novo Pedido"
+            className="flex items-center justify-center gap-1.5 h-8 w-8 md:w-auto px-0 md:px-3.5 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-all shadow-sm active:scale-95"
           >
             <Plus className="w-4 h-4" />
-            <span>Pedido</span>
+            <span className="hidden md:inline">Pedido</span>
           </button>
 
           <button
             onClick={() => window.print()}
             title="Imprimir"
             aria-label="Imprimir"
-            className="hidden md:flex items-center justify-center p-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors shadow-xs"
+            className="hidden md:flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors shadow-xs"
           >
             <Printer className="w-4 h-4" />
           </button>
@@ -657,31 +733,8 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
       </div>
 
       {/* Filters & Search */}
-      <div className="px-6 py-3 bg-white/70 border-b border-[#e2e8f0] flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5 flex-wrap">
-          <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5 shadow-2xs" role="group" aria-label="Modo de visualização">
-            <button
-              type="button"
-              onClick={() => setViewMode('CARDS')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
-                viewMode === 'CARDS' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
-              }`}
-            >
-              <LayoutGrid className="w-3.5 h-3.5" />
-              <span>Cards</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('TABLE')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
-                viewMode === 'TABLE' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
-              }`}
-            >
-              <TableIcon className="w-3.5 h-3.5" />
-              <span>Tabela</span>
-            </button>
-          </div>
-
+      <div className="flex flex-col md:flex-row md:items-center justify-between md:bg-white/70 md:border-b md:border-[#e2e8f0] md:px-6 md:py-2.5 md:gap-3 print:hidden">
+        <div className="bg-white/70 border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex items-center w-full md:w-auto min-w-0 overflow-hidden">
           {/* Hybrid Status Filter & Sort */}
           <HybridFilterSort
             filterLabel="Status:"
@@ -715,22 +768,22 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
         </div>
 
         {/* Search */}
-        <div className="flex items-center gap-2.5 flex-wrap w-full sm:w-auto">
-          <div className="relative w-full sm:w-72">
+        <div className="bg-white/70 border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 w-full md:flex-1 md:min-w-[140px] md:max-w-xs">
+          <div className="relative w-full">
             <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
               placeholder="Buscar por Nº, cliente ou WhatsApp..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:border-brand-500 shadow-2xs"
+              className="w-full h-9 pl-9 pr-3 py-0 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:border-brand-500 shadow-2xs"
             />
           </div>
         </div>
       </div>
 
       {/* Orders Table / Cards */}
-      <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-4">
+      <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-3 sm:p-4">
         <div
           id="print-report-area"
           className={
@@ -809,7 +862,7 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                                 <span>{group.label}</span>
                               </span>
                               <span className="font-mono text-[11px] text-slate-600">
-                                {group.orders.length} pedido(s) • Total: R$ {group.orders.reduce((s, o) => s + o.valorTotal, 0).toFixed(2)}
+                                {group.orders.length} pedido(s) • Total: R$ {formatCurrencyBR(group.orders.reduce((s, o) => s + o.valorTotal, 0))}
                               </span>
                             </div>
                           </td>
@@ -841,12 +894,17 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                   };
 
                   const isRep = isReplenishmentOrder(order);
+                  const isSelected = selectedOrderId === order.id;
                   return (
                     <tr
                       key={order.id}
                       onClick={() => onSelectOrder(order)}
                       className={`cursor-pointer transition-colors ${
-                        isRep
+                        isSelected
+                          ? `bg-brand-50/70 ring-1 ring-inset ring-brand-400 border-l-4 ${
+                              isRep ? 'border-l-sky-500' : 'border-l-brand-600'
+                            }`
+                          : isRep
                           ? 'bg-sky-50/90 hover:bg-sky-100/80 border-l-4 border-l-sky-500'
                           : 'hover:bg-slate-50/80'
                       }`}
@@ -914,14 +972,25 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                       <td className="py-2.5 px-2">
                         {isRep ? (
                           <span className="text-[11px] font-semibold text-sky-700">—</span>
-                        ) : (
-                          <span className="font-mono uppercase font-semibold text-[11px] px-2 py-0.5 bg-slate-100 rounded text-slate-800 border border-slate-200">
-                            {order.formaPagamento}
-                          </span>
-                        )}
+                        ) : (() => {
+                          const payStatus = getEffectivePaymentStatus(order);
+                          const remaining = getOrderRemainingAmount(order);
+                          return (
+                            <div className="flex flex-col items-start gap-0.5">
+                              <span className="font-mono uppercase font-semibold text-[11px] px-2 py-0.5 bg-slate-100 rounded text-slate-800 border border-slate-200">
+                                {order.formaPagamento}
+                              </span>
+                              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${PAYMENT_STATUS_BADGE_CLASSES[payStatus]}`}>
+                                {payStatus === 'SINAL'
+                                  ? `Sinal • Cobrar R$ ${formatCurrencyBR(remaining)}`
+                                  : PAYMENT_STATUS_LABELS[payStatus]}
+                              </span>
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="py-2.5 px-2 font-mono font-bold text-right text-slate-900 whitespace-nowrap">
-                        R$ {order.valorTotal.toFixed(2)}
+                        R$ {formatCurrencyBR(order.valorTotal)}
                       </td>
                       <td className="py-2.5 px-2 text-center">
                         {renderStatusControl(order)}
@@ -958,6 +1027,17 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                           >
                             <ChevronRight className="w-4 h-4" />
                           </button>
+                          {order.status === 'PENDENTE' && onDeleteOrder && (
+                            <button
+                              type="button"
+                              onClick={() => setOrderToDelete(order)}
+                              title="Excluir Pedido Pendente"
+                              aria-label="Excluir Pedido Pendente"
+                              className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1017,7 +1097,7 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                           <span>{group.label}</span>
                         </span>
                         <span className="font-mono text-[11px] text-slate-600">
-                          {group.orders.length} pedido(s) • R$ {group.orders.reduce((s, o) => s + o.valorTotal, 0).toFixed(2)}
+                          {group.orders.length} pedido(s) • R$ {formatCurrencyBR(group.orders.reduce((s, o) => s + o.valorTotal, 0))}
                         </span>
                       </button>
                     )}
@@ -1026,13 +1106,14 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                       {group.orders.map(order => {
                         const unit = units.find(u => u.id === order.unidadeOrigemId);
                         const isRep = isReplenishmentOrder(order);
+                        const isSelected = selectedOrderId === order.id;
                         return (
                           <div
                             key={order.id}
                             onClick={() => onSelectOrder(order)}
-                            className={`border rounded-xl p-4 shadow-xs transition-colors cursor-pointer flex flex-col justify-between gap-3 ${
+                            className={`border rounded-xl p-4 shadow-xs transition-colors cursor-pointer flex flex-col justify-between gap-3 min-w-0 overflow-hidden ${
                               isRep ? REPLENISHMENT_CARD_STYLE : ORDER_CARD_STATUS_STYLES[order.status]
-                            }`}
+                            }${isSelected ? ' ring-2 ring-brand-500 shadow-md' : ''}`}
                           >
                             <div className="flex items-start justify-between border-b border-slate-100 pb-2">
                               <div>
@@ -1076,8 +1157,21 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                                 {order.tipoEntrega === 'DELIVERY' ? 'Entrega' : 'Retirada'}
                               </div>
                             </div>
-                            <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                              <span className="font-mono font-bold text-sm text-slate-900">R$ {order.valorTotal.toFixed(2)}</span>
+                            <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+                              <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                                <span className="font-mono font-bold text-sm text-slate-900">R$ {formatCurrencyBR(order.valorTotal)}</span>
+                                {!isRep && (() => {
+                                  const payStatus = getEffectivePaymentStatus(order);
+                                  const remaining = getOrderRemainingAmount(order);
+                                  return (
+                                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${PAYMENT_STATUS_BADGE_CLASSES[payStatus]}`}>
+                                      {payStatus === 'SINAL'
+                                        ? `Sinal • Cobrar R$ ${formatCurrencyBR(remaining)}`
+                                        : PAYMENT_STATUS_LABELS[payStatus]}
+                                    </span>
+                                  );
+                                })()}
+                              </div>
                               <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                                 <button
                                   onClick={() => {
@@ -1103,6 +1197,17 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                                 >
                                   <ChevronRight className="w-4 h-4" />
                                 </button>
+                                {order.status === 'PENDENTE' && onDeleteOrder && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setOrderToDelete(order)}
+                                    className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg cursor-pointer"
+                                    title="Excluir Pedido Pendente"
+                                    aria-label="Excluir Pedido Pendente"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -1121,10 +1226,10 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
 
       {/* NEW / EDIT ORDER MODAL (Logical Order) */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92dvh] flex flex-col overflow-hidden border border-slate-200">
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-2 sm:p-4">
+          <div className="bg-white rounded-xl sm:rounded-2xl shadow-2xl w-full max-w-4xl max-h-[95dvh] sm:max-h-[92dvh] flex flex-col overflow-hidden border border-slate-200">
             {/* Modal Header */}
-            <div className="px-6 py-4 bg-[#f8f9ff] border-b border-slate-200 flex items-center justify-between">
+            <div className="px-3.5 py-2.5 sm:px-6 sm:py-4 bg-[#f8f9ff] border-b border-slate-200 flex items-center justify-between">
               <div>
                 <h2 className="text-base font-bold text-slate-900 font-sans">
                   {editingOrder.id ? 'Editar Pedido' : 'Novo Pedido'}
@@ -1139,9 +1244,9 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
             </div>
 
             {/* Modal Body (Scrollable) */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            <div className="flex-1 overflow-y-auto p-2.5 sm:p-5 space-y-2 sm:space-y-4">
               {importBanner && (
-                <div className={`p-3.5 rounded-xl border text-xs flex items-start gap-2.5 ${
+                <div className={`p-2.5 sm:p-3.5 rounded-xl border text-xs flex items-start gap-2.5 ${
                   importBanner.source === 'gemini'
                     ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
                     : 'bg-amber-50 border-amber-200 text-amber-900'
@@ -1170,8 +1275,8 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
               )}
 
               {/* PASSO 1: DADOS DO PEDIDO & LOJA */}
-              <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-4">
-                <div className="flex items-center justify-between gap-2 mb-3">
+              <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-2.5 sm:p-3.5">
+                <div className="flex items-center justify-between gap-2 mb-2">
                   <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-500">
                     1. Dados do Pedido
                   </span>
@@ -1179,9 +1284,9 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                     {editingOrder.numeroPedido || ''}
                   </span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div className="grid grid-cols-2 gap-2 sm:gap-3 text-xs">
                   <div>
-                    <label className="font-semibold text-slate-700 block mb-1">Status</label>
+                    <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">Status</label>
                     <select
                       value={editingOrder.status}
                       onChange={(e) => {
@@ -1196,7 +1301,7 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                         }
                         setPendingModalStatusConfirm(nextStatus);
                       }}
-                      className="w-full bg-white border border-slate-300 rounded-lg p-2 font-medium"
+                      className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-medium"
                     >
                       <option value="PENDENTE">Pendente</option>
                       <option value="CONFIRMADO">Confirmado</option>
@@ -1208,7 +1313,7 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                     </select>
                   </div>
                   <div>
-                    <label className="font-semibold text-slate-700 block mb-1">Loja de Origem</label>
+                    <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">Loja de Origem</label>
                     <select
                       value={editingOrder.unidadeOrigemId}
                       onChange={(e) => {
@@ -1233,7 +1338,7 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                         }
                         setEditingOrder({ ...editingOrder, unidadeOrigemId: newUnitId });
                       }}
-                      className="w-full bg-white border border-slate-300 rounded-lg p-2 font-medium"
+                      className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-medium"
                     >
                       {units.map(u => (
                         <option key={u.id} value={u.id}>
@@ -1246,16 +1351,16 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
               </div>
 
               {/* PASSO 2: DADOS DO CLIENTE */}
-              <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-4 space-y-3">
+              <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-2.5 sm:p-3.5 space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-500">
                     2. Dados do Cliente
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3 text-xs">
                   <div className="relative">
-                    <label className="font-semibold text-slate-700 block mb-1">Nome Completo *</label>
+                    <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">Nome Completo *</label>
                     <div className="relative">
                       <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                       <input
@@ -1268,7 +1373,7 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                           setEditingOrder({ ...editingOrder, clienteNome: e.target.value });
                           setShowCustomerSuggestions(true);
                         }}
-                        className="w-full bg-white border border-slate-300 rounded-lg pl-8 pr-3 py-2 focus:outline-none focus:border-brand-500"
+                        className="w-full bg-white border border-slate-300 rounded-lg pl-8 pr-3 py-1.5 sm:py-2 focus:outline-none focus:border-brand-500"
                       />
                     </div>
                     {showCustomerSuggestions && (() => {
@@ -1312,13 +1417,13 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                     })()}
                   </div>
                   <div>
-                    <label className="font-semibold text-slate-700 block mb-1">Telefone WhatsApp *</label>
+                    <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">Telefone WhatsApp *</label>
                     <input
                       type="text"
                       placeholder="Ex: +55 (11) 98765-4321"
                       value={editingOrder.clienteTelefone || ''}
                       onChange={(e) => setEditingOrder({ ...editingOrder, clienteTelefone: e.target.value })}
-                      className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono"
+                      className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-mono"
                     />
                   </div>
                 </div>
@@ -1335,11 +1440,11 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
               </div>
 
               {/* PASSO 3: MODALIDADE & ENDEREÇO */}
-              <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-4">
-                <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-500 block mb-3">
+              <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-2.5 sm:p-3.5">
+                <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-500 block mb-2">
                   3. Dados da Entrega
                 </span>
-                <div className="space-y-3 text-xs">
+                <div className="space-y-2 text-xs">
                   <div className="flex items-center gap-4">
                     <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-800">
                       <input
@@ -1382,10 +1487,10 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                   </div>
 
                   {editingOrder.tipoEntrega === 'DELIVERY' ? (
-                    <div className="space-y-2.5">
-                      <div className="flex flex-wrap items-end gap-3">
-                        <div className="w-[155px] shrink-0">
-                          <label className="font-semibold text-slate-700 block mb-1">Data da Entrega *</label>
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-end gap-2 sm:gap-3">
+                        <div className="min-w-0 sm:w-[155px] sm:shrink-0">
+                          <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">Data da Entrega *</label>
                           <input
                             type="date"
                             required
@@ -1406,11 +1511,11 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                                 dataHoraEntregaFim: end
                               });
                             }}
-                            className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono text-xs"
+                            className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-mono text-xs"
                           />
                         </div>
-                        <div className="w-[130px] shrink-0">
-                          <label className="font-semibold text-slate-700 block mb-1">Turno *</label>
+                        <div className="min-w-0 sm:w-[130px] sm:shrink-0">
+                          <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">Turno *</label>
                           <select
                             value={
                               editingOrder.turnoEntrega ||
@@ -1427,27 +1532,27 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                                 dataHoraEntregaFim: end
                               });
                             }}
-                            className="w-full bg-white border border-slate-300 rounded-lg p-2 font-medium"
+                            className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-medium"
                           >
                             <option value="MANHA">Manhã</option>
                             <option value="TARDE">Tarde</option>
                             <option value="NOITE">Noite</option>
                           </select>
                         </div>
-                        <div className="flex-1 min-w-[200px]">
-                          <label className="font-semibold text-slate-700 block mb-1">Observação da Entrega</label>
+                        <div className="col-span-2 sm:flex-1 sm:min-w-[200px]">
+                          <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">Observação da Entrega</label>
                           <input
                             type="text"
                             placeholder="Ex: Portaria, interfone 51, horário preferido..."
                             value={editingOrder.detalheEntrega || ''}
                             onChange={(e) => setEditingOrder({ ...editingOrder, detalheEntrega: e.target.value })}
-                            className="w-full bg-white border border-slate-300 rounded-lg p-2"
+                            className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2"
                           />
                         </div>
                       </div>
                       {editingOrder.clienteEndereco && (
-                        <div className="p-2.5 rounded-lg bg-white border border-slate-200 flex items-center justify-between gap-2">
-                          <div className="text-[11px] text-slate-600 truncate">
+                        <div className="p-2 sm:p-2.5 rounded-lg bg-white border border-slate-200 flex flex-wrap items-center justify-between gap-1.5 sm:gap-2">
+                          <div className="text-[11px] text-slate-600 truncate max-w-full">
                             <span className="font-semibold text-slate-700">Endereço cadastrado:</span> {editingOrder.clienteEndereco}
                           </div>
                           <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-brand-700 cursor-pointer shrink-0">
@@ -1468,7 +1573,7 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                         </div>
                       )}
                       <div>
-                        <div className="flex items-center justify-between mb-1">
+                        <div className="flex flex-wrap items-center justify-between gap-1 mb-0.5 sm:mb-1">
                           <label className="font-semibold text-slate-700">
                             {editingOrder.clienteEndereco && editingOrder.enderecoEntrega !== editingOrder.clienteEndereco
                               ? 'Endereço Alternativo de Entrega *'
@@ -1490,7 +1595,7 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                           placeholder="Rua, Número, Bairro, Complemento, CEP..."
                           value={editingOrder.enderecoEntrega || ''}
                           onChange={(e) => setEditingOrder({ ...editingOrder, enderecoEntrega: e.target.value })}
-                          className="w-full bg-white border border-slate-300 rounded-lg p-2"
+                          className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2"
                         />
                         {routeCalcBadge && (
                           <p className="text-[11px] font-mono font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1 mt-1.5">
@@ -1500,10 +1605,10 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                       </div>
                     </div>
                   ) : (
-                    <div className="space-y-2.5">
-                      <div className="flex flex-wrap items-end gap-3">
-                        <div className="w-[155px] shrink-0">
-                          <label className="font-semibold text-slate-700 block mb-1">Data da Retirada *</label>
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-end gap-2 sm:gap-3">
+                        <div className="col-span-2 sm:w-[155px] sm:shrink-0">
+                          <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">Data da Retirada *</label>
                           <input
                             type="date"
                             required
@@ -1524,13 +1629,14 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                                 dataHoraEntregaFim: `${newDate}T${endTime}`
                               });
                             }}
-                            className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono text-xs"
+                            className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-mono text-xs"
                           />
                         </div>
-                        <div>
-                          <label className="font-semibold text-slate-700 block mb-1">Das *</label>
+                        <div className="min-w-0">
+                          <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">Das *</label>
                           <TimeSelect15
                             ariaLabel="Hora inicial da retirada"
+                            className="w-full py-1.5 sm:w-auto sm:py-2"
                             value={extractTimeHHmm(editingOrder.dataHoraEntrega || getCurrentLocalDateTime())}
                             onChange={(hhmm) => {
                               const newStart = combineDateWithTime(
@@ -1547,10 +1653,11 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                             }}
                           />
                         </div>
-                        <div>
-                          <label className="font-semibold text-slate-700 block mb-1">Às</label>
+                        <div className="min-w-0">
+                          <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">Às</label>
                           <TimeSelect15
                             ariaLabel="Hora final da retirada"
+                            className="w-full py-1.5 sm:w-auto sm:py-2"
                             value={extractTimeHHmm(
                               editingOrder.dataHoraEntregaFim ||
                                 addHoursToDateTime(editingOrder.dataHoraEntrega || getCurrentLocalDateTime(), 1)
@@ -1568,11 +1675,11 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                         </div>
                       </div>
                       <div>
-                        <label className="font-semibold text-slate-700 block mb-1">Local de Retirada (Loja ou Ateliê de Produção)</label>
+                        <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">Local de Retirada (Loja ou Ateliê de Produção)</label>
                         <select
                           value={editingOrder.unidadeRetiradaId || editingOrder.unidadeOrigemId}
                           onChange={(e) => setEditingOrder({ ...editingOrder, unidadeRetiradaId: e.target.value })}
-                          className="w-full bg-white border border-slate-300 rounded-lg p-2 font-medium"
+                          className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-medium"
                         >
                           {units.filter(u => u.ativo).map(u => (
                             <option key={u.id} value={u.id}>
@@ -1587,18 +1694,18 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
               </div>
 
               {/* PASSO 4: ITENS DO PEDIDO */}
-              <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-4">
-                <div className="flex items-center justify-between mb-3">
+              <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-2.5 sm:p-3.5">
+                <div className="flex items-center justify-between mb-2">
                   <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-500">
                     4. Produtos Solicitados
                   </span>
-                  <span className="text-xs text-slate-500">
+                  <span className="hidden sm:inline text-xs text-slate-500">
                     Selecione o produto e a quantidade na caixa abaixo
                   </span>
                 </div>
 
                 {/* Searchable Product Selection Combobox */}
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mb-4">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5 sm:gap-2 mb-2 sm:mb-3">
                   <div className="relative flex-1 min-w-0">
                     <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
@@ -1629,7 +1736,7 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                         }
                       }}
                       placeholder="Digite o nome ou SKU do produto..."
-                      className="w-full bg-white border border-slate-300 rounded-lg pl-8 pr-8 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:border-brand-500"
+                      className="w-full bg-white border border-slate-300 rounded-lg pl-8 pr-8 py-1.5 sm:py-2 text-xs font-medium text-slate-800 focus:outline-none focus:border-brand-500"
                     />
                     {productSearch && (
                       <button
@@ -1666,7 +1773,13 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                               </div>
                             );
                           }
-                          return matches.map(prod => (
+                          return matches.map(prod => {
+                            const unitIdForStock = editingOrder.unidadeOrigemId || '';
+                            const avail =
+                              stock.length > 0 && unitIdForStock
+                                ? getUnitProductAvailability(stock, modalReservedMap, unitIdForStock, prod.id)
+                                : null;
+                            return (
                             <button
                               key={prod.id}
                               type="button"
@@ -1684,22 +1797,36 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                                 <span className="font-mono text-slate-500 mr-1.5">{prod.sku}</span>
                                 {prod.descricao}
                               </span>
-                              <span className="font-mono font-bold text-brand-700 shrink-0">
-                                R$ {prod.precoUnitario.toFixed(2)} / {prod.unidade}
+                              <span className="flex items-center gap-1.5 shrink-0">
+                                {avail && (
+                                  <span
+                                    className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-full border ${
+                                      avail.disponivel <= 0
+                                        ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                        : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    }`}
+                                  >
+                                    Disp: {avail.disponivel}
+                                  </span>
+                                )}
+                                <span className="font-mono font-bold text-brand-700">
+                                  R$ {formatCurrencyBR(prod.precoUnitario)} / {prod.unidade}
+                                </span>
                               </span>
                             </button>
-                          ));
+                            );
+                          });
                         })()}
                       </div>
                     )}
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5 sm:gap-2">
                     <input
                       type="number"
                       min="1"
                       value={selectedQtyToAdd}
                       onChange={(e) => setSelectedQtyToAdd(Math.max(1, Number(e.target.value)))}
-                      className="w-20 bg-white border border-slate-300 rounded-lg p-2 text-xs font-mono text-center font-bold"
+                      className="w-16 sm:w-20 bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 text-xs font-mono text-center font-bold"
                       title="Quantidade"
                     />
                     <button
@@ -1717,7 +1844,7 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                         setProductSearch('');
                         setShowProductSuggestions(false);
                       }}
-                      className="flex items-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold rounded-lg transition-colors whitespace-nowrap"
+                      className="flex-1 sm:flex-initial justify-center flex items-center gap-1.5 px-3 sm:px-4 py-1.5 sm:py-2 bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold rounded-lg transition-colors whitespace-nowrap"
                     >
                       <Plus className="w-3.5 h-3.5" />
                       <span>Adicionar Item</span>
@@ -1726,33 +1853,44 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                 </div>
 
                 {/* Items Table in Order */}
-                <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+                <div className="bg-white border border-slate-200 rounded-lg overflow-hidden overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead className="bg-slate-100 text-slate-600 font-semibold text-[11px]">
                       <tr>
-                        <th className="py-2 px-3 text-left">Produto</th>
-                        <th className="py-2 px-3 text-center">Qtd</th>
-                        <th className="py-2 px-3 text-right">Preço Unit.</th>
-                        <th className="py-2 px-3 text-right">Subtotal</th>
-                        <th className="py-2 px-3 text-center">Remover</th>
+                        <th className="py-1.5 px-2 sm:py-2 sm:px-3 text-left">Produto</th>
+                        <th className="py-1.5 px-2 sm:py-2 sm:px-3 text-center">Qtd</th>
+                        <th className="py-1.5 px-2 sm:py-2 sm:px-3 text-right">Preço Unit.</th>
+                        <th className="py-1.5 px-2 sm:py-2 sm:px-3 text-right">Subtotal</th>
+                        <th className="py-1.5 px-2 sm:py-2 sm:px-3 text-center">Remover</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200">
                       {(editingOrder.itens || []).length === 0 ? (
                         <tr>
-                          <td colSpan={5} className="py-6 text-center text-slate-400">
+                          <td colSpan={5} className="py-3 sm:py-6 text-center text-slate-400">
                             Nenhum item adicionado ainda.
                           </td>
                         </tr>
                       ) : (
                         (editingOrder.itens || []).map(item => {
                           const prod = products.find(p => p.id === item.produtoId);
+                          const unitIdForStock = editingOrder.unidadeOrigemId || '';
+                          const avail =
+                            stock.length > 0 && unitIdForStock
+                              ? getUnitProductAvailability(stock, modalReservedMap, unitIdForStock, item.produtoId)
+                              : null;
+                          const exceedsAvailable = avail !== null && item.quantidade > avail.disponivel;
                           return (
                             <tr key={item.id}>
-                              <td className="py-2 px-3 font-medium text-slate-900">
-                                {prod?.descricao || 'Produto'}
+                              <td className="py-1.5 px-2 sm:py-2 sm:px-3 font-medium text-slate-900">
+                                <div>{prod?.descricao || 'Produto'}</div>
+                                {exceedsAvailable && avail && (
+                                  <span className="inline-block mt-0.5 text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">
+                                    Sob encomenda / produção (Disp: {avail.disponivel})
+                                  </span>
+                                )}
                               </td>
-                              <td className="py-2 px-3 text-center">
+                              <td className="py-1.5 px-2 sm:py-2 sm:px-3 text-center">
                                 <div className="inline-flex items-center gap-1 bg-slate-100 rounded px-1.5 py-0.5">
                                   <button
                                     type="button"
@@ -1767,13 +1905,13 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                                   >+</button>
                                 </div>
                               </td>
-                              <td className="py-2 px-3 text-right font-mono text-slate-700">
-                                R$ {item.precoUnitario.toFixed(2)}
+                              <td className="py-1.5 px-2 sm:py-2 sm:px-3 text-right font-mono text-slate-700 whitespace-nowrap">
+                                R$ {formatCurrencyBR(item.precoUnitario)}
                               </td>
-                              <td className="py-2 px-3 text-right font-mono font-bold text-slate-900">
-                                R$ {item.subtotal.toFixed(2)}
+                              <td className="py-1.5 px-2 sm:py-2 sm:px-3 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
+                                R$ {formatCurrencyBR(item.subtotal)}
                               </td>
-                              <td className="py-2 px-3 text-center">
+                              <td className="py-1.5 px-2 sm:py-2 sm:px-3 text-center">
                                 <button
                                   type="button"
                                   onClick={() => handleUpdateItemQuantity(item.id, -item.quantidade)}
@@ -1792,33 +1930,33 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
               </div>
 
               {/* PASSO 5: FECHAMENTO FINANCEIRO & FORMAS DE PAGAMENTO */}
-              <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-4">
-                <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-500 block mb-3">
+              <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-2.5 sm:p-3.5">
+                <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-500 block mb-2">
                   5. Valores & Forma de Pagamento
                 </span>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs mb-4">
-                  <div>
-                    <label className="font-semibold text-slate-700 block mb-1">Subtotal dos Itens</label>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3 text-xs mb-2.5 sm:mb-3.5">
+                  <div className="min-w-0">
+                    <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1 truncate">Subtotal dos Itens</label>
                     <input
                       type="text"
                       disabled
-                      value={`R$ ${(editingOrder.valorSubtotal || 0).toFixed(2)}`}
-                      className="w-full bg-slate-100 border border-slate-300 rounded-lg p-2 font-mono font-bold"
+                      value={`R$ ${formatCurrencyBR(editingOrder.valorSubtotal || 0)}`}
+                      className="w-full bg-slate-100 border border-slate-300 rounded-lg p-1.5 sm:p-2 font-mono font-bold"
                     />
                   </div>
-                  <div>
-                    <label className="font-semibold text-slate-700 block mb-1">Taxa de Entrega (R$)</label>
+                  <div className="min-w-0">
+                    <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1 truncate">Taxa de Entrega (R$)</label>
                     <CurrencyInput
                       value={editingOrder.taxaEntrega || 0}
                       onChangeValue={(taxa) => {
                         const { total } = calculateTotals(editingOrder.itens || [], taxa, editingOrder.desconto || 0);
                         setEditingOrder({ ...editingOrder, taxaEntrega: taxa, valorTotal: total });
                       }}
-                      className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono"
+                      className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-mono"
                     />
                   </div>
-                  <div>
-                    <label className="font-semibold text-slate-700 block mb-1">Desconto</label>
+                  <div className="min-w-0">
+                    <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1 truncate">Desconto</label>
                     <div className="flex items-center gap-1">
                       <select
                         value={discountType}
@@ -1830,7 +1968,7 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                           const { total } = calculateTotals(editingOrder.itens || [], editingOrder.taxaEntrega || 0, descAmt);
                           setEditingOrder({ ...editingOrder, desconto: descAmt, valorTotal: total });
                         }}
-                        className="bg-white border border-slate-300 rounded-lg px-2 py-2 font-mono font-bold text-slate-700"
+                        className="bg-white border border-slate-300 rounded-lg px-1.5 sm:px-2 py-1.5 sm:py-2 font-mono font-bold text-slate-700"
                       >
                         <option value="R$">R$</option>
                         <option value="%">%</option>
@@ -1845,7 +1983,7 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                             const { total } = calculateTotals(editingOrder.itens || [], editingOrder.taxaEntrega || 0, descAmt);
                             setEditingOrder({ ...editingOrder, desconto: descAmt, valorTotal: total });
                           }}
-                          className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono text-rose-600"
+                          className="w-full min-w-0 bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-mono text-rose-600"
                         />
                       ) : (
                         <input
@@ -1862,23 +2000,23 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                             const { total } = calculateTotals(editingOrder.itens || [], editingOrder.taxaEntrega || 0, descAmt);
                             setEditingOrder({ ...editingOrder, desconto: descAmt, valorTotal: total });
                           }}
-                          className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono text-rose-600"
+                          className="w-full min-w-0 bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-mono text-rose-600"
                         />
                       )}
                     </div>
                     {discountType === '%' && discountValue > 0 && (
                       <span className="text-[10px] font-mono text-rose-600 mt-0.5 block">
-                        -R$ {(editingOrder.desconto || 0).toFixed(2)}
+                        -R$ {formatCurrencyBR(editingOrder.desconto || 0)}
                       </span>
                     )}
                   </div>
-                  <div>
-                    <label className="font-semibold text-slate-700 block mb-1">TOTAL A PAGAR (R$)</label>
+                  <div className="min-w-0">
+                    <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1 truncate">TOTAL A PAGAR (R$)</label>
                     <input
                       type="text"
                       disabled
-                      value={`R$ ${(editingOrder.valorTotal || 0).toFixed(2)}`}
-                      className="w-full bg-emerald-50 border border-emerald-300 text-emerald-900 rounded-lg p-2 font-mono font-bold text-sm"
+                      value={`R$ ${formatCurrencyBR(editingOrder.valorTotal || 0)}`}
+                      className="w-full bg-emerald-50 border border-emerald-300 text-emerald-900 rounded-lg p-1.5 sm:p-2 font-mono font-bold text-xs sm:text-sm"
                     />
                   </div>
                 </div>
@@ -1888,15 +2026,15 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                   numeroPedido: editingOrder.numeroPedido || '',
                   observacoes: editingOrder.observacoes
                 }) ? (
-                  <div className="p-3 rounded-xl bg-sky-50 border border-sky-200 text-xs text-sky-900 font-medium">
+                  <div className="p-2.5 sm:p-3 rounded-xl bg-sky-50 border border-sky-200 text-xs text-sky-900 font-medium">
                     Pedido Especial de Reposição — transferência interna sem forma de pagamento.
                   </div>
                 ) : (
-                <div className="space-y-3">
+                <div className="space-y-1.5 sm:space-y-2.5">
                   <label className="font-semibold text-slate-800 text-xs block">
                     Forma de Pagamento (Obrigatório):
                   </label>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5 sm:gap-2">
                     {[
                       { id: 'pix', label: 'PIX Instantâneo' },
                       { id: 'debito', label: 'Cartão de Débito' },
@@ -1907,7 +2045,7 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                         key={p.id}
                         type="button"
                         onClick={() => setEditingOrder({ ...editingOrder, formaPagamento: p.id as PaymentMethod })}
-                        className={`p-2.5 rounded-xl border text-xs font-semibold text-center transition-all ${
+                        className={`py-1.5 px-2 sm:p-2.5 rounded-lg sm:rounded-xl border text-xs font-semibold text-center transition-all ${
                           editingOrder.formaPagamento === p.id
                             ? 'bg-brand-600 text-white border-brand-600 shadow-sm'
                             : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'
@@ -1919,8 +2057,8 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                   </div>
 
                   {editingOrder.formaPagamento === 'dinheiro' && (
-                    <div className="pt-2">
-                      <label className="text-xs font-semibold text-slate-700 block mb-1">
+                    <div className="pt-1 sm:pt-2">
+                      <label className="text-xs font-semibold text-slate-700 block mb-0.5 sm:mb-1">
                         Precisa de Troco para quanto? (R$)
                       </label>
                       <CurrencyInput
@@ -1928,17 +2066,100 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                         placeholder="Ex: 100,00"
                         value={editingOrder.trocoPara}
                         onChangeValue={(val) => setEditingOrder({ ...editingOrder, trocoPara: val > 0 ? val : undefined })}
-                        className="w-48 bg-white border border-slate-300 rounded-lg p-2 font-mono text-xs"
+                        className="w-full sm:w-48 bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-mono text-xs"
                       />
                     </div>
                   )}
+
+                  {/* Status do Pagamento: Pendente / Sinal 50% / Pago */}
+                  <div className="pt-2 border-t border-slate-200/80 space-y-2">
+                    <label className="font-semibold text-slate-800 text-xs block">
+                      Situação do Pagamento:
+                    </label>
+                    <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
+                      {(['PENDENTE', 'SINAL', 'PAGO'] as PaymentStatus[]).map(st => {
+                        const active = getEffectivePaymentStatus(editingOrder) === st;
+                        return (
+                          <button
+                            key={st}
+                            type="button"
+                            onClick={() => {
+                              const total = editingOrder.valorTotal || 0;
+                              setEditingOrder({
+                                ...editingOrder,
+                                statusPagamento: st,
+                                valorPago:
+                                  st === 'PAGO'
+                                    ? total
+                                    : st === 'SINAL'
+                                    ? Number((total / 2).toFixed(2))
+                                    : 0,
+                              });
+                            }}
+                            className={`py-1.5 px-2 rounded-lg border text-xs font-semibold text-center transition-all cursor-pointer ${
+                              active
+                                ? st === 'PAGO'
+                                  ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                                  : st === 'SINAL'
+                                  ? 'bg-sky-600 text-white border-sky-600 shadow-sm'
+                                  : 'bg-amber-500 text-white border-amber-500 shadow-sm'
+                                : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'
+                            }`}
+                          >
+                            {PAYMENT_STATUS_LABELS[st]}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {getEffectivePaymentStatus(editingOrder) === 'SINAL' && (
+                      <div className="grid grid-cols-2 gap-2 sm:gap-3 pt-1">
+                        <div>
+                          <label className="text-[11px] font-semibold text-slate-700 block mb-0.5">
+                            Valor do Sinal Pago (R$)
+                          </label>
+                          <CurrencyInput
+                            allowEmpty
+                            value={getOrderPaidAmount(editingOrder)}
+                            onChangeValue={(val) => {
+                              const total = editingOrder.valorTotal || 0;
+                              const clamped = Math.min(total, Math.max(0, val));
+                              setEditingOrder({
+                                ...editingOrder,
+                                statusPagamento: 'SINAL',
+                                valorPago: clamped,
+                              });
+                            }}
+                            className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-mono text-xs font-bold text-sky-800"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-semibold text-slate-700 block mb-0.5">
+                            Restante a Cobrar (R$)
+                          </label>
+                          <input
+                            type="text"
+                            disabled
+                            value={`R$ ${formatCurrencyBR(getOrderRemainingAmount(editingOrder))}`}
+                            className="w-full bg-amber-50 border border-amber-200 text-amber-900 rounded-lg p-1.5 sm:p-2 font-mono text-xs font-bold"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {getEffectivePaymentStatus(editingOrder) === 'PAGO' && (
+                      <p className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5">
+                        Pagamento integral confirmado — nada a cobrar na entrega.
+                      </p>
+                    )}
+                  </div>
                 </div>
                 )}
               </div>
 
               {/* PASSO 6: OBSERVAÇÕES */}
               <div>
-                <label className="font-semibold text-slate-700 text-xs block mb-1">
+                <label className="font-semibold text-slate-700 text-xs block mb-0.5 sm:mb-1">
                   Observações Adicionais (Restrições, bilhete presente, ponto de referência...)
                 </label>
                 <textarea
@@ -1946,34 +2167,51 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                   placeholder="Ex: Embalagem para presente, sem nozes, tocar interfone..."
                   value={editingOrder.observacoes || ''}
                   onChange={(e) => setEditingOrder({ ...editingOrder, observacoes: e.target.value })}
-                  className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs"
+                  className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 text-xs"
                 />
               </div>
             </div>
 
             {/* Modal Footer Actions */}
-            <div className="px-4 sm:px-6 py-3 sm:py-4 bg-[#f8f9ff] border-t border-slate-200 flex flex-wrap items-center justify-between gap-2">
+            <div className="px-3 sm:px-6 py-2 sm:py-3.5 bg-[#f8f9ff] border-t border-slate-200 flex flex-wrap items-center justify-between gap-1.5 sm:gap-2">
               <button
                 type="button"
                 onClick={() => handleCopySummary(editingOrder)}
-                className="flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2 sm:py-2.5 text-xs font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 rounded-xl transition-colors border border-emerald-300 whitespace-nowrap w-full sm:w-auto"
+                className="flex items-center justify-center gap-1.5 px-3 sm:px-4 py-1.5 sm:py-2.5 text-xs font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 rounded-xl transition-colors border border-emerald-300 whitespace-nowrap w-full sm:w-auto"
               >
                 {copyFeedback ? <Check className="w-4 h-4 text-emerald-700 shrink-0" /> : <Copy className="w-4 h-4 text-emerald-700 shrink-0" />}
                 <span>{copyFeedback ? 'Resumo Copiado!' : 'Copiar Resumo WhatsApp'}</span>
               </button>
 
-              <div className="flex items-center justify-end gap-2 w-full sm:w-auto">
+              <div className="flex items-center justify-end gap-1.5 sm:gap-2 w-full sm:w-auto">
+                {editingOrder.id &&
+                  onDeleteOrder &&
+                  orders.find(o => o.id === editingOrder.id)?.status === 'PENDENTE' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const target = orders.find(o => o.id === editingOrder.id);
+                        if (target && target.status === 'PENDENTE') {
+                          setOrderToDelete(target);
+                        }
+                      }}
+                      className="flex items-center gap-1.5 px-3 sm:px-3.5 py-1.5 sm:py-2 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-colors whitespace-nowrap cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Excluir Pedido</span>
+                    </button>
+                  )}
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg whitespace-nowrap"
+                  className="px-3 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg whitespace-nowrap"
                 >
                   Cancelar
                 </button>
                 <button
                   type="button"
                   onClick={handleSave}
-                  className="px-5 sm:px-6 py-2 sm:py-2.5 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-xl transition-all shadow-sm whitespace-nowrap"
+                  className="px-4 sm:px-6 py-1.5 sm:py-2.5 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-xl transition-all shadow-sm whitespace-nowrap"
                 >
                   Salvar Pedido
                 </button>
@@ -2108,6 +2346,52 @@ ${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro
                 className="px-4 py-1.5 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-lg cursor-pointer"
               >
                 Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Pending Order Confirmation Modal */}
+      {orderToDelete && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center z-[70] p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-sm w-full p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-50 border border-rose-200 text-rose-600 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">
+                  Excluir Pedido Pendente {orderToDelete.numeroPedido}?
+                </h3>
+                <p className="text-xs text-slate-600 mt-1">
+                  Apenas pedidos com status <strong>PENDENTE</strong> podem ser excluídos. Essa ação removerá permanentemente o pedido de{' '}
+                  <strong>{orderToDelete.clienteNome}</strong>.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setOrderToDelete(null)}
+                className="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (orderToDelete.status === 'PENDENTE') {
+                    onDeleteOrder?.(orderToDelete.id);
+                    if (editingOrder.id === orderToDelete.id) {
+                      setIsModalOpen(false);
+                    }
+                  }
+                  setOrderToDelete(null);
+                }}
+                className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl cursor-pointer shadow-xs"
+              >
+                Excluir Pedido
               </button>
             </div>
           </div>

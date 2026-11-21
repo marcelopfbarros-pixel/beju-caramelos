@@ -24,7 +24,7 @@ import { ExcelService } from '../services/excelService';
 import { PrintReportHeader } from '../components/PrintReportHeader';
 import { HybridFilterSort } from '../components/HybridFilterSort';
 import { useExpandedGroups } from '../hooks/useExpandedGroups';
-import { CurrencyInput } from '../components/CurrencyInput';
+import { CurrencyInput, formatCurrencyBR } from '../components/CurrencyInput';
 import { canEditProducts, UserRole } from '../utils/permissions';
 
 interface ProdutosScreenProps {
@@ -196,19 +196,44 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-[#f8f9ff] overflow-hidden">
+    <div className="flex-1 min-w-0 flex flex-col h-full bg-[#f8f9ff] overflow-hidden">
       {/* Top Action Bar */}
-      <div className="bg-white border-b border-[#e2e8f0] px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex items-center gap-2">
+      <div className="flex flex-col md:flex-row md:items-center justify-between md:bg-white md:border-b md:border-[#e2e8f0] md:px-6 md:py-4 md:gap-4 print:hidden">
+        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2.5 md:p-0 md:bg-transparent md:border-b-0">
+          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex flex-wrap items-center gap-2">
             <span>Produtos</span>
-            <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700">
+            <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800">
               {filteredProducts.length} itens
             </span>
           </h1>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex flex-wrap items-center gap-2">
+          <div className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-white p-0.5 shadow-2xs shrink-0" role="group" aria-label="Modo de visualização">
+            <button
+              type="button"
+              onClick={() => setViewMode('GRID')}
+              title="Visualização em Cards"
+              aria-label="Visualização em Cards"
+              className={`h-full flex items-center justify-center px-2 rounded-md text-xs font-semibold transition-colors ${
+                viewMode === 'GRID' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('TABLE')}
+              title="Visualização em Tabela"
+              aria-label="Visualização em Tabela"
+              className={`h-full flex items-center justify-center px-2 rounded-md text-xs font-semibold transition-colors ${
+                viewMode === 'TABLE' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <TableIcon className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
           <input
             type="file"
             ref={fileInputRef}
@@ -220,29 +245,33 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
           {canEdit && (
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-xs"
+              title="Importar"
+              aria-label="Importar"
+              className="flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-xs"
             >
-              <Upload className="w-3.5 h-3.5 text-slate-500" />
-              <span>Importar .xlsx</span>
+              <Upload className="w-4 h-4 text-slate-500" />
             </button>
           )}
 
           <button
             onClick={() => ExcelService.exportProducts(products, categories)}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-xs"
+            title="Exportar"
+            aria-label="Exportar"
+            className="flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-xs"
           >
-            <Download className="w-3.5 h-3.5 text-slate-500" />
-            <span>Exportar .xlsx</span>
+            <Download className="w-4 h-4 text-slate-500" />
           </button>
 
           {canEdit && (
             <>
               <button
                 onClick={() => setIsCategoryModalOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-purple-700 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100 transition-colors"
+                title="Categorias"
+                aria-label="Categorias"
+                className="flex items-center justify-center gap-1.5 h-8 w-8 md:w-auto px-0 md:px-3 text-xs font-semibold text-purple-700 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100 transition-colors"
               >
                 <FolderPlus className="w-3.5 h-3.5" />
-                <span>Categorias</span>
+                <span className="hidden md:inline">Categorias</span>
               </button>
 
               <button
@@ -259,10 +288,12 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
                   });
                   setIsProductModalOpen(true);
                 }}
-                className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-all shadow-sm active:scale-95"
+                title="Novo Produto"
+                aria-label="Novo Produto"
+                className="flex items-center justify-center gap-1.5 h-8 w-8 md:w-auto px-0 md:px-3.5 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-all shadow-sm active:scale-95"
               >
                 <Plus className="w-4 h-4" />
-                <span>Produto</span>
+                <span className="hidden md:inline">Produto</span>
               </button>
             </>
           )}
@@ -271,7 +302,7 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
             onClick={() => window.print()}
             title="Imprimir"
             aria-label="Imprimir"
-            className="flex items-center justify-center p-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors shadow-xs"
+            className="flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors shadow-xs"
           >
             <Printer className="w-4 h-4" />
           </button>
@@ -279,33 +310,8 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
       </div>
 
       {/* Filter & Sort + Search */}
-      <div className="px-6 py-3 bg-white/70 border-b border-[#e2e8f0] flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5 flex-wrap">
-          <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5 shadow-2xs" role="group" aria-label="Modo de visualização">
-            <button
-              type="button"
-              onClick={() => setViewMode('GRID')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
-                viewMode === 'GRID' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
-              }`}
-              title="Visualização em Cards"
-            >
-              <LayoutGrid className="w-3.5 h-3.5" />
-              <span>Cards</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('TABLE')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
-                viewMode === 'TABLE' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
-              }`}
-              title="Visualização em Tabela"
-            >
-              <TableIcon className="w-3.5 h-3.5" />
-              <span>Tabela</span>
-            </button>
-          </div>
-
+      <div className="flex flex-col md:flex-row md:items-center justify-between md:bg-white/70 md:border-b md:border-[#e2e8f0] md:px-6 md:py-2.5 md:gap-3 print:hidden">
+        <div className="bg-white/70 border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex items-center w-full md:w-auto min-w-0 overflow-hidden">
           <HybridFilterSort
             filterLabel="Categoria:"
             filterValue={selectedCategory}
@@ -333,27 +339,27 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
           />
         </div>
 
-        <div className="flex items-center gap-2.5 flex-wrap">
-          <div className="relative w-64">
+        <div className="bg-white/70 border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 w-full md:flex-1 md:min-w-[140px] md:max-w-xs">
+          <div className="relative w-full">
             <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
               placeholder="Buscar produto por nome ou SKU..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:border-brand-500 shadow-2xs"
+              className="w-full h-9 pl-9 pr-3 py-0 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:border-brand-500 shadow-2xs"
             />
           </div>
         </div>
       </div>
 
       {/* Products Grid or Table */}
-      <div className="flex-1 overflow-auto p-6">
+      <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-3 sm:p-6">
         <div
           id="print-report-area"
           className={
             viewMode === 'TABLE'
-              ? 'bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-hidden'
+              ? 'bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-x-auto max-w-full'
               : 'hidden print:block bg-white'
           }
         >
@@ -428,7 +434,7 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
                               </span>
                             </td>
                             <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
-                              R$ {prod.precoUnitario.toFixed(2)}
+                              R$ {formatCurrencyBR(prod.precoUnitario)}
                               <span className="text-[10px] font-normal text-slate-500 ml-1">/{prod.unidade}</span>
                             </td>
                             <td className="py-3 px-4 text-center font-mono text-slate-600">
@@ -522,7 +528,7 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
                   return (
                     <div
                       key={prod.id}
-                      className="bg-white border border-[#e2e8f0] rounded-xl overflow-hidden shadow-xs hover:shadow-sm transition-all flex flex-col justify-between"
+                      className="bg-white border border-[#e2e8f0] rounded-xl min-w-0 overflow-hidden shadow-xs hover:shadow-sm transition-all flex flex-col justify-between"
                     >
                       <div>
                         {/* Image container */}
@@ -578,7 +584,7 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
                         <div>
                           <span className="text-[9px] text-slate-400 block">Preço</span>
                           <span className="text-xs font-mono font-bold text-slate-900">
-                            R$ {prod.precoUnitario.toFixed(2)}
+                            R$ {formatCurrencyBR(prod.precoUnitario)}
                             <span className="text-[9px] font-normal text-slate-500 ml-0.5">/{prod.unidade}</span>
                           </span>
                         </div>
@@ -623,9 +629,9 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
 
       {/* CREATE / EDIT PRODUCT MODAL */}
       {isProductModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden border border-slate-200">
-            <div className="px-6 py-4 bg-[#f8f9ff] border-b border-slate-200 flex items-center justify-between">
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-[60] p-2 sm:p-4">
+          <div className="bg-white rounded-xl sm:rounded-2xl shadow-xl w-full max-w-lg max-h-[94dvh] sm:max-h-[92dvh] flex flex-col overflow-hidden border border-slate-200">
+            <div className="px-3.5 py-2.5 sm:px-6 sm:py-4 bg-[#f8f9ff] border-b border-slate-200 flex items-center justify-between shrink-0">
               <h2 className="text-sm font-bold text-slate-900 font-sans">
                 {editingProduct.id ? 'Editar Produto' : 'Cadastrar Novo Produto'}
               </h2>
@@ -637,23 +643,23 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
               </button>
             </div>
 
-            <div className="p-6 space-y-4 text-xs">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Código SKU</label>
+            <div className="p-3 sm:p-5 space-y-2.5 sm:space-y-3.5 text-xs overflow-y-auto">
+              <div className="grid grid-cols-2 gap-2 sm:gap-3">
+                <div className="min-w-0">
+                  <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1 truncate">Código SKU</label>
                   <input
                     type="text"
                     value={editingProduct.sku || ''}
                     onChange={(e) => setEditingProduct({ ...editingProduct, sku: e.target.value })}
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono"
+                    className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-mono"
                   />
                 </div>
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Categoria</label>
+                <div className="min-w-0">
+                  <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1 truncate">Categoria</label>
                   <select
                     value={editingProduct.categoriaId}
                     onChange={(e) => setEditingProduct({ ...editingProduct, categoriaId: e.target.value })}
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2"
+                    className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2"
                   >
                     {categories.filter(c => c.ativo).map(c => (
                       <option key={c.id} value={c.id}>{c.nome}</option>
@@ -663,31 +669,31 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
               </div>
 
               <div>
-                <label className="font-semibold text-slate-700 block mb-1">Descrição do Produto *</label>
+                <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1 truncate">Descrição do Produto *</label>
                 <input
                   type="text"
                   placeholder="Ex: Torta Holandesa com Chocolate Meio Amargo"
                   value={editingProduct.descricao || ''}
                   onChange={(e) => setEditingProduct({ ...editingProduct, descricao: e.target.value })}
-                  className="w-full bg-white border border-slate-300 rounded-lg p-2"
+                  className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2"
                 />
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Preço Unitário (R$) *</label>
+              <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                <div className="min-w-0">
+                  <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1 truncate">Preço Unit. (R$) *</label>
                   <CurrencyInput
                     value={editingProduct.precoUnitario || 0}
                     onChangeValue={(val) => setEditingProduct({ ...editingProduct, precoUnitario: val })}
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono font-bold"
+                    className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-mono font-bold"
                   />
                 </div>
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Unidade</label>
+                <div className="min-w-0">
+                  <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1 truncate">Unidade</label>
                   <select
                     value={editingProduct.unidade}
                     onChange={(e) => setEditingProduct({ ...editingProduct, unidade: e.target.value as ProductUnit })}
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2"
+                    className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2"
                   >
                     <option value="UN">UN (Unidade)</option>
                     <option value="KG">KG (Quilo)</option>
@@ -696,26 +702,26 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
                     <option value="CX">CX (Caixa)</option>
                   </select>
                 </div>
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Tempo Prep. (min)</label>
+                <div className="min-w-0">
+                  <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1 truncate">Tempo (min)</label>
                   <input
                     type="number"
                     value={editingProduct.tempoProducaoMinutos || 30}
                     onChange={(e) => setEditingProduct({ ...editingProduct, tempoProducaoMinutos: Number(e.target.value) })}
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono"
+                    className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-mono"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="font-semibold text-slate-700 block mb-1">Imagem / Foto do Produto</label>
-                <div className="flex items-center gap-2">
+                <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1 truncate">Imagem / Foto do Produto</label>
+                <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 sm:gap-2">
                   <input
                     type="text"
                     placeholder="https://... ou selecione um arquivo local"
                     value={editingProduct.fotoUrl || ''}
                     onChange={(e) => setEditingProduct({ ...editingProduct, fotoUrl: e.target.value })}
-                    className="flex-1 bg-white border border-slate-300 rounded-lg p-2 font-mono text-[11px]"
+                    className="flex-1 min-w-0 bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-mono text-[11px]"
                   />
                   <input
                     type="file"
@@ -727,20 +733,20 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
                   <button
                     type="button"
                     onClick={() => productImageFileRef.current?.click()}
-                    className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 text-xs font-semibold rounded-lg shrink-0 transition-colors cursor-pointer"
+                    className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 text-xs font-semibold rounded-lg shrink-0 transition-colors cursor-pointer"
                   >
                     <ImageIcon className="w-3.5 h-3.5 text-brand-600" />
                     <span>Arquivo Local</span>
                   </button>
                 </div>
                 {editingProduct.fotoUrl && (
-                  <div className="mt-2 w-20 h-20 rounded-lg overflow-hidden border border-slate-200">
+                  <div className="mt-2 w-16 h-16 sm:w-20 sm:h-20 rounded-lg overflow-hidden border border-slate-200">
                     <img src={editingProduct.fotoUrl} alt="Preview" className="w-full h-full object-cover" />
                   </div>
                 )}
               </div>
 
-              <div className="flex items-center gap-2 pt-2">
+              <div className="flex items-center gap-2 pt-1 sm:pt-2">
                 <input
                   type="checkbox"
                   id="prod-ativo"
@@ -754,16 +760,16 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
               </div>
             </div>
 
-            <div className="px-6 py-3 bg-[#f8f9ff] border-t border-slate-200 flex justify-end gap-2">
+            <div className="px-3.5 py-2.5 sm:px-6 sm:py-3 bg-[#f8f9ff] border-t border-slate-200 flex justify-end gap-2 shrink-0">
               <button
                 onClick={() => setIsProductModalOpen(false)}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+                className="px-3.5 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleSaveProduct}
-                className="px-5 py-2 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-lg shadow-sm"
+                className="px-4 sm:px-5 py-1.5 sm:py-2 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-lg shadow-sm"
               >
                 Salvar Produto
               </button>
@@ -774,9 +780,9 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
 
       {/* CATEGORIES MANAGEMENT MODAL */}
       {isCategoryModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden border border-slate-200">
-            <div className="px-6 py-4 bg-[#f8f9ff] border-b border-slate-200 flex items-center justify-between">
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-[60] p-2 sm:p-4">
+          <div className="bg-white rounded-xl sm:rounded-2xl shadow-xl w-full max-w-md max-h-[94dvh] sm:max-h-[92dvh] flex flex-col overflow-hidden border border-slate-200">
+            <div className="px-3.5 py-2.5 sm:px-6 sm:py-4 bg-[#f8f9ff] border-b border-slate-200 flex items-center justify-between shrink-0">
               <h2 className="text-sm font-bold text-slate-900 font-sans">
                 Gerenciar Categorias de Produtos
               </h2>
@@ -788,19 +794,19 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
               </button>
             </div>
 
-            <div className="p-6 space-y-4 text-xs">
-              <div className="flex gap-2">
+            <div className="p-3 sm:p-5 space-y-2.5 sm:space-y-4 text-xs overflow-y-auto">
+              <div className="flex gap-1.5 sm:gap-2">
                 <input
                   type="text"
                   placeholder="Nova Categoria (ex: Diet / Zero Açúcar)"
                   value={newCategoryName}
                   onChange={(e) => setNewCategoryName(e.target.value)}
-                  className="flex-1 bg-white border border-slate-300 rounded-lg p-2"
+                  className="flex-1 min-w-0 bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2"
                 />
                 <button
                   type="button"
                   onClick={handleAddCategory}
-                  className="px-3 py-2 bg-brand-600 text-white rounded-lg font-bold hover:bg-brand-700"
+                  className="px-3 py-1.5 sm:py-2 bg-brand-600 text-white rounded-lg font-bold hover:bg-brand-700 shrink-0"
                 >
                   Adicionar
                 </button>
@@ -810,7 +816,7 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
                 {categories.map(cat => (
                   <div
                     key={cat.id}
-                    className={`p-2.5 flex items-center justify-between gap-2 hover:bg-slate-50 ${
+                    className={`p-2 sm:p-2.5 flex items-center justify-between gap-2 hover:bg-slate-50 ${
                       !cat.ativo ? 'bg-slate-50/70 opacity-75' : ''
                     }`}
                   >
@@ -864,10 +870,10 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
               </div>
             </div>
 
-            <div className="px-6 py-3 bg-[#f8f9ff] border-t border-slate-200 flex justify-end">
+            <div className="px-3.5 py-2.5 sm:px-6 sm:py-3 bg-[#f8f9ff] border-t border-slate-200 flex justify-end shrink-0">
               <button
                 onClick={() => setIsCategoryModalOpen(false)}
-                className="px-4 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50"
+                className="px-4 py-1.5 sm:py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50"
               >
                 Fechar
               </button>

@@ -1,0 +1,36 @@
+# JuJu Delivery (Beju Caramelos) — Regras do Workspace
+
+## 1. Layout Mobile e Responsividade
+- **Estrutura de telas**: No mobile (`< md`), organize os controles superiores em blocos/cards empilhados: Título -> Botões de ação -> Filtro (`HybridFilterSort`) -> Busca (em bloco abaixo do filtro) -> Lista/Conteúdo.
+- **Info badge único**: Cada card de título de tela deve exibir no máximo **1 info badge** em estilo azul-claro (`bg-blue-100 text-blue-800`).
+- **Botões no mobile**: Todos os botões de ação no mobile devem exibir **apenas o ícone** (oculte o texto com `hidden md:inline` e forneça `title` e `aria-label`). Botões específicos por ícone: `"Transferir"` na tela de Estoque usa fundo branco, ícone preto (`ArrowLeftRight`) e tooltip `"Transferir estoque entre unidades"`; `"Importar"` na tela de Pedidos usa o ícone do WhatsApp.
+- **Prevenção de overflow horizontal**: Nenhum card ou barra de filtro deve ultrapassar a largura da tela mobile. Use `w-full max-w-full min-w-0 overflow-hidden` nos cards e `overflow-x-auto max-w-full` nos wrappers de `<table>`.
+- **Visualização Cards / Tabela**: Listagens administrativas (incluindo a aba `Usuários` em `ConfiguracoesScreen.tsx`) devem oferecer alternância `Cards` / `Tabela`, iniciando em `CARDS` no mobile (`window.innerWidth < 768`).
+- **Abas em Configurações**: Exiba as abas em grid `grid-cols-3 md:inline-flex` no mobile.
+
+## 2. Filtros, Seletores e Navegação
+- **Seletores `<select>` em filtros e Top Bar**: Mantenha altura fixa consistente (`h-9`) com `appearance-none bg-transparent` e `<ChevronDown />` dedicado para garantir alinhamento vertical perfeito entre ícone e texto em `HybridFilterSort.tsx` e `Header.tsx`.
+- **Agrupamento de filtros**: Filtros pertencentes à mesma barra (como o filtro de datas em `ProducaoScreen.tsx`) devem ser integrados dentro de `<HybridFilterSort />`, e não em caixas separadas no desktop.
+- **Sidebar esquerda (`Sidebar.tsx`)**: Mantenha o botão de contrair/expandir à **esquerda** do texto `"MENU"`. No mobile, o item `Painel` fica imediatamente antes de `Configurações` (último item).
+- **Painel / Ferramentas (`RightBar.tsx`)**: Em `"Resumo do Pedido"`, exiba na mesma linha do título o badge pílula selecionável com o código do pedido (`numeroPedido`). Não exiba badge `"ViaCEP"` em `"Buscador de CEP"`.
+
+## 3. Modais e Empilhamento (`z-index`)
+- **Fora de contextos `z-index` restritos**: Nunca renderize modais `fixed` dentro de `<header className="... z-20">` (como `<AuthModal />` em `Header.tsx`), pois ficam sob a sidebar (`z-40`). Renderize modais como irmãos fora do `<header>` via Fragment (`<>...</>`) com overlay acima de `z-40` (ex.: `z-[70]`).
+- **Modais compactos no mobile**: Em formulários densos (como o modal de Novo Pedido em `PedidosScreen.tsx`), reduza paddings externos/internos e gaps no mobile (`p-2 sm:p-4`, `p-2.5 sm:p-5 space-y-2 sm:space-y-4`, cards `p-2.5 sm:p-3.5`) e agrupe campos curtos em `grid-cols-2` no mobile (`Status`/`Loja de Origem`, `Data`/`Turno`, `Subtotal`/`Taxa`/`Desconto`/`Total`).
+
+## 4. Formatação de Valores Monetários (`#.###,##`)
+- **Entradas de valor**: Utilize `<CurrencyInput />` (`src/components/CurrencyInput.tsx`) para todos os inputs monetários (preços, taxas, descontos, troco e metas). O campo deve formatar ao vivo durante a digitação (`#.###,##`) e ao focar/desfocar.
+- **Exibição de valores**: Utilize `formatCurrencyBR(...)` de `src/components/CurrencyInput.tsx` para todas as exibições monetárias em tela e resumos em vez de `.toFixed(2)` direto.
+
+## 5. Verificação Obrigatória
+- Após qualquer edição de código TypeScript/React, execute `npx tsc --noEmit` e garanta saída com código `0` antes de responder ao usuário.
+
+## 6. Deploy, Git e Persistência Supabase
+- **Deploy apenas sob comando explícito**: Nunca execute deploy automático para o Netlify após alterações de código; mantenha as alterações locais e aguarde confirmação explícita do usuário para commitar, fazer push ou publicar.
+- **Método de deploy no Netlify**: Utilize o MCP `netlify_netlify` (`netlify-deploy-services-updater`, `operation: "deploy-site"`, `siteId: "3f9a983f-a6aa-43c0-97f7-afe3201c7a51"`) em vez de `npx netlify deploy --prod` (que exige `NETLIFY_AUTH_TOKEN`).
+- **Batch `.upsert()` no Supabase**: Em operações em lote com `onConflict` composto (como `estoque_unidades` com `onConflict: 'unidade_id,produto_id'`), **omita** o campo `id` do payload para evitar preenchimento de `NULL` pelo PostgREST, e recarregue os registros após salvar para substituir IDs temporários (`st-*`) pelos UUIDs reais do banco.
+
+## 7. Agrupamentos, Autenticação e Paridade Mobile
+- **Agrupamentos em tabelas e cards**: Todos os agrupamentos devem ser expansíveis/retráteis (iniciando **retraídos** por padrão via `useExpandedGroups`), usar cabeçalho verde-claro (`bg-emerald-50`) e ordenar os grupos em ordem alfabética crescente (`localeCompare(..., 'pt-BR')`) ou cronológica crescente (data e turno `MANHA` → `TARDE` → `NOITE`).
+- **Autenticação (sem Google OAuth)**: A autenticação utiliza exclusivamente e-mail e senha numérica de 8 dígitos (não reintroduzir botões ou fluxos de Google OAuth). Ao encerrar sessão, limpe `supabaseUser`, `isOperatorAuthenticated` e o `email` do perfil para retornar à `LandingScreen` sem chamar `handleRefreshAuth`.
+- **Paridade Desktop/Mobile no `RightBar`**: Mantenha `TutorialOverlay` montado no nível de `App.tsx` (nunca apenas dentro do drawer mobile do `RightBar`) e passe as mesmas props de dados (incluindo `categories`) para ambas as instâncias de `RightBar`.

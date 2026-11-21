@@ -9,6 +9,15 @@ import { canEditRevenueGoals, canViewFinancials, UserRole } from '../utils/permi
 import { ScreenId } from './Sidebar';
 import { ProgramacaoProducaoModal, toLocalDateKey } from './ProgramacaoProducaoModal';
 import { TutorialOverlay } from './TutorialOverlay';
+import { CurrencyInput, formatCurrencyBR } from './CurrencyInput';
+import { isReplenishmentOrder } from '../utils/orderStatusStyles';
+import {
+  PAYMENT_STATUS_BADGE_CLASSES,
+  PAYMENT_STATUS_LABELS,
+  getEffectivePaymentStatus,
+  getOrderPaidAmount,
+  getOrderRemainingAmount,
+} from '../utils/paymentStatus';
 import { 
   TrendingUp, 
   Clock, 
@@ -26,7 +35,7 @@ import {
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Customer } from '../types';
-import { MapPin, Navigation, Share2, FileDown, ExternalLink, X, ChevronDown, ChevronUp, Wrench, Search, Loader2, UserCheck, Send, ChefHat, HelpCircle, Store, ShoppingBag } from 'lucide-react';
+import { MapPin, Navigation, Share2, FileDown, ExternalLink, X, ChevronDown, ChevronUp, Wrench, Search, Loader2, UserCheck, Send, ChefHat, HelpCircle, Store, ShoppingBag, Wallet, Printer } from 'lucide-react';
 import {
   formatCep,
   lookupByCep,
@@ -54,6 +63,8 @@ interface RightBarProps {
   stock?: StockItem[];
   activeUnitId?: string;
   selectedOrder?: Order;
+  onSelectOrder?: (order: Order) => void;
+  onSaveOrder?: (order: Order) => void;
   selectedDeliveryIds?: string[];
   onChangeSelectedDeliveryIds?: (ids: string[]) => void;
   lowStockCount: number;
@@ -62,6 +73,7 @@ interface RightBarProps {
   currentScreen?: ScreenId;
   onNavigate?: (screen: ScreenId) => void;
   isMobileDrawer?: boolean;
+  isMobileScreen?: boolean;
   onCloseMobileDrawer?: () => void;
   focusRoteiroSignal?: number;
   onOpenTutorial?: () => void;
@@ -77,6 +89,8 @@ export const RightBar: React.FC<RightBarProps> = ({
   stock = [],
   activeUnitId = 'all',
   selectedOrder,
+  onSelectOrder,
+  onSaveOrder,
   selectedDeliveryIds = [],
   onChangeSelectedDeliveryIds,
   lowStockCount,
@@ -85,20 +99,25 @@ export const RightBar: React.FC<RightBarProps> = ({
   currentScreen = 'pedidos',
   onNavigate,
   isMobileDrawer = false,
+  isMobileScreen = false,
   onCloseMobileDrawer,
   focusRoteiroSignal = 0,
   onOpenTutorial
 }) => {
   const [copied, setCopied] = useState(false);
   const [waPreviewMode, setWaPreviewMode] = useState<'RESUMO' | 'STATUS'>('RESUMO');
+  const [localSelectedOrderId, setLocalSelectedOrderId] = useState<string>('');
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [goalScope, setGoalScope] = useState<'MENSAL' | 'ANUAL'>('MENSAL');
   const [activeTab, setActiveTab] = useState<'INDICADORES' | 'FERRAMENTAS'>(() =>
     focusRoteiroSignal > 0 ? 'FERRAMENTAS' : 'INDICADORES'
   );
-  const [expandedTool, setExpandedTool] = useState<'WHATSAPP' | 'ROTEIRIZADOR' | 'BUSCA_CEP' | 'PLANEJAMENTO_PRODUCAO' | 'CARDAPIO_CLIENTES' | 'TUTORIAL' | null>(() =>
+  const [expandedTool, setExpandedTool] = useState<'WHATSAPP' | 'PAGAMENTOS_PENDENTES' | 'ROTEIRIZADOR' | 'BUSCA_CEP' | 'PLANEJAMENTO_PRODUCAO' | 'CARDAPIO_CLIENTES' | 'TUTORIAL' | null>(() =>
     focusRoteiroSignal > 0 ? 'ROTEIRIZADOR' : null
   );
+  const [paymentFilter, setPaymentFilter] = useState<'TODOS' | 'PENDENTE' | 'SINAL'>('TODOS');
+  const [editingDepositOrderId, setEditingDepositOrderId] = useState<string | null>(null);
+  const [depositDraftValue, setDepositDraftValue] = useState<number>(0);
   const [isProgramacaoModalOpen, setIsProgramacaoModalOpen] = useState(false);
   const [isTutorialOpen, setIsTutorialOpen] = useState(false);
   const [cardapioUnitId, setCardapioUnitId] = useState<string>(() =>
@@ -230,7 +249,18 @@ export const RightBar: React.FC<RightBarProps> = ({
     };
   }, [validOrders, revenueGoals, goalScope, activeUnitId, activeUnits]);
 
-  const targetOrder = selectedOrder || orders[0];
+  const targetOrder =
+    scopedOrders.find(o => o.id === selectedOrder?.id) ||
+    selectedOrder ||
+    scopedOrders.find(o => o.id === localSelectedOrderId) ||
+    scopedOrders[0] ||
+    orders[0];
+  const selectableOrders =
+    scopedOrders.length > 0
+      ? targetOrder && !scopedOrders.some(o => o.id === targetOrder.id)
+        ? [targetOrder, ...scopedOrders]
+        : scopedOrders
+      : orders;
   const prodMap = new Map(products.map(p => [p.id, p]));
   const unit = units.find(u => u.id === targetOrder?.unidadeOrigemId) || units[0];
 
@@ -240,7 +270,7 @@ export const RightBar: React.FC<RightBarProps> = ({
     const itensList = order.itens
       .map(i => {
         const prod = prodMap.get(i.produtoId);
-        return `• ${i.quantidade}x ${prod?.descricao || 'Produto'} (R$ ${i.subtotal.toFixed(2)})`;
+        return `• ${i.quantidade}x ${prod?.descricao || 'Produto'} (R$ ${formatCurrencyBR(i.subtotal)})`;
       })
       .join('\n');
 
@@ -250,6 +280,15 @@ export const RightBar: React.FC<RightBarProps> = ({
       credito: 'Cartão de Crédito',
       dinheiro: 'Dinheiro'
     }[order.formaPagamento];
+
+    const payStatus = getEffectivePaymentStatus(order);
+    const remainingAmt = getOrderRemainingAmount(order);
+    const paymentStatusNote =
+      payStatus === 'PAGO'
+        ? ' • [PAGO]'
+        : payStatus === 'SINAL'
+        ? ` • [Sinal pago: R$ ${formatCurrencyBR(getOrderPaidAmount(order))} | Restante: R$ ${formatCurrencyBR(remainingAmt)}]`
+        : '';
 
     return `🍰 *Beju Caramelos*
 Olá, *${order.clienteNome}*! Confirmamos o seu pedido:
@@ -264,12 +303,12 @@ Olá, *${order.clienteNome}*! Confirmamos o seu pedido:
 *Itens Solicitados:*
 ${itensList}
 
-*Subtotal:* R$ ${order.valorSubtotal.toFixed(2)}
-*Taxa de Entrega:* R$ ${order.taxaEntrega.toFixed(2)}
-${order.desconto > 0 ? `*Desconto:* -R$ ${order.desconto.toFixed(2)}\n` : ''}*TOTAL A PAGAR:* R$ ${order.valorTotal.toFixed(2)}
+*Subtotal:* R$ ${formatCurrencyBR(order.valorSubtotal)}
+*Taxa de Entrega:* R$ ${formatCurrencyBR(order.taxaEntrega)}
+${order.desconto > 0 ? `*Desconto:* -R$ ${formatCurrencyBR(order.desconto)}\n` : ''}*TOTAL A PAGAR:* R$ ${formatCurrencyBR(order.valorTotal)}
 
-*Forma de Pagamento:* ${paymentLabel}${order.trocoPara ? ` (Troco para R$ ${order.trocoPara.toFixed(2)})` : ''}
-${order.formaPagamento === 'pix' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro@bejucaramelos.com.br'}\n_Favor enviar o comprovante por aqui para finalizarmos o preparo!_` : ''}
+*Forma de Pagamento:* ${paymentLabel}${paymentStatusNote}${order.trocoPara ? ` (Troco para R$ ${formatCurrencyBR(order.trocoPara)})` : ''}
+${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro@bejucaramelos.com.br'}\n_Favor enviar o comprovante por aqui para finalizarmos o preparo!_` : ''}
 ${order.observacoes ? `\n*Obs:* ${order.observacoes}` : ''}
 Obrigado por escolher a Beju Caramelos! ✨`;
   };
@@ -285,7 +324,7 @@ Obrigado por escolher a Beju Caramelos! ✨`;
     setTimeout(() => setCopied(false), 2500);
   };
 
-  if (isCollapsed && !isMobileDrawer) {
+  if (isCollapsed && !isMobileDrawer && !isMobileScreen) {
     return (
       <aside className="hidden lg:flex w-12 bg-white border-l border-[#e2e8f0] flex-col items-center py-3 gap-4 shrink-0 h-[calc(100vh-4rem)] transition-all duration-200 print:hidden">
         <button
@@ -326,7 +365,9 @@ Obrigado por escolher a Beju Caramelos! ✨`;
   return (
     <aside
       className={
-        isMobileDrawer
+        isMobileScreen
+          ? 'w-full flex-1 h-full bg-white flex flex-col justify-between overflow-y-auto print:hidden'
+          : isMobileDrawer
           ? 'w-full h-full bg-white flex flex-col justify-between overflow-y-auto print:hidden'
           : 'hidden lg:flex w-80 bg-white border-l border-[#e2e8f0] flex-col justify-between shrink-0 h-[calc(100vh-4rem)] overflow-y-auto transition-all duration-200 print:hidden'
       }
@@ -367,7 +408,7 @@ Obrigado por escolher a Beju Caramelos! ✨`;
             </button>
           </div>
 
-          {isMobileDrawer ? (
+          {isMobileScreen ? null : isMobileDrawer ? (
             <button
               onClick={onCloseMobileDrawer}
               title="Fechar Painel"
@@ -403,7 +444,7 @@ Obrigado por escolher a Beju Caramelos! ✨`;
                 R$ {totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
               <span className="text-[9px] text-emerald-600 font-semibold mt-0.5 block leading-tight">
-                {validOrders.length} ped. • TM R$ {avgTicket.toFixed(0)}
+                {validOrders.length} ped. • TM R$ {Math.round(avgTicket).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
               </span>
             </button>
             )}
@@ -521,11 +562,11 @@ Obrigado por escolher a Beju Caramelos! ✨`;
                 <p className="text-[11px] text-slate-500">
                   Nenhuma meta definida para {goalAnalytics.periodLabel}.
                 </p>
-                {!isMobileDrawer && canEditRevenueGoals(userRole) && (
+                {canEditRevenueGoals(userRole) && (
                   <button
                     type="button"
                     onClick={() => onNavigate?.('configuracoes')}
-                    className="hidden lg:inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-[11px] font-bold transition-colors"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-[11px] font-bold transition-colors"
                   >
                     <Settings className="w-3 h-3" />
                     <span>Cadastrar Meta</span>
@@ -632,30 +673,75 @@ Obrigado por escolher a Beju Caramelos! ✨`;
           <div className="space-y-3">
             {/* Card 1: Resumo do WhatsApp */}
             <div className="rounded-xl border-2 border-emerald-500 bg-emerald-50/60 shadow-2xs overflow-hidden">
-              <button
-                type="button"
+              <div
                 onClick={() =>
                   setExpandedTool(prev => (prev === 'WHATSAPP' ? null : 'WHATSAPP'))
                 }
-                className="w-full flex items-center justify-between px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100/80 transition-colors cursor-pointer text-left"
+                className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100/80 transition-colors cursor-pointer text-left"
               >
-                <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setExpandedTool(prev => (prev === 'WHATSAPP' ? null : 'WHATSAPP'));
+                  }}
+                  className="flex items-center gap-2 min-w-0 text-left cursor-pointer"
+                >
                   <MessageSquare className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span className="text-xs font-bold text-slate-900">Resumo Pedido</span>
-                </div>
-                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-bold text-slate-900 whitespace-nowrap truncate">
+                    Resumo do Pedido
+                  </span>
+                </button>
+                <div className="flex items-center gap-1.5 shrink-0">
                   {targetOrder && (
-                    <span className="text-[10px] font-mono bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded font-semibold">
-                      {targetOrder.numeroPedido}
-                    </span>
+                    <div
+                      className="relative inline-flex items-center"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <select
+                        aria-label="Selecionar pedido para resumo"
+                        value={targetOrder.id}
+                        onChange={(e) => {
+                          const chosen =
+                            selectableOrders.find(o => o.id === e.target.value) ||
+                            orders.find(o => o.id === e.target.value);
+                          if (chosen) {
+                            setLocalSelectedOrderId(chosen.id);
+                            onSelectOrder?.(chosen);
+                          }
+                        }}
+                        className="appearance-none text-[10px] font-mono font-bold pl-2.5 pr-5 py-0.5 rounded-full bg-brand-50 text-brand-700 border border-brand-200 cursor-pointer focus:outline-none focus:ring-1 focus:ring-brand-500 max-w-[120px] truncate"
+                      >
+                        {selectableOrders.map(o => (
+                          <option key={o.id} value={o.id}>
+                            {o.numeroPedido}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="w-2.5 h-2.5 text-brand-600 pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2" />
+                    </div>
                   )}
-                  {expandedTool === 'WHATSAPP' ? (
-                    <ChevronUp className="w-4 h-4 text-slate-500" />
-                  ) : (
-                    <ChevronDown className="w-4 h-4 text-slate-500" />
-                  )}
+                  <button
+                    type="button"
+                    aria-label={
+                      expandedTool === 'WHATSAPP'
+                        ? 'Recolher Resumo do Pedido'
+                        : 'Expandir Resumo do Pedido'
+                    }
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setExpandedTool(prev => (prev === 'WHATSAPP' ? null : 'WHATSAPP'));
+                    }}
+                    className="text-slate-500 cursor-pointer"
+                  >
+                    {expandedTool === 'WHATSAPP' ? (
+                      <ChevronUp className="w-4 h-4" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4" />
+                    )}
+                  </button>
                 </div>
-              </button>
+              </div>
 
               {expandedTool === 'WHATSAPP' && (
                 <div className="p-3 border-t border-[#e2e8f0] space-y-2.5">
@@ -727,6 +813,385 @@ Obrigado por escolher a Beju Caramelos! ✨`;
                 </div>
               )}
             </div>
+
+            {/* Card 2: Pagamentos Pendentes */}
+            {(() => {
+              const allPendingPayments = scopedOrders
+                .filter(
+                  o =>
+                    o.status !== 'CANCELADO' &&
+                    !isReplenishmentOrder(o) &&
+                    getEffectivePaymentStatus(o) !== 'PAGO'
+                )
+                .sort((a, b) =>
+                  (a.dataHoraEntrega || a.dataPedido).localeCompare(b.dataHoraEntrega || b.dataPedido)
+                );
+
+              const filteredPendingPayments = allPendingPayments.filter(o => {
+                if (paymentFilter === 'TODOS') return true;
+                return getEffectivePaymentStatus(o) === paymentFilter;
+              });
+
+              const totalToReceive = allPendingPayments.reduce(
+                (sum, o) => sum + getOrderRemainingAmount(o),
+                0
+              );
+
+              const handlePrintPendingPaymentsByUnit = () => {
+                if (filteredPendingPayments.length === 0) return;
+
+                const escapeHtml = (val: string) =>
+                  val
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;');
+
+                const unitMap = new Map(units.map(u => [u.id, u]));
+                const grouped = new Map<string, { unitName: string; orders: Order[]; totalRemaining: number }>();
+
+                for (const order of filteredPendingPayments) {
+                  const u = unitMap.get(order.unidadeOrigemId);
+                  const unitKey = order.unidadeOrigemId || 'sem-unidade';
+                  const unitName = u?.nome || 'Unidade não informada';
+                  const existing = grouped.get(unitKey) || { unitName, orders: [], totalRemaining: 0 };
+                  existing.orders.push(order);
+                  existing.totalRemaining += getOrderRemainingAmount(order);
+                  grouped.set(unitKey, existing);
+                }
+
+                const sortedGroups = Array.from(grouped.values()).sort((a, b) =>
+                  a.unitName.localeCompare(b.unitName, 'pt-BR')
+                );
+
+                const filterLabel =
+                  paymentFilter === 'TODOS'
+                    ? 'Todos (Pendente + Sinal)'
+                    : paymentFilter === 'PENDENTE'
+                    ? 'Apenas Pendentes'
+                    : 'Apenas com Sinal';
+
+                const grandTotal = filteredPendingPayments.reduce(
+                  (sum, o) => sum + getOrderRemainingAmount(o),
+                  0
+                );
+
+                const sectionsHtml = sortedGroups
+                  .map(group => {
+                    const rowsHtml = group.orders
+                      .map(order => {
+                        const payStatus = getEffectivePaymentStatus(order);
+                        const paid = getOrderPaidAmount(order);
+                        const remaining = getOrderRemainingAmount(order);
+                        const deliveryDate = order.dataHoraEntrega
+                          ? new Date(order.dataHoraEntrega).toLocaleString('pt-BR', {
+                              dateStyle: 'short',
+                              timeStyle: 'short',
+                            })
+                          : '-';
+                        return `
+                          <tr>
+                            <td class="mono bold">${escapeHtml(order.numeroPedido)}</td>
+                            <td>${escapeHtml(order.clienteNome)}<div class="sub">${escapeHtml(order.clienteTelefone || '')}</div></td>
+                            <td class="mono">${escapeHtml(deliveryDate)}</td>
+                            <td class="mono upper">${escapeHtml(order.formaPagamento)}</td>
+                            <td>${escapeHtml(PAYMENT_STATUS_LABELS[payStatus])}</td>
+                            <td class="mono right">R$ ${formatCurrencyBR(order.valorTotal)}</td>
+                            <td class="mono right">R$ ${formatCurrencyBR(paid)}</td>
+                            <td class="mono bold right">R$ ${formatCurrencyBR(remaining)}</td>
+                          </tr>
+                        `;
+                      })
+                      .join('');
+
+                    return `
+                      <section class="unit-block">
+                        <div class="unit-header">
+                          <span>${escapeHtml(group.unitName)} (${group.orders.length} pedido(s))</span>
+                          <span class="mono">Subtotal a receber: R$ ${formatCurrencyBR(group.totalRemaining)}</span>
+                        </div>
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>Pedido</th>
+                              <th>Cliente</th>
+                              <th>Entrega</th>
+                              <th>Forma</th>
+                              <th>Situação</th>
+                              <th class="right">Total</th>
+                              <th class="right">Pago</th>
+                              <th class="right">A Receber</th>
+                            </tr>
+                          </thead>
+                          <tbody>${rowsHtml}</tbody>
+                        </table>
+                      </section>
+                    `;
+                  })
+                  .join('');
+
+                const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Pagamentos Pendentes por Unidade — Beju Caramelos</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, sans-serif; color: #0f172a; margin: 20px; font-size: 11px; }
+    header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #0f172a; padding-bottom: 8px; margin-bottom: 14px; }
+    h1 { font-size: 16px; margin: 0 0 2px 0; }
+    .meta { color: #475569; font-size: 10px; }
+    .unit-block { margin-bottom: 16px; break-inside: avoid; }
+    .unit-header { display: flex; justify-content: space-between; align-items: center; background: #ecfdf5; border: 1px solid #a7f3d0; padding: 6px 10px; font-weight: 700; font-size: 11px; border-radius: 6px 6px 0 0; }
+    table { width: 100%; border-collapse: collapse; border: 1px solid #cbd5e1; border-top: none; }
+    th, td { border-bottom: 1px solid #e2e8f0; padding: 5px 7px; text-align: left; vertical-align: top; }
+    th { background: #f8fafc; font-size: 10px; text-transform: uppercase; color: #475569; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .bold { font-weight: 700; }
+    .upper { text-transform: uppercase; }
+    .right { text-align: right; white-space: nowrap; }
+    .sub { font-size: 9px; color: #64748b; }
+    footer { margin-top: 12px; padding-top: 8px; border-top: 2px solid #0f172a; display: flex; justify-content: space-between; font-weight: 700; font-size: 12px; }
+    @media print { body { margin: 10mm; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Beju Caramelos — Pagamentos Pendentes por Unidade</h1>
+      <div class="meta">Filtro: ${escapeHtml(filterLabel)} • Emitido em ${escapeHtml(new Date().toLocaleString('pt-BR'))}</div>
+    </div>
+    <div class="meta mono">${filteredPendingPayments.length} pedido(s)</div>
+  </header>
+  ${sectionsHtml}
+  <footer>
+    <span>TOTAL GERAL A RECEBER</span>
+    <span class="mono">R$ ${formatCurrencyBR(grandTotal)}</span>
+  </footer>
+</body>
+</html>`;
+
+                const iframe = document.createElement('iframe');
+                iframe.style.position = 'fixed';
+                iframe.style.right = '0';
+                iframe.style.bottom = '0';
+                iframe.style.width = '0';
+                iframe.style.height = '0';
+                iframe.style.border = '0';
+                document.body.appendChild(iframe);
+
+                const doc = iframe.contentDocument || iframe.contentWindow?.document;
+                if (doc && iframe.contentWindow) {
+                  doc.open();
+                  doc.write(html);
+                  doc.close();
+                  iframe.contentWindow.focus();
+                  setTimeout(() => {
+                    iframe.contentWindow?.print();
+                    setTimeout(() => {
+                      iframe.remove();
+                    }, 1000);
+                  }, 150);
+                } else {
+                  iframe.remove();
+                }
+              };
+
+              return (
+                <div className="rounded-xl border-2 border-emerald-500 bg-emerald-50/60 shadow-2xs overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setExpandedTool(prev =>
+                        prev === 'PAGAMENTOS_PENDENTES' ? null : 'PAGAMENTOS_PENDENTES'
+                      )
+                    }
+                    className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100/80 transition-colors cursor-pointer text-left"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Wallet className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span className="text-xs font-bold text-slate-900 truncate">
+                        Pagamentos Pendentes
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">
+                        {allPendingPayments.length}
+                      </span>
+                      {expandedTool === 'PAGAMENTOS_PENDENTES' ? (
+                        <ChevronUp className="w-4 h-4 text-slate-500" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4 text-slate-500" />
+                      )}
+                    </div>
+                  </button>
+
+                  {expandedTool === 'PAGAMENTOS_PENDENTES' && (
+                    <div className="p-3 border-t border-[#e2e8f0] space-y-2.5 text-xs">
+                      <div className="flex items-center gap-1.5">
+                        <div className="flex-1 min-w-0 flex items-center justify-between bg-white border border-slate-200 rounded-lg px-2.5 py-2">
+                          <span className="text-[11px] font-semibold text-slate-600 truncate">Total a receber</span>
+                          <span className="text-xs font-mono font-bold text-amber-800 shrink-0">
+                            R$ {formatCurrencyBR(totalToReceive)}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={filteredPendingPayments.length === 0}
+                          onClick={handlePrintPendingPaymentsByUnit}
+                          title="Imprimir lista de pagamentos pendentes por Unidade"
+                          aria-label="Imprimir lista de pagamentos pendentes por Unidade"
+                          className="h-9 w-9 shrink-0 inline-flex items-center justify-center rounded-lg bg-slate-900 hover:bg-slate-800 disabled:bg-slate-200 disabled:text-slate-400 text-white transition-colors shadow-xs cursor-pointer"
+                        >
+                          <Printer className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-3 bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-[10px]">
+                        {([
+                          { id: 'TODOS', label: `Todos (${allPendingPayments.length})` },
+                          { id: 'PENDENTE', label: 'Pendente' },
+                          { id: 'SINAL', label: 'Sinal' },
+                        ] as const).map(tab => (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => setPaymentFilter(tab.id)}
+                            className={`py-1 px-1.5 rounded-md font-bold transition-all cursor-pointer truncate ${
+                              paymentFilter === tab.id
+                                ? 'bg-white text-slate-900 shadow-2xs'
+                                : 'text-slate-500 hover:text-slate-800'
+                            }`}
+                          >
+                            {tab.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="max-h-72 overflow-y-auto space-y-2 pr-0.5">
+                        {filteredPendingPayments.length === 0 ? (
+                          <div className="py-5 text-center text-[11px] text-slate-400">
+                            Nenhum pagamento pendente neste filtro.
+                          </div>
+                        ) : (
+                          filteredPendingPayments.map(order => {
+                            const payStatus = getEffectivePaymentStatus(order);
+                            const remaining = getOrderRemainingAmount(order);
+                            const paid = getOrderPaidAmount(order);
+                            const isEditingDeposit = editingDepositOrderId === order.id;
+
+                            return (
+                              <div
+                                key={order.id}
+                                className="rounded-xl border border-slate-200 bg-white p-2.5 space-y-2"
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => onSelectOrder?.(order)}
+                                    className="text-left min-w-0 cursor-pointer"
+                                    title="Selecionar pedido"
+                                  >
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="font-mono font-bold text-[11px] text-slate-900">
+                                        {order.numeroPedido}
+                                      </span>
+                                      <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full border ${PAYMENT_STATUS_BADGE_CLASSES[payStatus]}`}>
+                                        {PAYMENT_STATUS_LABELS[payStatus]}
+                                      </span>
+                                    </div>
+                                    <div className="text-[11px] font-semibold text-slate-700 truncate">
+                                      {order.clienteNome}
+                                    </div>
+                                  </button>
+                                  <div className="text-right shrink-0">
+                                    <div className="text-[11px] font-mono font-bold text-slate-900">
+                                      R$ {formatCurrencyBR(remaining)}
+                                    </div>
+                                    <div className="text-[9px] font-mono text-slate-400 uppercase">
+                                      {order.formaPagamento}
+                                      {payStatus === 'SINAL' ? ` • Pago R$ ${formatCurrencyBR(paid)}` : ''}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {isEditingDeposit ? (
+                                  <div className="pt-1.5 border-t border-slate-100 space-y-1.5">
+                                    <div className="flex items-center gap-1.5">
+                                      <CurrencyInput
+                                        allowEmpty
+                                        value={depositDraftValue}
+                                        onChangeValue={val =>
+                                          setDepositDraftValue(Math.min(order.valorTotal, Math.max(0, val)))
+                                        }
+                                        className="flex-1 min-w-0 bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 text-[11px] font-mono font-bold"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (!onSaveOrder) return;
+                                          const clamped = Math.min(order.valorTotal, Math.max(0, depositDraftValue));
+                                          onSaveOrder({
+                                            ...order,
+                                            statusPagamento: clamped >= order.valorTotal ? 'PAGO' : clamped > 0 ? 'SINAL' : 'PENDENTE',
+                                            valorPago: clamped,
+                                          });
+                                          setEditingDepositOrderId(null);
+                                        }}
+                                        className="px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-[10px] font-bold cursor-pointer shrink-0"
+                                      >
+                                        Salvar
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditingDepositOrderId(null)}
+                                        className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] font-semibold cursor-pointer shrink-0"
+                                      >
+                                        Cancelar
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="grid grid-cols-2 gap-1.5 pt-1 border-t border-slate-100">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditingDepositOrderId(order.id);
+                                        setDepositDraftValue(
+                                          payStatus === 'SINAL'
+                                            ? paid
+                                            : Number((order.valorTotal / 2).toFixed(2))
+                                        );
+                                      }}
+                                      className="py-1 px-2 rounded-lg border border-sky-200 bg-sky-50 hover:bg-sky-100 text-sky-700 text-[10px] font-bold cursor-pointer transition-colors"
+                                    >
+                                      {payStatus === 'SINAL' ? 'Editar Sinal' : 'Registrar Sinal'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        onSaveOrder?.({
+                                          ...order,
+                                          statusPagamento: 'PAGO',
+                                          valorPago: order.valorTotal,
+                                        });
+                                      }}
+                                      className="py-1 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold cursor-pointer transition-colors"
+                                    >
+                                      Marcar Pago
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Card 2: Roteirizador Google Maps & PDF */}
             <RoutePlannerTool
@@ -1185,9 +1650,6 @@ const CepFinderTool: React.FC<CepFinderToolProps> = ({
           <span className="text-xs font-bold text-slate-900">Buscador de CEP</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
-            ViaCEP
-          </span>
           {isExpanded ? (
             <ChevronUp className="w-4 h-4 text-slate-500" />
           ) : (

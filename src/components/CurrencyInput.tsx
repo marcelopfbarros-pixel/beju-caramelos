@@ -10,19 +10,41 @@ interface CurrencyInputProps {
   disabled?: boolean;
 }
 
-function formatTwoDecimals(num: number): string {
-  return num.toLocaleString('pt-BR', {
+export function formatCurrencyBR(num?: number | null): string {
+  const safe = typeof num === 'number' && Number.isFinite(num) ? num : 0;
+  return safe.toLocaleString('pt-BR', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
 }
 
-function parseBrazilianNumber(raw: string): number {
-  const cleaned = raw.replace(/[^\d.,]/g, '');
+function formatBrazilianInputLive(rawInput: string, previousDraft = ''): string {
+  let cleaned = rawInput.replace(/[^\d.,]/g, '');
+  if (!cleaned) return '';
+
+  const isMultiCharPaste = rawInput.length - previousDraft.length > 1;
+  if (!cleaned.includes(',') && cleaned.endsWith('.') && rawInput.length >= previousDraft.length) {
+    cleaned = `${cleaned.slice(0, -1)},`;
+  } else if (isMultiCharPaste && !cleaned.includes(',') && /^\d+\.\d{1,2}$/.test(cleaned)) {
+    cleaned = cleaned.replace('.', ',');
+  }
+
+  const withoutThousands = cleaned.replace(/\./g, '');
+  const hasComma = withoutThousands.includes(',');
+  const [rawInt = '', ...rest] = withoutThousands.split(',');
+  const trimmedInt = rawInt.replace(/^0+(?=\d)/, '');
+  const intDigits = trimmedInt || (hasComma ? '0' : '');
+  const formattedInt = intDigits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+
+  if (!hasComma) return formattedInt;
+  const decDigits = rest.join('').slice(0, 2);
+  return `${formattedInt},${decDigits}`;
+}
+
+function parseBrazilianNumber(formatted: string): number {
+  const cleaned = formatted.replace(/[^\d.,]/g, '');
   if (!cleaned) return 0;
-  const normalized = cleaned.includes(',')
-    ? cleaned.replace(/\./g, '').replace(',', '.')
-    : cleaned;
+  const normalized = cleaned.replace(/\./g, '').replace(',', '.');
   const parsed = parseFloat(normalized);
   return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
 }
@@ -44,7 +66,7 @@ export const CurrencyInput: React.FC<CurrencyInputProps> = ({
     ? draftText
     : allowEmpty && (value === undefined || value === null || value === 0)
     ? ''
-    : formatTwoDecimals(numericValue);
+    : formatCurrencyBR(numericValue);
 
   return (
     <input
@@ -56,13 +78,13 @@ export const CurrencyInput: React.FC<CurrencyInputProps> = ({
       value={displayValue}
       onFocus={(e) => {
         setIsFocused(true);
-        setDraftText(numericValue > 0 ? numericValue.toFixed(2).replace('.', ',') : '');
+        setDraftText(numericValue > 0 ? formatCurrencyBR(numericValue) : '');
         requestAnimationFrame(() => e.target.select());
       }}
       onChange={(e) => {
-        const raw = e.target.value.replace(/[^\d.,]/g, '');
-        setDraftText(raw);
-        onChangeValue(parseBrazilianNumber(raw));
+        const formatted = formatBrazilianInputLive(e.target.value, draftText);
+        setDraftText(formatted);
+        onChangeValue(parseBrazilianNumber(formatted));
       }}
       onBlur={() => {
         setIsFocused(false);

@@ -14,6 +14,7 @@ import {
   ProductionStatus,
   Customer
 } from '../types';
+import { decodePaymentInstructions, encodePaymentInstructions } from '../utils/paymentStatus';
 
 export class SupabaseService {
   static isConfigured(): boolean {
@@ -251,39 +252,44 @@ export class SupabaseService {
       throw error;
     }
 
-    return (data || []).map((o: any) => ({
-      id: o.id,
-      numeroPedido: o.numero_pedido,
-      status: o.status as OrderStatus,
-      dataPedido: o.data_pedido,
-      dataHoraEntrega: o.data_hora_entrega,
-      dataHoraEntregaFim: o.data_hora_entrega_fim || undefined,
-      turnoEntrega: o.turno_entrega || undefined,
-      tipoEntrega: o.tipo_entrega,
-      unidadeOrigemId: o.unidade_origem_id,
-      unidadeRetiradaId: o.unidade_retirada_id || undefined,
-      clienteNome: o.cliente_nome,
-      clienteTelefone: o.cliente_telefone,
-      clienteEndereco: o.cliente_endereco || '',
-      enderecoEntrega: o.endereco_entrega || '',
-      valorSubtotal: Number(o.valor_subtotal),
-      taxaEntrega: Number(o.taxa_entrega),
-      desconto: Number(o.desconto),
-      valorTotal: Number(o.valor_total),
-      formaPagamento: o.forma_pagamento,
-      trocoPara: o.troco_para ? Number(o.troco_para) : undefined,
-      instrucoesPagamento: o.instrucoes_pagamento || '',
-      observacoes: o.observacoes || '',
-      detalheEntrega: o.detalhe_entrega || '',
-      itens: (o.itens || []).map((i: any) => ({
-        id: i.id,
-        produtoId: i.produto_id,
-        quantidade: Number(i.quantidade),
-        precoUnitario: Number(i.preco_unitario),
-        subtotal: Number(i.subtotal),
-        observacoes: i.observacoes_item || undefined
-      }))
-    }));
+    return (data || []).map((o: any) => {
+      const paymentMeta = decodePaymentInstructions(o.instrucoes_pagamento);
+      return {
+        id: o.id,
+        numeroPedido: o.numero_pedido,
+        status: o.status as OrderStatus,
+        dataPedido: o.data_pedido,
+        dataHoraEntrega: o.data_hora_entrega,
+        dataHoraEntregaFim: o.data_hora_entrega_fim || undefined,
+        turnoEntrega: o.turno_entrega || undefined,
+        tipoEntrega: o.tipo_entrega,
+        unidadeOrigemId: o.unidade_origem_id,
+        unidadeRetiradaId: o.unidade_retirada_id || undefined,
+        clienteNome: o.cliente_nome,
+        clienteTelefone: o.cliente_telefone,
+        clienteEndereco: o.cliente_endereco || '',
+        enderecoEntrega: o.endereco_entrega || '',
+        valorSubtotal: Number(o.valor_subtotal),
+        taxaEntrega: Number(o.taxa_entrega),
+        desconto: Number(o.desconto),
+        valorTotal: Number(o.valor_total),
+        formaPagamento: o.forma_pagamento,
+        statusPagamento: paymentMeta.statusPagamento,
+        valorPago: paymentMeta.valorPago,
+        trocoPara: o.troco_para ? Number(o.troco_para) : undefined,
+        instrucoesPagamento: paymentMeta.instrucoesPagamento,
+        observacoes: o.observacoes || '',
+        detalheEntrega: o.detalhe_entrega || '',
+        itens: (o.itens || []).map((i: any) => ({
+          id: i.id,
+          produtoId: i.produto_id,
+          quantidade: Number(i.quantidade),
+          precoUnitario: Number(i.preco_unitario),
+          subtotal: Number(i.subtotal),
+          observacoes: i.observacoes_item || undefined
+        }))
+      };
+    });
   }
 
   static async saveOrder(order: Order): Promise<Order> {
@@ -323,7 +329,11 @@ export class SupabaseService {
       valor_total: order.valorTotal,
       forma_pagamento: order.formaPagamento,
       troco_para: order.trocoPara ?? null,
-      instrucoes_pagamento: order.instrucoesPagamento || null,
+      instrucoes_pagamento: encodePaymentInstructions(
+        order.instrucoesPagamento,
+        order.statusPagamento,
+        order.valorPago
+      ),
       observacoes: order.observacoes || null,
       detalhe_entrega: order.detalheEntrega || null,
       updated_at: new Date().toISOString()
@@ -396,6 +406,17 @@ export class SupabaseService {
       .update({ status, updated_at: new Date().toISOString() })
       .eq('id', orderId);
 
+    if (error) throw error;
+  }
+
+  static async deleteOrder(orderId: string): Promise<void> {
+    if (!this.isConfigured() || orderId.startsWith('ord-')) return;
+    await supabase!.from('itens_pedido').delete().eq('pedido_id', orderId);
+    const { error } = await supabase!
+      .from('pedidos')
+      .delete()
+      .eq('id', orderId)
+      .eq('status', 'PENDENTE');
     if (error) throw error;
   }
 
@@ -480,7 +501,7 @@ export class SupabaseService {
   }
 
   static async saveStockMovement(mov: StockMovement): Promise<StockMovement> {
-    if (!this.isConfigured()) return mov;
+    if (!this.isConfigured() || mov.quantidade <= 0) return mov;
     const isClientGenerated = mov.id.startsWith('mov-');
     const dbTipo =
       mov.tipo === 'SAIDA'

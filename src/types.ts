@@ -1,5 +1,7 @@
 export type PaymentMethod = 'pix' | 'debito' | 'credito' | 'dinheiro';
 
+export type PaymentStatus = 'PENDENTE' | 'SINAL' | 'PAGO';
+
 export type OrderStatus = 
   | 'PENDENTE' 
   | 'CONFIRMADO' 
@@ -76,6 +78,8 @@ export interface Order {
   desconto: number;
   valorTotal: number;
   formaPagamento: PaymentMethod;
+  statusPagamento?: PaymentStatus;
+  valorPago?: number;
   trocoPara?: number;
   instrucoesPagamento?: string;
   observacoes?: string;

@@ -369,19 +369,44 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-[#f8f9ff] overflow-hidden">
+    <div className="flex-1 min-w-0 flex flex-col h-full bg-[#f8f9ff] overflow-hidden">
       {/* Top Bar */}
-      <div className="bg-white border-b border-[#e2e8f0] px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4 print:hidden">
-        <div>
-          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex items-center gap-2">
+      <div className="flex flex-col md:flex-row md:items-center justify-between md:bg-white md:border-b md:border-[#e2e8f0] md:px-6 md:py-4 md:gap-4 print:hidden">
+        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2.5 md:p-0 md:bg-transparent md:border-b-0">
+          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex flex-wrap items-center gap-2">
             <span>Unidades</span>
-            <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700">
+            <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800">
               {filteredUnits.length} unidades
             </span>
           </h1>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex flex-wrap items-center gap-2">
+          <div className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-white p-0.5 shadow-2xs shrink-0" role="group" aria-label="Modo de visualização">
+            <button
+              type="button"
+              onClick={() => setViewMode('CARDS')}
+              title="Cards"
+              aria-label="Cards"
+              className={`h-full flex items-center justify-center px-2 rounded-md text-xs font-semibold transition-colors ${
+                viewMode === 'CARDS' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('TABLE')}
+              title="Tabela"
+              aria-label="Tabela"
+              className={`h-full flex items-center justify-center px-2 rounded-md text-xs font-semibold transition-colors ${
+                viewMode === 'TABLE' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <List className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
           {canManage && (
             <button
               onClick={() => {
@@ -397,10 +422,12 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                 });
                 setIsModalOpen(true);
               }}
-              className="flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-all shadow-sm active:scale-95"
+              title="Nova Unidade"
+              aria-label="Nova Unidade"
+              className="flex items-center justify-center gap-1.5 h-8 w-8 md:w-auto px-0 md:px-3.5 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-all shadow-sm active:scale-95"
             >
               <Plus className="w-4 h-4" />
-              <span>Unidade</span>
+              <span className="hidden md:inline">Unidade</span>
             </button>
           )}
 
@@ -408,7 +435,7 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
             onClick={() => window.print()}
             title="Imprimir"
             aria-label="Imprimir"
-            className="flex items-center justify-center p-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors shadow-xs"
+            className="flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors shadow-xs"
           >
             <Printer className="w-4 h-4" />
           </button>
@@ -416,71 +443,52 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
       </div>
 
       {/* Filter & Grouping Bar */}
-      <div className="bg-white border-b border-[#e2e8f0] px-6 py-2.5 flex flex-wrap items-center gap-3 print:hidden">
-        <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5 shadow-2xs" role="group" aria-label="Modo de visualização">
-          <button
-            type="button"
-            onClick={() => setViewMode('CARDS')}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
-              viewMode === 'CARDS' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
-            }`}
-          >
-            <LayoutGrid className="w-3.5 h-3.5" />
-            <span>Cards</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode('TABLE')}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
-              viewMode === 'TABLE' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
-            }`}
-          >
-            <List className="w-3.5 h-3.5" />
-            <span>Tabela</span>
-          </button>
-        </div>
-
-        <div className="relative flex-1 min-w-[200px] max-w-xs">
-          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            placeholder="Buscar por nome, código ou cidade..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 outline-none"
+      <div className="flex flex-col md:flex-row md:items-center justify-between md:bg-white/70 md:border-b md:border-[#e2e8f0] md:px-6 md:py-2.5 md:gap-3 print:hidden">
+        <div className="bg-white/70 border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex items-center w-full md:w-auto min-w-0 overflow-hidden">
+          <HybridFilterSort
+            filterLabel="Filtrar:"
+            filterValue={typeFilter}
+            onFilterChange={(v) => setTypeFilter(v as 'TODAS' | 'CENTRAL' | 'LOJA' | 'ATIVAS' | 'INATIVAS')}
+            filterOptions={[
+              { value: 'TODAS', label: 'Todas' },
+              { value: 'CENTRAL', label: 'Central' },
+              { value: 'LOJA', label: 'Lojas / Filiais' },
+              { value: 'ATIVAS', label: 'Ativas' },
+              { value: 'INATIVAS', label: 'Inativas' }
+            ]}
+            sortValue={sortBy}
+            onSortChange={(v) => setSortBy(v as 'NOME_ASC' | 'CODIGO_ASC' | 'TIPO_ASC')}
+            sortOptions={[
+              { value: 'NOME_ASC', label: 'Nome (A-Z)' },
+              { value: 'CODIGO_ASC', label: 'Código' },
+              { value: 'TIPO_ASC', label: 'Tipo (Central/Loja)' }
+            ]}
+            groupValue={groupBy}
+            onGroupChange={(v) => setGroupBy(v as 'TIPO' | 'STATUS' | 'NENHUM')}
+            groupOptions={[
+              { value: 'TIPO', label: 'Tipo (Central / Loja)' },
+              { value: 'STATUS', label: 'Status' },
+              { value: 'NENHUM', label: 'Sem Agrupamento' }
+            ]}
           />
         </div>
 
-        <HybridFilterSort
-          filterLabel="Filtrar:"
-          filterValue={typeFilter}
-          onFilterChange={(v) => setTypeFilter(v as 'TODAS' | 'CENTRAL' | 'LOJA' | 'ATIVAS' | 'INATIVAS')}
-          filterOptions={[
-            { value: 'TODAS', label: 'Todas' },
-            { value: 'CENTRAL', label: 'Central' },
-            { value: 'LOJA', label: 'Lojas / Filiais' },
-            { value: 'ATIVAS', label: 'Ativas' },
-            { value: 'INATIVAS', label: 'Inativas' }
-          ]}
-          sortValue={sortBy}
-          onSortChange={(v) => setSortBy(v as 'NOME_ASC' | 'CODIGO_ASC' | 'TIPO_ASC')}
-          sortOptions={[
-            { value: 'NOME_ASC', label: 'Nome (A-Z)' },
-            { value: 'CODIGO_ASC', label: 'Código' },
-            { value: 'TIPO_ASC', label: 'Tipo (Central/Loja)' }
-          ]}
-          groupValue={groupBy}
-          onGroupChange={(v) => setGroupBy(v as 'TIPO' | 'STATUS' | 'NENHUM')}
-          groupOptions={[
-            { value: 'TIPO', label: 'Tipo (Central / Loja)' },
-            { value: 'STATUS', label: 'Status' },
-            { value: 'NENHUM', label: 'Sem Agrupamento' }
-          ]}
-        />
+        <div className="bg-white/70 border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 w-full md:flex-1 md:min-w-[140px] md:max-w-xs">
+          <div className="relative w-full">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder="Buscar por nome, código ou cidade..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full h-9 pl-9 pr-3 py-0 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:border-brand-500 shadow-2xs"
+            />
+          </div>
+        </div>
       </div>
 
       {/* Grid / Table of Stores + Print Report */}
-      <div className="flex-1 overflow-auto p-6">
+      <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-3 sm:p-6">
         {inventoryPrintUnit && (
           <div id="print-report-area" className="hidden print:block bg-white p-4">
             <PrintReportHeader
@@ -605,7 +613,7 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
           id={inventoryPrintUnit || replenishmentPrintOrder ? undefined : 'print-report-area'}
           className={`${viewMode === 'CARDS' || inventoryPrintUnit || replenishmentPrintOrder ? 'hidden' : ''} ${
             inventoryPrintUnit || replenishmentPrintOrder ? 'print:hidden' : 'print:block'
-          } bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-hidden`}
+          } bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-x-auto max-w-full`}
         >
           <PrintReportHeader
             title="Unidades"
@@ -882,9 +890,9 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
 
       {/* MODAL */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden border border-slate-200">
-            <div className="px-6 py-4 bg-[#f8f9ff] border-b border-slate-200 flex items-center justify-between">
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-[60] p-2 sm:p-4">
+          <div className="bg-white rounded-xl sm:rounded-2xl shadow-xl w-full max-w-lg max-h-[94dvh] sm:max-h-[92dvh] flex flex-col overflow-hidden border border-slate-200">
+            <div className="px-3.5 py-2.5 sm:px-6 sm:py-4 bg-[#f8f9ff] border-b border-slate-200 flex items-center justify-between shrink-0">
               <h2 className="text-sm font-bold text-slate-900 font-sans">
                 {editingUnit.id ? 'Editar Unidade / Loja' : 'Cadastrar Nova Filial / Loja'}
               </h2>
@@ -893,23 +901,23 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
               </button>
             </div>
 
-            <div className="p-6 space-y-4 text-xs">
-              <div className="grid grid-cols-2 gap-3">
+            <div className="p-3 sm:p-5 space-y-2.5 sm:space-y-3.5 text-xs overflow-y-auto">
+              <div className="grid grid-cols-2 gap-2 sm:gap-3">
                 <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Código da Unidade</label>
+                  <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">Código da Unidade</label>
                   <input
                     type="text"
                     value={editingUnit.codigo || ''}
                     onChange={(e) => setEditingUnit({ ...editingUnit, codigo: e.target.value })}
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono"
+                    className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-mono"
                   />
                 </div>
                 <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Tipo de Unidade</label>
+                  <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">Tipo de Unidade</label>
                   <select
                     value={editingUnit.tipo}
                     onChange={(e) => setEditingUnit({ ...editingUnit, tipo: e.target.value as any })}
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2"
+                    className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2"
                   >
                     <option value="LOJA">Loja Física / Filial</option>
                     <option value="CENTRAL">Ateliê de Produção</option>
@@ -918,19 +926,19 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
               </div>
 
               <div>
-                <label className="font-semibold text-slate-700 block mb-1">Nome da Unidade *</label>
+                <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">Nome da Unidade *</label>
                 <input
                   type="text"
                   placeholder="Ex: Loja 4 - Itaim Bibi"
                   value={editingUnit.nome || ''}
                   onChange={(e) => setEditingUnit({ ...editingUnit, nome: e.target.value })}
-                  className="w-full bg-white border border-slate-300 rounded-lg p-2"
+                  className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2"
                 />
               </div>
 
               <div>
-                <label className="font-semibold text-slate-700 block mb-1">CEP da Unidade</label>
-                <div className="flex items-center gap-2">
+                <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">CEP da Unidade</label>
+                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                   <input
                     type="text"
                     placeholder="00000-000"
@@ -943,13 +951,13 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                         handleLookupUnitCep(formatted);
                       }
                     }}
-                    className="w-36 bg-white border border-slate-300 rounded-lg p-2 font-mono"
+                    className="w-28 sm:w-36 bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-mono"
                   />
                   <button
                     type="button"
                     disabled={cepLoading}
                     onClick={() => handleLookupUnitCep()}
-                    className="flex items-center gap-1.5 px-3 py-2 bg-brand-600 hover:bg-brand-700 disabled:bg-slate-200 text-white rounded-lg font-bold text-xs transition-colors cursor-pointer"
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-2 bg-brand-600 hover:bg-brand-700 disabled:bg-slate-200 text-white rounded-lg font-bold text-xs transition-colors cursor-pointer"
                   >
                     {cepLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
                     <span>Buscar CEP</span>
@@ -958,7 +966,7 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                     type="button"
                     disabled={cepLoading}
                     onClick={handleFindCepFromUnitAddress}
-                    className="flex items-center gap-1 px-2.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg font-semibold text-[11px] transition-colors cursor-pointer"
+                    className="flex items-center gap-1 px-2.5 py-1.5 sm:px-3 sm:py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg font-semibold text-[11px] transition-colors cursor-pointer"
                     title="Descobrir o CEP e endereço correto a partir da rua digitada abaixo"
                   >
                     <MapPin className="w-3.5 h-3.5 text-brand-600" />
@@ -1007,63 +1015,63 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                 )}
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-3 gap-2 sm:gap-3">
                 <div className="col-span-2">
-                  <label className="font-semibold text-slate-700 block mb-1">Endereço Completo</label>
+                  <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">Endereço Completo</label>
                   <input
                     type="text"
                     placeholder="Rua, Número, Bairro..."
                     value={editingUnit.endereco || ''}
                     onChange={(e) => setEditingUnit({ ...editingUnit, endereco: e.target.value })}
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2"
+                    className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2"
                   />
                 </div>
                 <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Cidade</label>
+                  <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">Cidade</label>
                   <input
                     type="text"
                     placeholder="Ex: Salvador"
                     value={editingUnit.cidade || ''}
                     onChange={(e) => setEditingUnit({ ...editingUnit, cidade: e.target.value })}
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2"
+                    className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2"
                   />
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-2 sm:gap-3">
                 <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Telefone WhatsApp</label>
+                  <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">Telefone WhatsApp</label>
                   <input
                     type="text"
                     placeholder="+55 11 9XXXX-XXXX"
                     value={editingUnit.telefone || ''}
                     onChange={(e) => setEditingUnit({ ...editingUnit, telefone: e.target.value })}
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono"
+                    className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-mono"
                   />
                 </div>
                 <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Chave PIX da Unidade</label>
+                  <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">Chave PIX da Unidade</label>
                   <input
                     type="text"
                     placeholder="Chave PIX para pagamentos"
                     value={editingUnit.chavePix || ''}
                     onChange={(e) => setEditingUnit({ ...editingUnit, chavePix: e.target.value })}
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2 font-mono"
+                    className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-mono"
                   />
                 </div>
               </div>
             </div>
 
-            <div className="px-6 py-3 bg-[#f8f9ff] border-t border-slate-200 flex justify-end gap-2">
+            <div className="px-3.5 py-2.5 sm:px-6 sm:py-3 bg-[#f8f9ff] border-t border-slate-200 flex justify-end gap-2 shrink-0">
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+                className="px-3.5 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleSave}
-                className="px-5 py-2 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-lg shadow-sm"
+                className="px-4 sm:px-5 py-1.5 sm:py-2 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-lg shadow-sm"
               >
                 Salvar Unidade
               </button>

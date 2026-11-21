@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import { Order, Product, Category, StoreUnit, StockItem, Customer, ProductionOrder, UserProfile } from '../types';
 import { formatDeliveryTimeRange } from '../utils/deliveryTimeRange';
+import { formatCurrencyBR } from '../components/CurrencyInput';
 
 export class ExcelService {
   /**
@@ -65,7 +66,7 @@ export class ExcelService {
 
     const data = orders.map(o => {
       const itensDesc = o.itens
-        .map(i => `${i.quantidade}x ${prodMap.get(i.produtoId) || 'Item'} (R$ ${i.subtotal.toFixed(2)})`)
+        .map(i => `${i.quantidade}x ${prodMap.get(i.produtoId) || 'Item'} (R$ ${formatCurrencyBR(i.subtotal)})`)
         .join(' | ');
 
       return {

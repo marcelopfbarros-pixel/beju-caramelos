@@ -2,9 +2,17 @@ import React, { useState, useMemo } from 'react';
 import { Order, OrderStatus, Product, StoreUnit, Customer, StockItem } from '../types';
 import { ORDER_CARD_STATUS_STYLES } from '../utils/orderStatusStyles';
 import { formatDeliveryTimeRange } from '../utils/deliveryTimeRange';
-import { Printer, Clock, MapPin, Phone, CheckCircle, Calendar, Tag, LayoutGrid, List, Layers, MessageSquare, ChevronDown, ChevronRight } from 'lucide-react';
+import {
+  PAYMENT_STATUS_BADGE_CLASSES,
+  PAYMENT_STATUS_LABELS,
+  getEffectivePaymentStatus,
+  getOrderPaidAmount,
+  getOrderRemainingAmount,
+} from '../utils/paymentStatus';
+import { Printer, Clock, MapPin, Phone, CheckCircle, Calendar, Tag, LayoutGrid, List, Layers, MessageSquare, ChevronDown, ChevronRight, X } from 'lucide-react';
 import { PrintReportHeader } from '../components/PrintReportHeader';
 import { HybridFilterSort } from '../components/HybridFilterSort';
+import { formatCurrencyBR } from '../components/CurrencyInput';
 import { useExpandedGroups } from '../hooks/useExpandedGroups';
 import {
   formatStatusNotificationMessage,
@@ -219,11 +227,11 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-[#f8f9ff] overflow-hidden">
+    <div className="flex-1 min-w-0 flex flex-col h-full bg-[#f8f9ff] overflow-hidden">
       {/* Top Bar */}
-      <div className="bg-white border-b border-[#e2e8f0] px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4 print:hidden">
-        <div>
-          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex items-center gap-2">
+      <div className="flex flex-col md:flex-row md:items-center justify-between md:bg-white md:border-b md:border-[#e2e8f0] md:px-6 md:py-4 md:gap-4 print:hidden">
+        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2.5 md:p-0 md:bg-transparent md:border-b-0">
+          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex flex-wrap items-center gap-2">
             <span>Entregas</span>
             <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800">
               {pendingDeliveries.length} entrega(s)
@@ -231,12 +239,87 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
           </h1>
         </div>
 
-        {/* Print + Batch Labels (Desktop only) */}
-        <div className="hidden md:flex items-center gap-2 flex-wrap">
+        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex flex-wrap items-center gap-2">
+          <div className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-white p-0.5 shadow-2xs shrink-0" role="group" aria-label="Modo de visualização">
+            <button
+              type="button"
+              onClick={() => setViewMode('CARDS')}
+              title="Cards"
+              aria-label="Cards"
+              className={`h-full flex items-center justify-center px-2 rounded-md text-xs font-semibold transition-colors ${
+                viewMode === 'CARDS' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('TABLE')}
+              title="Tabela"
+              aria-label="Tabela"
+              className={`h-full flex items-center justify-center px-2 rounded-md text-xs font-semibold transition-colors ${
+                viewMode === 'TABLE' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <List className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (selectedDeliveryIds.length > 0 && onOpenRouteTool) {
+                onOpenRouteTool();
+                return;
+              }
+              if (!onChangeSelectedDeliveryIds) return;
+              const readyIds = pendingDeliveries
+                .filter(o => o.status === 'PRONTO')
+                .map(o => o.id);
+              onChangeSelectedDeliveryIds(readyIds);
+            }}
+            className={`h-8 min-h-8 max-h-8 w-8 md:w-auto px-0 md:px-2.5 inline-flex items-center justify-center leading-none gap-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors border ${
+              selectedDeliveryIds.length > 0
+                ? 'bg-brand-600 text-white border-brand-600 hover:bg-brand-700'
+                : 'bg-white text-slate-700 border-slate-300 hover:border-brand-500'
+            }`}
+            title={
+              selectedDeliveryIds.length > 0
+                ? 'Abrir ferramenta Roteiro com as entregas selecionadas'
+                : 'Selecionar entregas com status Pronto para planejar rota'
+            }
+            aria-label={
+              selectedDeliveryIds.length > 0
+                ? 'Abrir ferramenta Roteiro com as entregas selecionadas'
+                : 'Selecionar entregas com status Pronto para planejar rota'
+            }
+          >
+            <MapPin className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">
+              {selectedDeliveryIds.length > 0
+                ? `Rota: ${selectedDeliveryIds.length} selecionada(s)`
+                : 'Selecionar Prontas p/ Rota'}
+            </span>
+          </button>
+          {selectedDeliveryIds.length > 0 && (
+            <button
+              type="button"
+              onClick={() => onChangeSelectedDeliveryIds?.([])}
+              title="Limpar Rota"
+              aria-label="Limpar Rota"
+              className="h-8 min-h-8 max-h-8 w-8 md:w-auto px-0 md:px-2.5 inline-flex items-center justify-center leading-none gap-1 rounded-lg text-[11px] font-semibold whitespace-nowrap text-slate-600 bg-slate-100 border border-slate-200 hover:bg-slate-200 transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">Limpar Rota</span>
+            </button>
+          )}
+
+          {/* Print + Batch Labels (Desktop only) */}
+          <div className="hidden md:flex items-center gap-2 flex-wrap">
           <select
             value={labelFormat}
             onChange={(e) => setLabelFormat(e.target.value as 'A4361' | '6181')}
-            className="bg-white border border-rose-200 text-rose-800 rounded-lg px-2.5 py-1.5 text-xs font-semibold"
+            className="h-8 bg-white border border-rose-200 text-rose-800 rounded-lg px-2.5 py-0 text-xs font-semibold"
             title="Padrão de Etiqueta Pimaco / Avery"
           >
             <option value="A4361">Etiqueta A4361 (63,5 × 46,5 mm)</option>
@@ -246,7 +329,7 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
             value={labelColorMode}
             onChange={(e) => setLabelColorMode(e.target.value as 'COLOR' | 'BW')}
             aria-label="Modo de cor da etiqueta"
-            className="bg-white border border-slate-300 text-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-semibold"
+            className="h-8 bg-white border border-slate-300 text-slate-800 rounded-lg px-2.5 py-0 text-xs font-semibold"
             title="Modo de Impressão da Etiqueta (Colorido ou Preto e Branco)"
           >
             <option value="COLOR">Colorido</option>
@@ -256,7 +339,7 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
             onClick={handlePrintBatchLabels}
             disabled={pendingDeliveries.length === 0}
             title="Etiquetas em lote"
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white disabled:opacity-40 shadow-xs transition-all ${
+            className={`h-8 flex items-center gap-1.5 px-3 rounded-lg text-xs font-bold text-white disabled:opacity-40 shadow-xs transition-all ${
               labelColorMode === 'BW'
                 ? 'bg-slate-900 hover:bg-slate-800'
                 : 'bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-600 hover:to-pink-700'
@@ -271,39 +354,17 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
             disabled={pendingDeliveries.length === 0}
             title="Imprimir"
             aria-label="Imprimir"
-            className="flex items-center justify-center p-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-40 rounded-lg transition-colors shadow-xs"
+            className="h-8 w-8 p-0 flex items-center justify-center text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-40 rounded-lg transition-colors shadow-xs"
           >
             <Printer className="w-4 h-4" />
           </button>
+          </div>
         </div>
       </div>
 
       {/* Filter, Sort, Group & View Bar */}
-      <div className="px-6 py-2.5 bg-white/70 border-b border-[#e2e8f0] flex flex-wrap items-center justify-between gap-2.5 print:hidden">
-        <div className="flex items-center gap-2.5 flex-wrap">
-          <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5 shadow-2xs" role="group" aria-label="Modo de visualização">
-            <button
-              type="button"
-              onClick={() => setViewMode('CARDS')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
-                viewMode === 'CARDS' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
-              }`}
-            >
-              <LayoutGrid className="w-3.5 h-3.5" />
-              <span>Cards</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('TABLE')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
-                viewMode === 'TABLE' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
-              }`}
-            >
-              <List className="w-3.5 h-3.5" />
-              <span>Tabela</span>
-            </button>
-          </div>
-
+      <div className="flex flex-col md:flex-row md:items-center md:bg-white/70 md:border-b md:border-[#e2e8f0] md:px-6 md:py-2.5 md:gap-2.5 print:hidden">
+        <div className="bg-white/70 border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex items-center w-full md:w-auto min-w-0 overflow-hidden">
           <HybridFilterSort
             filterLabel="Status:"
             filterValue={statusFilter}
@@ -330,87 +391,44 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
               { value: 'NENHUM', label: 'Sem Agrupamento' }
             ]}
           />
+        </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
-              <Calendar className="w-3.5 h-3.5 text-slate-400" />
-              <span>Data:</span>
-            </div>
-            {(['TODAS', 'HOJE', 'AMANHA'] as const).map(mode => (
-              <button
-                key={mode}
-                onClick={() => setDateFilterMode(mode)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                  dateFilterMode === mode
-                    ? 'bg-slate-900 text-white shadow-xs'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                {mode === 'TODAS' ? 'Todas' : mode === 'HOJE' ? 'Hoje' : 'Amanhã'}
-              </button>
-            ))}
-            <input
-              type="date"
-              value={customDate}
-              onChange={(e) => {
-                setCustomDate(e.target.value);
-                setDateFilterMode('DATA');
-              }}
-              className={`px-2.5 py-1 rounded-lg text-xs font-mono border transition-all ${
-                dateFilterMode === 'DATA'
-                  ? 'border-brand-600 bg-brand-50 text-brand-900 font-bold'
-                  : 'border-slate-300 bg-white text-slate-700'
-              }`}
-            />
+        <div className="bg-white/70 border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex items-center gap-1 sm:gap-1.5 w-full md:w-auto min-w-0 overflow-hidden">
+          <div className="h-9 flex items-center justify-center text-xs font-semibold text-slate-600 shrink-0" title="Data">
+            <Calendar className="w-3.5 h-3.5 text-slate-400" />
           </div>
-
-          <div className="flex items-center gap-1.5 ml-auto">
+          {(['TODAS', 'HOJE', 'AMANHA'] as const).map(mode => (
             <button
+              key={mode}
               type="button"
-              onClick={() => {
-                if (selectedDeliveryIds.length > 0 && onOpenRouteTool) {
-                  onOpenRouteTool();
-                  return;
-                }
-                if (!onChangeSelectedDeliveryIds) return;
-                const readyIds = pendingDeliveries
-                  .filter(o => o.status === 'PRONTO')
-                  .map(o => o.id);
-                onChangeSelectedDeliveryIds(readyIds);
-              }}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-colors border ${
-                selectedDeliveryIds.length > 0
-                  ? 'bg-brand-600 text-white border-brand-600 hover:bg-brand-700'
-                  : 'bg-white text-slate-700 border-slate-300 hover:border-brand-500'
+              onClick={() => setDateFilterMode(mode)}
+              className={`h-9 px-2 sm:px-2.5 inline-flex items-center justify-center leading-normal rounded-lg text-[11px] sm:text-xs font-semibold border transition-all shrink-0 ${
+                dateFilterMode === mode
+                  ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
+                  : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
               }`}
-              title={
-                selectedDeliveryIds.length > 0
-                  ? 'Abrir ferramenta Roteiro com as entregas selecionadas'
-                  : 'Selecionar entregas com status Pronto para planejar rota'
-              }
             >
-              <MapPin className="w-3.5 h-3.5" />
-              <span>
-                {selectedDeliveryIds.length > 0
-                  ? `Rota: ${selectedDeliveryIds.length} selecionada(s)`
-                  : 'Selecionar Prontas p/ Rota'}
-              </span>
+              {mode === 'TODAS' ? 'Todas' : mode === 'HOJE' ? 'Hoje' : 'Amanhã'}
             </button>
-            {selectedDeliveryIds.length > 0 && (
-              <button
-                type="button"
-                onClick={() => onChangeSelectedDeliveryIds?.([])}
-                className="px-2 py-1 rounded-lg text-[11px] font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors"
-              >
-                Limpar Rota
-              </button>
-            )}
-          </div>
+          ))}
+          <input
+            type="date"
+            value={customDate}
+            onChange={(e) => {
+              setCustomDate(e.target.value);
+              setDateFilterMode('DATA');
+            }}
+            className={`h-9 flex-1 sm:flex-initial min-w-0 px-1.5 sm:px-2 py-0 leading-normal rounded-lg text-xs font-mono border transition-all ${
+              dateFilterMode === 'DATA'
+                ? 'border-brand-600 bg-brand-50 text-brand-900 font-bold'
+                : 'border-slate-300 bg-white text-slate-700'
+            }`}
+          />
         </div>
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 overflow-auto p-6 print:hidden">
+      <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-3 sm:p-6 print:hidden">
         {pendingDeliveries.length === 0 ? (
           <div className="py-16 text-center text-slate-400 bg-white rounded-xl border border-slate-200">
             <CheckCircle className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
@@ -470,7 +488,7 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                         return (
                           <div
                             key={order.id}
-                            className={`rounded-xl p-4 shadow-xs flex flex-col justify-between transition-colors border ${
+                            className={`rounded-xl p-4 shadow-xs flex flex-col justify-between transition-colors border min-w-0 overflow-hidden ${
                               ORDER_CARD_STATUS_STYLES[order.status]
                             } ${
                               !isDelivered && isSelectedForRoute
@@ -532,21 +550,39 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                                   {order.itens.map(item => (
                                     <li key={item.id} className="flex items-center justify-between text-slate-700">
                                       <span>• {item.quantidade}x {prodMap.get(item.produtoId)?.descricao}</span>
-                                      <span className="font-mono text-[11px] text-slate-500">R$ {item.subtotal.toFixed(2)}</span>
+                                      <span className="font-mono text-[11px] text-slate-500">R$ {formatCurrencyBR(item.subtotal)}</span>
                                     </li>
                                   ))}
                                 </ul>
                               </div>
 
                               {/* Financial Summary */}
-                              <div className="bg-emerald-50/60 p-2 rounded-lg border border-emerald-100 flex items-center justify-between text-xs">
-                                <span className="text-emerald-900 font-semibold uppercase text-[10px]">
-                                  {order.formaPagamento} {order.trocoPara ? `(Troco p/ R$ ${order.trocoPara.toFixed(2)})` : ''}
-                                </span>
-                                <span className="font-mono font-bold text-emerald-900 text-sm">
-                                  R$ {order.valorTotal.toFixed(2)}
-                                </span>
-                              </div>
+                              {(() => {
+                                const payStatus = getEffectivePaymentStatus(order);
+                                const remaining = getOrderRemainingAmount(order);
+                                return (
+                                  <div className="bg-emerald-50/60 p-2 rounded-lg border border-emerald-100 space-y-1 text-xs">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="text-emerald-900 font-semibold uppercase text-[10px]">
+                                        {order.formaPagamento} {order.trocoPara ? `(Troco p/ R$ ${formatCurrencyBR(order.trocoPara)})` : ''}
+                                      </span>
+                                      <span className="font-mono font-bold text-emerald-900 text-sm">
+                                        R$ {formatCurrencyBR(order.valorTotal)}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center justify-between gap-2 pt-0.5 border-t border-emerald-200/60">
+                                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${PAYMENT_STATUS_BADGE_CLASSES[payStatus]}`}>
+                                        {PAYMENT_STATUS_LABELS[payStatus]}
+                                      </span>
+                                      <span className="text-[11px] font-mono font-bold text-slate-800">
+                                        {payStatus === 'PAGO'
+                                          ? 'Nada a cobrar'
+                                          : `Cobrar: R$ ${formatCurrencyBR(remaining)}`}
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })()}
                             </div>
 
                             {/* Actions */}
@@ -646,7 +682,7 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
             })}
           </div>
         ) : (
-          <div className="bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-hidden">
+          <div className="bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-x-auto max-w-full">
             <table className="w-full text-left text-xs border-collapse">
               <thead className="bg-[#f8f9ff] border-b border-[#e2e8f0] text-[11px] font-mono font-semibold uppercase text-slate-500 tracking-wider">
                 <tr>
@@ -740,7 +776,16 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                               </td>
                               <td className="py-3 px-4 font-mono text-[11px] font-bold">{order.status}</td>
                               <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
-                                R$ {order.valorTotal.toFixed(2)}
+                                <div>R$ {formatCurrencyBR(order.valorTotal)}</div>
+                                {(() => {
+                                  const payStatus = getEffectivePaymentStatus(order);
+                                  const remaining = getOrderRemainingAmount(order);
+                                  return (
+                                    <span className={`inline-block mt-0.5 text-[10px] font-sans font-semibold px-1.5 py-0.5 rounded-full border ${PAYMENT_STATUS_BADGE_CLASSES[payStatus]}`}>
+                                      {payStatus === 'PAGO' ? 'Pago' : `Cobrar R$ ${formatCurrencyBR(remaining)}`}
+                                    </span>
+                                  );
+                                })()}
                               </td>
                               <td className="py-3 px-4 text-right">
                                 <div className="inline-flex items-center gap-1.5">
@@ -850,7 +895,7 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                             {new Date(order.dataHoraEntrega).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
                           </td>
                           <td className="py-2 px-3 font-mono">{order.status}</td>
-                          <td className="py-2 px-3 text-right font-mono font-bold">R$ {order.valorTotal.toFixed(2)}</td>
+                          <td className="py-2 px-3 text-right font-mono font-bold">R$ {formatCurrencyBR(order.valorTotal)}</td>
                         </tr>
                       ))}
                     </React.Fragment>
@@ -892,7 +937,7 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
             {selectedOrderForPrint.itens.map((item, idx) => (
               <div key={idx} className="flex justify-between py-0.5">
                 <span>[ ] {item.quantidade}x {prodMap.get(item.produtoId)?.descricao}</span>
-                <span>R$ {item.subtotal.toFixed(2)}</span>
+                <span>R$ {formatCurrencyBR(item.subtotal)}</span>
               </div>
             ))}
           </div>
@@ -900,25 +945,41 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
           <div className="py-3 border-b-2 border-dashed border-black space-y-1">
             <div className="flex justify-between">
               <span>Subtotal:</span>
-              <span>R$ {selectedOrderForPrint.valorSubtotal.toFixed(2)}</span>
+              <span>R$ {formatCurrencyBR(selectedOrderForPrint.valorSubtotal)}</span>
             </div>
             <div className="flex justify-between">
               <span>Taxa Entrega:</span>
-              <span>R$ {selectedOrderForPrint.taxaEntrega.toFixed(2)}</span>
+              <span>R$ {formatCurrencyBR(selectedOrderForPrint.taxaEntrega)}</span>
             </div>
             {selectedOrderForPrint.desconto > 0 && (
               <div className="flex justify-between">
                 <span>Desconto:</span>
-                <span>-R$ {selectedOrderForPrint.desconto.toFixed(2)}</span>
+                <span>-R$ {formatCurrencyBR(selectedOrderForPrint.desconto)}</span>
               </div>
             )}
             <div className="flex justify-between text-sm font-bold pt-1">
               <span>TOTAL:</span>
-              <span>R$ {selectedOrderForPrint.valorTotal.toFixed(2)}</span>
+              <span>R$ {formatCurrencyBR(selectedOrderForPrint.valorTotal)}</span>
             </div>
             <p className="pt-1"><strong>FORMA PAGTO:</strong> {selectedOrderForPrint.formaPagamento.toUpperCase()}</p>
+            {(() => {
+              const payStatus = getEffectivePaymentStatus(selectedOrderForPrint);
+              const paid = getOrderPaidAmount(selectedOrderForPrint);
+              const remaining = getOrderRemainingAmount(selectedOrderForPrint);
+              if (payStatus === 'PAGO') {
+                return <p><strong>SITUAÇÃO:</strong> PAGO INTEGRALMENTE (NADA A COBRAR)</p>;
+              }
+              if (payStatus === 'SINAL') {
+                return (
+                  <p>
+                    <strong>SINAL PAGO:</strong> R$ {formatCurrencyBR(paid)} | <strong>COBRAR NA ENTREGA:</strong> R$ {formatCurrencyBR(remaining)}
+                  </p>
+                );
+              }
+              return <p><strong>COBRAR NA ENTREGA:</strong> R$ {formatCurrencyBR(remaining)}</p>;
+            })()}
             {selectedOrderForPrint.trocoPara && (
-              <p><strong>LEVAR TROCO PARA:</strong> R$ {selectedOrderForPrint.trocoPara.toFixed(2)}</p>
+              <p><strong>LEVAR TROCO PARA:</strong> R$ {formatCurrencyBR(selectedOrderForPrint.trocoPara)}</p>
             )}
           </div>
 

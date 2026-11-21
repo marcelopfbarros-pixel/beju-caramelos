@@ -1,20 +1,21 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 'react';
 import { Header } from './components/Header';
 import { Sidebar, ScreenId } from './components/Sidebar';
-import { RightBar } from './components/RightBar';
 import { LandingScreen } from './components/LandingScreen';
 import { TutorialOverlay } from './components/TutorialOverlay';
 import { ButterflyFlight } from './components/ButterflyFlight';
 import { canAccessScreen, getDefaultScreenForRole } from './utils/permissions';
-import { PedidosScreen } from './screens/PedidosScreen';
-import { ProdutosScreen } from './screens/ProdutosScreen';
-import { EntregasScreen } from './screens/EntregasScreen';
-import { ProducaoScreen } from './screens/ProducaoScreen';
-import { EstoqueScreen } from './screens/EstoqueScreen';
-import { LojasScreen } from './screens/LojasScreen';
-import { ClientesScreen } from './screens/ClientesScreen';
-import { ConfiguracoesScreen } from './screens/ConfiguracoesScreen';
-import { CardapioDigitalScreen } from './screens/CardapioDigitalScreen';
+
+const RightBar = lazy(() => import('./components/RightBar').then(m => ({ default: m.RightBar })));
+const PedidosScreen = lazy(() => import('./screens/PedidosScreen').then(m => ({ default: m.PedidosScreen })));
+const ProdutosScreen = lazy(() => import('./screens/ProdutosScreen').then(m => ({ default: m.ProdutosScreen })));
+const EntregasScreen = lazy(() => import('./screens/EntregasScreen').then(m => ({ default: m.EntregasScreen })));
+const ProducaoScreen = lazy(() => import('./screens/ProducaoScreen').then(m => ({ default: m.ProducaoScreen })));
+const EstoqueScreen = lazy(() => import('./screens/EstoqueScreen').then(m => ({ default: m.EstoqueScreen })));
+const LojasScreen = lazy(() => import('./screens/LojasScreen').then(m => ({ default: m.LojasScreen })));
+const ClientesScreen = lazy(() => import('./screens/ClientesScreen').then(m => ({ default: m.ClientesScreen })));
+const ConfiguracoesScreen = lazy(() => import('./screens/ConfiguracoesScreen').then(m => ({ default: m.ConfiguracoesScreen })));
+const CardapioDigitalScreen = lazy(() => import('./screens/CardapioDigitalScreen').then(m => ({ default: m.CardapioDigitalScreen })));
 import { AppStorage } from './services/storage';
 import { SupabaseService } from './services/supabaseService';
 import { supabase } from './services/supabaseClient';
@@ -26,16 +27,7 @@ import {
 import {
   MessageSquare,
   Send,
-  X,
-  ShoppingBag,
-  ChefHat,
-  Package,
-  Truck,
-  Wrench,
-  Users,
-  CakeSlice,
-  Building2,
-  Settings
+  X
 } from 'lucide-react';
 import { 
   StoreUnit, 
@@ -171,14 +163,13 @@ export const App: React.FC = () => {
   const [currentScreen, setCurrentScreen] = useState<ScreenId>('pedidos');
   const [selectedOrder, setSelectedOrder] = useState<Order | undefined>(() => orders[0]);
   const [selectedDeliveryIds, setSelectedDeliveryIds] = useState<string[]>([]);
-  const [isMobileRightDrawerOpen, setIsMobileRightDrawerOpen] = useState<boolean>(false);
   const [focusRoteiroSignal, setFocusRoteiroSignal] = useState<number>(0);
   const [isTutorialOpen, setIsTutorialOpen] = useState<boolean>(false);
 
   const handleOpenRoteiroTool = useCallback(() => {
     setFocusRoteiroSignal(s => s + 1);
     if (window.innerWidth < 1024) {
-      setIsMobileRightDrawerOpen(true);
+      setCurrentScreen('painel');
     }
   }, []);
   const [isCardapioDigitalOpen, setIsCardapioDigitalOpen] = useState<boolean>(
@@ -491,6 +482,22 @@ export const App: React.FC = () => {
         setTimeout(() => {
           savingOrderLockRef.current = false;
         }, 600);
+      }
+    }
+  };
+
+  const handleDeleteOrder = async (orderId: string) => {
+    const target = orders.find(o => o.id === orderId);
+    if (!target || target.status !== 'PENDENTE') return;
+
+    setOrders(prev => prev.filter(o => o.id !== orderId));
+    setSelectedOrder(prev => (prev?.id === orderId ? undefined : prev));
+
+    if (isSupabaseOnline) {
+      try {
+        await SupabaseService.deleteOrder(orderId);
+      } catch (err) {
+        console.error('Erro ao excluir pedido pendente no Supabase:', err);
       }
     }
   };
@@ -1010,12 +1017,22 @@ export const App: React.FC = () => {
     [allowedStock, activeUnitId]
   );
 
-  // Ensure currentScreen is always allowed for the logged-in user's role
+  // Ensure currentScreen is always allowed for the logged-in user's role, and return from mobile 'painel' screen on desktop resize
   useEffect(() => {
     if (!canAccessScreen(effectiveUserProfile.role, currentScreen)) {
       setCurrentScreen(getDefaultScreenForRole(effectiveUserProfile.role));
     }
   }, [effectiveUserProfile.role, currentScreen]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth >= 1024 && currentScreen === 'painel') {
+        setCurrentScreen(getDefaultScreenForRole(effectiveUserProfile.role));
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [currentScreen, effectiveUserProfile.role]);
 
   // Dynamic navigation badges synced with activeUnitId and live order/stock statuses
   const pendingOrdersCount = React.useMemo(
@@ -1211,35 +1228,38 @@ export const App: React.FC = () => {
   if (isCardapioDigitalOpen) {
     const isFromUrlOnly = new URLSearchParams(window.location.search).get('cardapio') === '1';
     return (
-      <CardapioDigitalScreen
-        products={products}
-        categories={categories}
-        units={units}
-        stock={stock}
-        customers={customers}
-        introConfig={cardapioIntroConfig}
-        thankYouConfig={cardapioThankYouConfig}
-        onSubmitOrder={async (newOrder, customerRecord) => {
-          await handleSaveOrder(newOrder);
-          const normPhone = customerRecord.telefone.replace(/\D/g, '');
-          const existingCust = customers.find(
-            c =>
-              c.telefone.replace(/\D/g, '') === normPhone ||
-              c.nome.trim().toLowerCase() === customerRecord.nome.trim().toLowerCase()
-          );
-          await handleSaveCustomer(
-            existingCust ? { ...existingCust, ...customerRecord, id: existingCust.id } : customerRecord
-          );
-        }}
-        onBackToAdmin={
-          isFromUrlOnly
-            ? () => {
-                window.history.replaceState({}, '', window.location.pathname);
-                setIsCardapioDigitalOpen(false);
-              }
-            : () => setIsCardapioDigitalOpen(false)
-        }
-      />
+      <Suspense fallback={<div className="min-h-screen w-screen flex items-center justify-center bg-[#f8f9ff] text-xs font-semibold text-slate-500">Carregando Cardápio Digital...</div>}>
+        <CardapioDigitalScreen
+          products={products}
+          categories={categories}
+          units={units}
+          stock={stock}
+          orders={orders}
+          customers={customers}
+          introConfig={cardapioIntroConfig}
+          thankYouConfig={cardapioThankYouConfig}
+          onSubmitOrder={async (newOrder, customerRecord) => {
+            await handleSaveOrder(newOrder);
+            const normPhone = customerRecord.telefone.replace(/\D/g, '');
+            const existingCust = customers.find(
+              c =>
+                c.telefone.replace(/\D/g, '') === normPhone ||
+                c.nome.trim().toLowerCase() === customerRecord.nome.trim().toLowerCase()
+            );
+            await handleSaveCustomer(
+              existingCust ? { ...existingCust, ...customerRecord, id: existingCust.id } : customerRecord
+            );
+          }}
+          onBackToAdmin={
+            isFromUrlOnly
+              ? () => {
+                  window.history.replaceState({}, '', window.location.pathname);
+                  setIsCardapioDigitalOpen(false);
+                }
+              : () => setIsCardapioDigitalOpen(false)
+          }
+        />
+      </Suspense>
     );
   }
 
@@ -1304,10 +1324,12 @@ export const App: React.FC = () => {
           lowStockCount={lowStockCount}
           pendingDeliveriesCount={pendingDeliveriesCount}
           pendingCustomersCount={pendingCustomersCount}
+          selectedDeliveriesCount={selectedDeliveryIds.length}
         />
 
         {/* Column 2: Center Main Content Screen */}
-        <main className="flex-1 min-w-0 flex flex-col overflow-hidden pb-20 lg:pb-0">
+        <main className="flex-1 min-w-0 flex flex-col overflow-hidden">
+          <Suspense fallback={<div className="flex-1 flex items-center justify-center text-xs font-semibold text-slate-400">Carregando tela...</div>}>
           {currentScreen === 'pedidos' && (
             <PedidosScreen
               orders={allowedOrders}
@@ -1315,10 +1337,13 @@ export const App: React.FC = () => {
               units={allowedUnits}
               categories={categories}
               customers={customers}
+              stock={allowedStock}
               activeUnitId={activeUnitId}
               userPassword={effectiveUserProfile.senha || '12345678'}
               requestedStatusFilter={pedidosStatusFilterRequest}
               onSaveOrder={handleSaveOrder}
+              onDeleteOrder={handleDeleteOrder}
+              selectedOrderId={selectedOrder?.id}
               onSelectOrder={setSelectedOrder}
               onSaveCustomer={handleSaveCustomer}
             />
@@ -1340,6 +1365,8 @@ export const App: React.FC = () => {
           {currentScreen === 'estoque' && (
             <EstoqueScreen
               stock={allowedStock}
+              stockMovements={stockMovements}
+              orders={orders}
               products={products}
               units={allowedUnits}
               activeUnitId={activeUnitId}
@@ -1364,6 +1391,23 @@ export const App: React.FC = () => {
                     await SupabaseService.deleteStockItem(stockId);
                   } catch (e) {
                     console.error(e);
+                  }
+                }
+              }}
+              onRecordStockMovements={async (movements) => {
+                if (movements.length === 0) return;
+                setStockMovements(prev => {
+                  const next = [...movements, ...prev];
+                  AppStorage.saveStockMovements(next);
+                  return next;
+                });
+                if (isSupabaseOnline) {
+                  try {
+                    for (const mov of movements) {
+                      await SupabaseService.saveStockMovement(mov);
+                    }
+                  } catch (e) {
+                    console.error('Erro ao salvar movimentações de estoque:', e);
                   }
                 }
               }}
@@ -1469,107 +1513,8 @@ export const App: React.FC = () => {
               onOpenCardapioDigital={() => setIsCardapioDigitalOpen(true)}
             />
           )}
-        </main>
 
-        {/* Column 3: Right Side KPI & Tools Bar (Desktop) */}
-        <RightBar
-          orders={orders}
-          products={products}
-          categories={categories}
-          units={units}
-          customers={customers}
-          onSaveCustomer={handleSaveCustomer}
-          stock={stock}
-          activeUnitId={activeUnitId}
-          selectedOrder={selectedOrder}
-          selectedDeliveryIds={selectedDeliveryIds}
-          onChangeSelectedDeliveryIds={setSelectedDeliveryIds}
-          lowStockCount={lowStockCount}
-          revenueGoals={revenueGoals}
-          userRole={effectiveUserProfile.role}
-          currentScreen={currentScreen}
-          onNavigate={setCurrentScreen}
-          focusRoteiroSignal={focusRoteiroSignal}
-          onOpenTutorial={() => setIsTutorialOpen(true)}
-        />
-      </div>
-
-      {/* Mobile Bottom Navigation Bar */}
-      <nav
-        aria-label="Navegação Mobile"
-        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
-        className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-[#e2e8f0] px-1.5 py-1.5 flex items-center justify-around overflow-x-auto gap-1 z-40 shadow-[0_-4px_12px_rgba(15,23,42,0.08)] print:hidden"
-      >
-        {[
-          { id: 'pedidos' as ScreenId, label: 'Pedidos', icon: ShoppingBag, badge: pendingOrdersCount },
-          { id: 'producao' as ScreenId, label: 'Produção', icon: ChefHat, badge: itemsToProduceCount },
-          { id: 'estoque' as ScreenId, label: 'Estoque', icon: Package, badge: lowStockCount, alert: lowStockCount > 0 },
-          { id: 'entregas' as ScreenId, label: 'Entregas', icon: Truck, badge: pendingDeliveriesCount },
-          { id: 'clientes' as ScreenId, label: 'Clientes', icon: Users, badge: pendingCustomersCount },
-          { id: 'produtos' as ScreenId, label: 'Produtos', icon: CakeSlice, badge: 0 },
-          { id: 'lojas' as ScreenId, label: 'Unidades', icon: Building2, badge: 0 },
-          { id: 'configuracoes' as ScreenId, label: 'Config.', icon: Settings, badge: 0 }
-        ]
-          .filter(tab => canAccessScreen(effectiveUserProfile.role, tab.id))
-          .map(tab => {
-          const Icon = tab.icon;
-          const isActive = currentScreen === tab.id && !isMobileRightDrawerOpen;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => {
-                setCurrentScreen(tab.id);
-                setIsMobileRightDrawerOpen(false);
-              }}
-              className={`relative min-w-[54px] shrink-0 flex flex-col items-center justify-center py-1.5 px-1.5 rounded-xl transition-all ${
-                isActive
-                  ? 'bg-brand-600 text-white font-bold shadow-2xs'
-                  : 'text-slate-600 hover:bg-slate-100 font-medium'
-              }`}
-            >
-              <Icon className="w-4 h-4" />
-              <span className="text-[10px] mt-0.5 leading-tight truncate">{tab.label}</span>
-              {tab.badge > 0 && (
-                <span
-                  className={`absolute top-0.5 right-1.5 px-1 min-w-[15px] h-[15px] rounded-full text-[9px] font-mono font-bold flex items-center justify-center ${
-                    isActive
-                      ? 'bg-white text-brand-700'
-                      : tab.alert
-                      ? 'bg-red-600 text-white'
-                      : 'bg-brand-100 text-brand-800'
-                  }`}
-                >
-                  {tab.badge}
-                </span>
-              )}
-            </button>
-          );
-        })}
-
-        <button
-          type="button"
-          onClick={() => setIsMobileRightDrawerOpen(prev => !prev)}
-          className={`relative min-w-[54px] shrink-0 flex flex-col items-center justify-center py-1.5 px-1.5 rounded-xl transition-all ${
-            isMobileRightDrawerOpen
-              ? 'bg-slate-900 text-white font-bold shadow-2xs'
-              : 'text-slate-600 hover:bg-slate-100 font-medium'
-          }`}
-        >
-          <Wrench className="w-4 h-4" />
-          <span className="text-[10px] mt-0.5 leading-tight truncate">Painel</span>
-          {selectedDeliveryIds.length > 0 && (
-            <span className="absolute top-0.5 right-1.5 px-1 min-w-[15px] h-[15px] rounded-full text-[9px] font-mono font-bold bg-brand-600 text-white flex items-center justify-center">
-              {selectedDeliveryIds.length}
-            </span>
-          )}
-        </button>
-      </nav>
-
-      {/* Mobile Slide-Over Drawer for Indicadores & Ferramentas (RightBar) */}
-      {isMobileRightDrawerOpen && (
-        <div className="lg:hidden fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex justify-end pb-16 print:hidden">
-          <div className="w-full max-w-sm h-full bg-white shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-200">
+          {currentScreen === 'painel' && (
             <RightBar
               orders={orders}
               products={products}
@@ -1580,27 +1525,49 @@ export const App: React.FC = () => {
               stock={stock}
               activeUnitId={activeUnitId}
               selectedOrder={selectedOrder}
+              onSelectOrder={setSelectedOrder}
+              onSaveOrder={handleSaveOrder}
               selectedDeliveryIds={selectedDeliveryIds}
               onChangeSelectedDeliveryIds={setSelectedDeliveryIds}
               lowStockCount={lowStockCount}
               revenueGoals={revenueGoals}
               userRole={effectiveUserProfile.role}
               currentScreen={currentScreen}
-              onNavigate={(scr) => {
-                const allowedMobile: ScreenId[] = ['pedidos', 'producao', 'estoque', 'entregas'];
-                if (allowedMobile.includes(scr)) {
-                  setCurrentScreen(scr);
-                  setIsMobileRightDrawerOpen(false);
-                }
-              }}
-              isMobileDrawer={true}
-              onCloseMobileDrawer={() => setIsMobileRightDrawerOpen(false)}
+              onNavigate={setCurrentScreen}
+              isMobileScreen={true}
               focusRoteiroSignal={focusRoteiroSignal}
               onOpenTutorial={() => setIsTutorialOpen(true)}
             />
-          </div>
-        </div>
-      )}
+          )}
+          </Suspense>
+        </main>
+
+        {/* Column 3: Right Side KPI & Tools Bar (Desktop) */}
+        <Suspense fallback={null}>
+          <RightBar
+            orders={orders}
+            products={products}
+            categories={categories}
+            units={units}
+            customers={customers}
+            onSaveCustomer={handleSaveCustomer}
+            stock={stock}
+            activeUnitId={activeUnitId}
+            selectedOrder={selectedOrder}
+            onSelectOrder={setSelectedOrder}
+            onSaveOrder={handleSaveOrder}
+            selectedDeliveryIds={selectedDeliveryIds}
+            onChangeSelectedDeliveryIds={setSelectedDeliveryIds}
+            lowStockCount={lowStockCount}
+            revenueGoals={revenueGoals}
+            userRole={effectiveUserProfile.role}
+            currentScreen={currentScreen}
+            onNavigate={setCurrentScreen}
+            focusRoteiroSignal={focusRoteiroSignal}
+            onOpenTutorial={() => setIsTutorialOpen(true)}
+          />
+        </Suspense>
+      </div>
 
       <TutorialOverlay
         isOpen={isTutorialOpen}

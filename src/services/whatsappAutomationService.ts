@@ -1,6 +1,7 @@
 import { Order, OrderStatus, Product, StoreUnit } from '../types';
 import { resolveCoordinates, haversineKm } from './routeOptimizerService';
 import { formatDeliveryTimeRange } from '../utils/deliveryTimeRange';
+import { formatCurrencyBR } from '../components/CurrencyInput';
 
 export interface WhatsAppAutomationSettings {
   autoPromptOnStatusChange: boolean;
@@ -108,7 +109,7 @@ export function formatStatusNotificationMessage(
   const unit = units.find(u => u.id === (order.unidadeRetiradaId || order.unidadeOrigemId)) || units[0];
 
   const itensText = (order.itens || [])
-    .map(i => `• ${i.quantidade}x ${prodMap.get(i.produtoId)?.descricao || 'Produto'} (R$ ${i.subtotal.toFixed(2)})`)
+    .map(i => `• ${i.quantidade}x ${prodMap.get(i.produtoId)?.descricao || 'Produto'} (R$ ${formatCurrencyBR(i.subtotal)})`)
     .join('\n');
 
   const paymentLabel = {
@@ -137,7 +138,7 @@ export function formatStatusNotificationMessage(
     .replace(/\{cliente\}/g, order.clienteNome || 'Cliente')
     .replace(/\{pedido\}/g, order.numeroPedido || '')
     .replace(/\{itens\}/g, itensText || '—')
-    .replace(/\{total\}/g, order.valorTotal.toFixed(2))
+    .replace(/\{total\}/g, formatCurrencyBR(order.valorTotal))
     .replace(/\{modalidade\}/g, modalidadeText)
     .replace(/\{endereco\}/g, order.enderecoEntrega || unit?.endereco || '')
     .replace(/\{unidade\}/g, unit?.nome || 'Beju Caramelos')

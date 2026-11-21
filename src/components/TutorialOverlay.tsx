@@ -29,6 +29,7 @@ const SCREEN_NAMES: Record<ScreenId, string> = {
   produtos: 'Produtos',
   lojas: 'Unidades',
   configuracoes: 'Configurações',
+  painel: 'Indicadores & Ferramentas',
 };
 
 const SCREEN_TUTORIALS: Record<ScreenId, TutorialStep[]> = {
@@ -201,6 +202,18 @@ const SCREEN_TUTORIALS: Record<ScreenId, TutorialStep[]> = {
       title: 'Gerenciar Dados e Backup',
       description: 'Na aba Dados, exporte/restaure backups em Excel ou popule/limpe dados mock no banco em nuvem.',
       findTarget: () => findInMainByText('button', 'Dados') || findVisible('main'),
+    },
+  ],
+  painel: [
+    {
+      title: 'Indicadores e Metas',
+      description: 'Acompanhe faturamento, pedidos de hoje, entregas e alertas de estoque mínimo em tempo real.',
+      findTarget: () => findInMainByText('button', 'Indicadores') || findVisible('main'),
+    },
+    {
+      title: 'Ferramentas Rápidas',
+      description: 'Alterne para Ferramentas para calcular frete/CEP, roteirizar entregas, programar produção ou enviar WhatsApp.',
+      findTarget: () => findInMainByText('button', 'Ferramentas') || findVisible('main'),
     },
   ],
 };

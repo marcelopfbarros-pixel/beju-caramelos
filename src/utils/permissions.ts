@@ -4,10 +4,10 @@ import { ScreenId } from '../components/Sidebar';
 export type UserRole = UserProfile['role'];
 
 const SCREEN_ACCESS: Record<UserRole, ScreenId[]> = {
-  ADMIN: ['pedidos', 'producao', 'estoque', 'entregas', 'clientes', 'produtos', 'lojas', 'configuracoes'],
-  GERENTE: ['pedidos', 'producao', 'estoque', 'entregas', 'clientes', 'produtos', 'lojas'],
-  ATENDIMENTO: ['pedidos', 'producao', 'estoque', 'entregas', 'clientes', 'produtos'],
-  CONFEITEIRO: ['producao', 'estoque', 'produtos'],
+  ADMIN: ['pedidos', 'producao', 'estoque', 'entregas', 'clientes', 'produtos', 'lojas', 'configuracoes', 'painel'],
+  GERENTE: ['pedidos', 'producao', 'estoque', 'entregas', 'clientes', 'produtos', 'lojas', 'painel'],
+  ATENDIMENTO: ['pedidos', 'producao', 'estoque', 'entregas', 'clientes', 'produtos', 'painel'],
+  CONFEITEIRO: ['producao', 'estoque', 'produtos', 'painel'],
 };
 
 export function canAccessScreen(role: UserRole, screen: ScreenId): boolean {

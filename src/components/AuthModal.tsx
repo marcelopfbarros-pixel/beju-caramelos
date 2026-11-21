@@ -160,10 +160,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 backdrop-blur-xs p-3 sm:p-4">
+      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md max-h-[92dvh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
         {/* Modal Header */}
-        <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
+        <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
             <img
               src="/logo.jpg"
@@ -171,8 +171,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               className="w-8 h-8 rounded-full object-cover border border-slate-600"
             />
             <div>
-              <h3 className="font-bold text-sm">Autenticação BD</h3>
-              <p className="text-[11px] text-slate-400">Controle de acesso e operadores</p>
+              <h3 className="font-bold text-sm">Login</h3>
             </div>
           </div>
           <button
@@ -184,7 +183,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-4 overflow-y-auto">
           {(supabaseUser || currentUser.email) && !isSwitchingUser ? (
             <div className="space-y-4">
               <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center gap-3">

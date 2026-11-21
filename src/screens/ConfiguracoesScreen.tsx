@@ -21,14 +21,17 @@ import {
   Target,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   MessageSquare,
   Copy,
   Check,
   Truck,
-  Trash2
+  Trash2,
+  LayoutGrid,
+  List
 } from 'lucide-react';
 import { ExcelService } from '../services/excelService';
-import { CurrencyInput } from '../components/CurrencyInput';
+import { CurrencyInput, formatCurrencyBR } from '../components/CurrencyInput';
 import { SupabaseService } from '../services/supabaseService';
 import {
   WhatsAppAutomationSettings,
@@ -98,6 +101,9 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
   activeUnitId
 }) => {
   const [activeTab, setActiveTab] = useState<'perfil' | 'usuarios' | 'empresas' | 'metas' | 'whatsapp' | 'banco'>('perfil');
+  const [usersViewMode, setUsersViewMode] = useState<'CARDS' | 'TABLE'>(() =>
+    typeof window !== 'undefined' && window.innerWidth < 768 ? 'CARDS' : 'TABLE'
+  );
   const [waSettings, setWaSettings] = useState<WhatsAppAutomationSettings>(() =>
     getWhatsAppAutomationSettings()
   );
@@ -124,13 +130,10 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
   useEffect(() => {
     if (activeUnitId) {
       setSelectedGoalUnitId(activeUnitId);
-      setFocusedGoalKey(null);
     }
   }, [activeUnitId]);
   const [goalsSavedSuccess, setGoalsSavedSuccess] = useState(false);
   const [bulkGoalValue, setBulkGoalValue] = useState<string>('');
-  const [focusedGoalKey, setFocusedGoalKey] = useState<string | null>(null);
-  const [focusedGoalText, setFocusedGoalText] = useState<string>('');
   const [formData, setFormData] = useState<UserProfile>(userProfile);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
@@ -373,100 +376,75 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
     }
   };
 
+  type ConfigTabId = 'perfil' | 'usuarios' | 'empresas' | 'metas' | 'whatsapp' | 'banco';
+  const configTabs: { id: ConfigTabId; label: string; mobileLabel?: string; icon: React.ReactNode }[] = [
+    { id: 'perfil', label: 'Perfil', icon: <User className="w-3.5 h-3.5 shrink-0" /> },
+    ...(userProfile.role === 'ADMIN'
+      ? [{ id: 'usuarios' as ConfigTabId, label: 'Usuários', icon: <Users className="w-3.5 h-3.5 shrink-0" /> }]
+      : []),
+    { id: 'empresas', label: 'Unidades', icon: <Building2 className="w-3.5 h-3.5 shrink-0" /> },
+    { id: 'metas', label: 'Metas', icon: <Target className="w-3.5 h-3.5 shrink-0" /> },
+    {
+      id: 'whatsapp',
+      label: 'WhatsApp & Cardápio',
+      mobileLabel: 'WhatsApp',
+      icon: <MessageSquare className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+    },
+    { id: 'banco', label: 'Dados', icon: <Database className="w-3.5 h-3.5 shrink-0" /> }
+  ];
+
   return (
-    <div className="flex-1 flex flex-col h-full bg-[#f8f9ff] overflow-hidden">
+    <div className="flex-1 min-w-0 flex flex-col h-full bg-[#f8f9ff] overflow-hidden">
       {/* Top Header */}
-      <div className="bg-white border-b border-[#e2e8f0] px-6 py-4">
-        <div className="max-w-5xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-xl font-bold text-[#0f172a] font-sans">Configurações</h1>
+      <div className="bg-white border-b border-[#e2e8f0] md:px-6 md:py-4">
+        <div className="max-w-5xl mx-auto flex flex-col md:flex-row md:items-center justify-between md:gap-4">
+          <div className="border-b border-[#e2e8f0] px-3 py-2.5 md:p-0 md:border-b-0">
+            <h1 className="text-xl font-bold text-[#0f172a] font-sans flex flex-wrap items-center gap-2">
+              <span>Configurações</span>
+              <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800">
+                {configTabs.find(t => t.id === activeTab)?.label || 'Perfil'}
+              </span>
+            </h1>
           </div>
 
-          {/* Segmented Navigation Tabs */}
-          <div className="inline-flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 self-start">
-            <button
-              onClick={() => setActiveTab('perfil')}
-              className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                activeTab === 'perfil'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <User className="w-3.5 h-3.5" />
-              <span>Perfil</span>
-            </button>
-
-            {userProfile.role === 'ADMIN' && (
-              <button
-                onClick={() => setActiveTab('usuarios')}
-                className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                  activeTab === 'usuarios'
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <Users className="w-3.5 h-3.5" />
-                <span>Usuários</span>
-              </button>
-            )}
-
-            <button
-              onClick={() => setActiveTab('empresas')}
-              className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                activeTab === 'empresas'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Building2 className="w-3.5 h-3.5" />
-              <span>Unidades</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('metas')}
-              className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                activeTab === 'metas'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Target className="w-3.5 h-3.5" />
-              <span>Metas</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('whatsapp')}
-              className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                activeTab === 'whatsapp'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
-              <span>WhatsApp & Cardápio</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('banco')}
-              className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                activeTab === 'banco'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Database className="w-3.5 h-3.5" />
-              <span>Dados</span>
-            </button>
+          <div className="px-3 py-2 md:p-0">
+            {/* Segmented Navigation Tabs */}
+            <div className="grid grid-cols-3 md:inline-flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 w-full md:w-auto">
+              {configTabs.map(tab => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveTab(tab.id)}
+                  title={tab.label}
+                  aria-label={tab.label}
+                  className={`flex items-center justify-center gap-1.5 h-8 px-2 md:px-3.5 text-[11px] md:text-xs font-semibold rounded-lg transition-all min-w-0 ${
+                    activeTab === tab.id
+                      ? 'bg-white text-slate-900 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {tab.icon}
+                  {tab.mobileLabel ? (
+                    <>
+                      <span className="truncate md:hidden">{tab.mobileLabel}</span>
+                      <span className="hidden md:inline">{tab.label}</span>
+                    </>
+                  ) : (
+                    <span className="truncate">{tab.label}</span>
+                  )}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>
 
       {/* Tab Contents */}
-      <div className="flex-1 overflow-auto p-6">
+      <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-3 sm:p-6">
         <div className="max-w-5xl mx-auto space-y-6">
         {/* SEÇÃO 1: PERFIL DO USUÁRIO */}
         {activeTab === 'perfil' && (
-          <div className="bg-white border border-[#e2e8f0] rounded-xl p-6 shadow-xs space-y-5">
+          <div className="bg-white border border-[#e2e8f0] rounded-xl p-4 sm:p-6 shadow-xs space-y-5">
             <div className="flex items-center justify-between border-b border-slate-100 pb-4">
               <div>
                 <h2 className="text-sm font-bold text-slate-900">Meu Perfil</h2>
@@ -500,34 +478,40 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
 
               <div>
                 <label className="font-semibold text-slate-700 block mb-1">Nível de Permissão (Role)</label>
-                <select
-                  value={formData.role}
-                  onChange={(e) => setFormData({ ...formData, role: e.target.value as any })}
-                  className="w-full bg-white border border-slate-300 rounded-lg p-2.5 font-medium"
-                >
-                  <option value="ADMIN">Administrador Geral</option>
-                  <option value="GERENTE">Gerente de Loja</option>
-                  <option value="ATENDIMENTO">Atendimento / Recepção WhatsApp</option>
-                  <option value="CONFEITEIRO">Chef / Produção Central</option>
-                </select>
+                <div className="relative flex items-center">
+                  <select
+                    value={formData.role}
+                    onChange={(e) => setFormData({ ...formData, role: e.target.value as any })}
+                    className="w-full h-9 appearance-none bg-white border border-slate-300 rounded-lg pl-3 pr-8 py-1 text-xs leading-normal font-medium cursor-pointer"
+                  >
+                    <option value="ADMIN">Administrador Geral</option>
+                    <option value="GERENTE">Gerente de Loja</option>
+                    <option value="ATENDIMENTO">Atendimento / Recepção WhatsApp</option>
+                    <option value="CONFEITEIRO">Chef / Produção Central</option>
+                  </select>
+                  <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2" />
+                </div>
               </div>
 
               <div>
                 <label className="font-semibold text-slate-700 block mb-1">Unidade Padrão de Trabalho</label>
-                <select
-                  value={formData.unidadePadraoId}
-                  onChange={(e) => setFormData({ ...formData, unidadePadraoId: e.target.value })}
-                  className="w-full bg-white border border-slate-300 rounded-lg p-2.5 font-medium"
-                >
-                  {units.map(u => (
-                    <option key={u.id} value={u.id}>{u.nome}</option>
-                  ))}
-                </select>
+                <div className="relative flex items-center">
+                  <select
+                    value={formData.unidadePadraoId}
+                    onChange={(e) => setFormData({ ...formData, unidadePadraoId: e.target.value })}
+                    className="w-full h-9 appearance-none bg-white border border-slate-300 rounded-lg pl-3 pr-8 py-1 text-xs leading-normal font-medium cursor-pointer"
+                  >
+                    {units.map(u => (
+                      <option key={u.id} value={u.id}>{u.nome}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2" />
+                </div>
               </div>
 
               <div className="col-span-full">
                 <label className="font-semibold text-slate-700 block mb-1">Foto do Avatar</label>
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
                   <img
                     src={formData.avatarUrl || '/logo.jpg'}
                     alt={formData.nome}
@@ -553,7 +537,7 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                     value={formData.avatarUrl}
                     onChange={(e) => setFormData({ ...formData, avatarUrl: e.target.value })}
                     placeholder="Ou cole a URL da imagem..."
-                    className="flex-1 bg-white border border-slate-300 rounded-lg p-2.5 font-mono text-[11px]"
+                    className="flex-1 min-w-[160px] bg-white border border-slate-300 rounded-lg p-2.5 font-mono text-[11px]"
                   />
                 </div>
               </div>
@@ -609,29 +593,146 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
 
         {/* GESTÃO DE USUÁRIOS DO SISTEMA (APENAS ADMIN) */}
         {activeTab === 'usuarios' && userProfile.role === 'ADMIN' && (
-          <div className="bg-white border border-[#e2e8f0] rounded-xl p-6 shadow-xs space-y-4">
+          <div className="bg-white border border-[#e2e8f0] rounded-xl p-4 sm:p-6 shadow-xs space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-lg bg-brand-50 text-brand-700">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="p-2 rounded-lg bg-brand-50 text-brand-700 shrink-0">
                   <Users className="w-4 h-4" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <h3 className="text-sm font-bold text-slate-900">Usuários do Sistema</h3>
                   <p className="text-xs text-slate-500">
                     Inclua, edite ou ative/desative operadores com acesso ao sistema
                   </p>
                 </div>
               </div>
-              <button
-                onClick={openNewUserModal}
-                className="flex items-center gap-1.5 px-3.5 py-2 bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold rounded-lg shadow-2xs transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Incluir Usuário</span>
-              </button>
+              <div className="flex items-center gap-2 shrink-0">
+                <div
+                  className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-white p-0.5 shadow-2xs shrink-0"
+                  role="group"
+                  aria-label="Modo de visualização"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setUsersViewMode('CARDS')}
+                    title="Cards"
+                    aria-label="Cards"
+                    className={`h-full flex items-center justify-center px-2 rounded-md text-xs font-semibold transition-colors ${
+                      usersViewMode === 'CARDS' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUsersViewMode('TABLE')}
+                    title="Tabela"
+                    aria-label="Tabela"
+                    className={`h-full flex items-center justify-center px-2 rounded-md text-xs font-semibold transition-colors ${
+                      usersViewMode === 'TABLE' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    <List className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <button
+                  onClick={openNewUserModal}
+                  title="Incluir Usuário"
+                  aria-label="Incluir Usuário"
+                  className="flex items-center justify-center gap-1.5 h-8 w-8 md:w-auto px-0 md:px-3.5 bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold rounded-lg shadow-2xs transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span className="hidden md:inline">Incluir Usuário</span>
+                </button>
+              </div>
             </div>
 
-            <div className="overflow-x-auto">
+            {usersViewMode === 'CARDS' ? (
+              users.length === 0 ? (
+                <div className="py-8 text-center text-xs text-slate-400">
+                  Nenhum usuário cadastrado. Clique em "Incluir Usuário" para adicionar.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {users.map(u => {
+                    const isActive = u.ativo !== false;
+                    const unitName = units.find(un => un.id === u.unidadePadraoId)?.nome || 'Não definida';
+                    return (
+                      <div
+                        key={u.id || u.email}
+                        className={`rounded-xl border border-slate-200 bg-slate-50/40 p-3.5 flex flex-col justify-between gap-3 min-w-0 overflow-hidden ${
+                          !isActive ? 'opacity-60' : ''
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2 min-w-0">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            {u.avatarUrl ? (
+                              <img
+                                src={u.avatarUrl}
+                                alt={u.nome}
+                                className="w-9 h-9 rounded-full object-cover border border-slate-200 shrink-0"
+                              />
+                            ) : (
+                              <div className="w-9 h-9 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center font-bold text-xs shrink-0">
+                                {u.nome.slice(0, 2).toUpperCase()}
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <div className="text-xs font-bold text-slate-900 truncate">{u.nome}</div>
+                              <div className="text-[11px] font-mono text-slate-500 truncate">{u.email}</div>
+                            </div>
+                          </div>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
+                              isActive
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : 'bg-rose-50 text-rose-700 border border-rose-200'
+                            }`}
+                          >
+                            {isActive ? 'Ativo' : 'Inativo'}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200/70 min-w-0">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[10px] font-bold shrink-0">
+                              {u.role}
+                            </span>
+                            <span className="text-[11px] text-slate-600 truncate" title={unitName}>
+                              {unitName}
+                            </span>
+                          </div>
+                          <div className="inline-flex items-center gap-1.5 shrink-0">
+                            <button
+                              onClick={() => openEditUserModal(u)}
+                              title="Editar usuário"
+                              aria-label="Editar usuário"
+                              className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => onToggleUserActive(u.id || u.email, !isActive)}
+                              title={isActive ? 'Desativar usuário' : 'Ativar usuário'}
+                              aria-label={isActive ? 'Desativar usuário' : 'Ativar usuário'}
+                              className={`p-1.5 rounded-lg border bg-white transition-colors ${
+                                isActive
+                                  ? 'border-rose-200 text-rose-600 hover:bg-rose-50'
+                                  : 'border-emerald-200 text-emerald-600 hover:bg-emerald-50'
+                              }`}
+                            >
+                              <Power className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )
+            ) : (
+            <div className="overflow-x-auto max-w-full">
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
@@ -709,42 +810,34 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                 </tbody>
               </table>
             </div>
+            )}
           </div>
         )}
 
         {/* SEÇÃO 2: EMPRESAS & LOJAS GERENCIADAS */}
         {activeTab === 'empresas' && (
-          <div className="bg-white border border-[#e2e8f0] rounded-xl p-6 shadow-xs space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
-              <div>
-                <h2 className="text-sm font-bold text-slate-900">
-                  {userProfile.role === 'ADMIN'
-                    ? 'Associação de Empresas & Lojas por Usuário'
-                    : 'Lojas & Unidades Autorizadas'}
-                </h2>
-                <p className="text-xs text-slate-500">
-                  {userProfile.role === 'ADMIN'
-                    ? 'Selecione um usuário para associar ou desassociar as lojas e unidades autorizadas'
-                    : 'Visualize as filiais que seu perfil possui autorização para operar'}
-                </p>
-              </div>
-              {userProfile.role === 'ADMIN' && (
+          <div className="bg-white border border-[#e2e8f0] rounded-xl p-4 sm:p-6 shadow-xs space-y-6">
+            {userProfile.role === 'ADMIN' && (
+              <div className="border-b border-slate-100 pb-4">
                 <div className="w-full sm:w-72">
                   <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Usuário Selecionado</label>
-                  <select
-                    value={selectedAssocUser ? (selectedAssocUser.id || selectedAssocUser.email) : ''}
-                    onChange={(e) => setSelectedAssocUserId(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-xs font-semibold text-slate-800"
-                  >
-                    {users.map(u => (
-                      <option key={u.id || u.email} value={u.id || u.email}>
-                        {u.nome} ({u.role}) {u.ativo === false ? '— Inativo' : ''}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="relative flex items-center">
+                    <select
+                      value={selectedAssocUser ? (selectedAssocUser.id || selectedAssocUser.email) : ''}
+                      onChange={(e) => setSelectedAssocUserId(e.target.value)}
+                      className="w-full h-9 appearance-none bg-slate-50 border border-slate-300 rounded-lg pl-3 pr-8 py-1 text-xs leading-normal font-semibold text-slate-800 cursor-pointer"
+                    >
+                      {users.map(u => (
+                        <option key={u.id || u.email} value={u.id || u.email}>
+                          {u.nome} ({u.role}) {u.ativo === false ? '— Inativo' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2" />
+                  </div>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
 
             <div className="space-y-3">
               {units
@@ -762,7 +855,7 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                   return (
                     <div
                       key={unit.id}
-                      className={`p-4 rounded-xl border flex items-center justify-between transition-colors ${
+                      className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors ${
                         isAssociated ? 'border-emerald-200 bg-emerald-50/30' : 'border-slate-200 bg-slate-50/60'
                       }`}
                     >
@@ -871,7 +964,7 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
           };
 
           return (
-            <div className="bg-white border border-[#e2e8f0] rounded-xl p-6 shadow-xs space-y-6">
+            <div className="bg-white border border-[#e2e8f0] rounded-xl p-4 sm:p-6 shadow-xs space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
                 <div>
                   <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
@@ -888,44 +981,49 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <select
-                    value={selectedGoalUnitId}
-                    onChange={(e) => {
-                      setSelectedGoalUnitId(e.target.value);
-                      setFocusedGoalKey(null);
-                    }}
-                    className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 outline-none cursor-pointer"
-                  >
-                    <option value="all">Todas as Unidades (Consolidado)</option>
-                    {activeUnits.map(u => (
-                      <option key={u.id} value={u.id}>
-                        {u.tipo === 'CENTRAL' ? '🏭 ' : '🏪 '}{u.nome}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="relative flex items-center">
+                    <select
+                      value={selectedGoalUnitId}
+                      onChange={(e) => {
+                        setSelectedGoalUnitId(e.target.value);
+                      }}
+                      className="h-9 appearance-none pl-3 pr-8 py-1 bg-white border border-slate-300 rounded-lg text-xs leading-normal font-semibold text-slate-900 outline-none cursor-pointer"
+                    >
+                      <option value="all">Todas as Unidades (Consolidado)</option>
+                      {activeUnits.map(u => (
+                        <option key={u.id} value={u.id}>
+                          {u.tipo === 'CENTRAL' ? '🏭 ' : '🏪 '}{u.nome}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2" />
+                  </div>
 
                   <div className="flex items-center gap-1.5">
                     <button
                       type="button"
                       onClick={() => setSelectedGoalYear(y => y - 1)}
-                      className="p-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600"
+                      className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600"
                       title="Ano anterior"
                     >
                       <ChevronLeft className="w-4 h-4" />
                     </button>
-                    <select
-                      value={selectedGoalYear}
-                      onChange={(e) => setSelectedGoalYear(Number(e.target.value))}
-                      className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono font-bold text-slate-900 outline-none cursor-pointer"
-                    >
-                      {yearOptions.map(yr => (
-                        <option key={yr} value={yr}>{yr}</option>
-                      ))}
-                    </select>
+                    <div className="relative flex items-center">
+                      <select
+                        value={selectedGoalYear}
+                        onChange={(e) => setSelectedGoalYear(Number(e.target.value))}
+                        className="h-9 appearance-none pl-3 pr-7 py-1 bg-white border border-slate-300 rounded-lg text-xs leading-normal font-mono font-bold text-slate-900 outline-none cursor-pointer"
+                      >
+                        {yearOptions.map(yr => (
+                          <option key={yr} value={yr}>{yr}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-2 top-1/2 -translate-y-1/2" />
+                    </div>
                     <button
                       type="button"
                       onClick={() => setSelectedGoalYear(y => y + 1)}
-                      className="p-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600"
+                      className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600"
                       title="Próximo ano"
                     >
                       <ChevronRight className="w-4 h-4" />
@@ -941,7 +1039,7 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                     Meta Anual ({selectedGoalYear})
                   </span>
                   <div className="text-lg font-mono font-bold text-slate-900 mt-1">
-                    R$ {annualGoalTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    R$ {formatCurrencyBR(annualGoalTotal)}
                   </div>
                 </div>
 
@@ -950,7 +1048,7 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                     Realizado em {selectedGoalYear}
                   </span>
                   <div className="text-lg font-mono font-bold text-emerald-900 mt-1">
-                    R$ {annualRealizedTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    R$ {formatCurrencyBR(annualRealizedTotal)}
                   </div>
                   <span className="text-[11px] font-mono font-semibold text-emerald-700">
                     {annualGoalTotal > 0 ? `${annualPct.toFixed(1)}% da meta anual` : 'Defina metas abaixo'}
@@ -962,13 +1060,11 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                     Preenchimento Rápido ({selectedGoalYear})
                   </span>
                   <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      min="0"
-                      step="100"
-                      placeholder="Ex: 50000"
-                      value={bulkGoalValue}
-                      onChange={(e) => setBulkGoalValue(e.target.value)}
+                    <CurrencyInput
+                      allowEmpty
+                      placeholder="Ex: 50.000,00"
+                      value={parseFloat(bulkGoalValue) || 0}
+                      onChangeValue={(val) => setBulkGoalValue(val > 0 ? String(val) : '')}
                       disabled={isConsolidated}
                       className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono focus:border-brand-500 outline-none disabled:bg-slate-100 disabled:text-slate-400"
                     />
@@ -1000,7 +1096,6 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                         type="button"
                         onClick={() => {
                           setSelectedGoalUnitId(u.id);
-                          setFocusedGoalKey(null);
                         }}
                         className={`text-left p-3 rounded-xl border transition-all cursor-pointer ${
                           isSelected
@@ -1017,8 +1112,8 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                           </span>
                         </div>
                         <div className="mt-1 flex items-center justify-between text-[11px] font-mono text-slate-600">
-                          <span>Meta: R$ {uGoal.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}</span>
-                          <span>Real: R$ {uRealized.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}</span>
+                          <span>Meta: R$ {formatCurrencyBR(uGoal)}</span>
+                          <span>Real: R$ {formatCurrencyBR(uRealized)}</span>
                         </div>
                         <div className="mt-1.5 h-1 w-full bg-slate-200 rounded-full overflow-hidden">
                           <div
@@ -1051,39 +1146,19 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-mono font-bold text-slate-400">
                           R$
                         </span>
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          readOnly={isConsolidated}
-                          value={
-                            focusedGoalKey === key
-                              ? focusedGoalText
-                              : goalVal > 0
-                              ? goalVal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                              : ''
-                          }
+                        <CurrencyInput
+                          allowEmpty
                           placeholder="0,00"
-                          onFocus={() => {
+                          disabled={isConsolidated}
+                          value={goalVal}
+                          onChangeValue={(nextVal) => {
                             if (isConsolidated) return;
-                            setFocusedGoalKey(key);
-                            setFocusedGoalText(goalVal > 0 ? String(goalVal).replace('.', ',') : '');
-                          }}
-                          onChange={(e) => {
-                            if (isConsolidated) return;
-                            const raw = e.target.value.replace(/[^\d.,]/g, '');
-                            setFocusedGoalText(raw);
-                            const normalized = raw.includes(',')
-                              ? raw.replace(/\./g, '').replace(',', '.')
-                              : raw;
-                            const val = parseFloat(normalized);
-                            const nextVal = isNaN(val) ? 0 : Math.max(0, val);
                             const updated = { ...draftGoals, [key]: nextVal };
                             setDraftGoals(updated);
                             if (onSaveRevenueGoals) {
                               onSaveRevenueGoals(updated);
                             }
                           }}
-                          onBlur={() => setFocusedGoalKey(null)}
                           className={`w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg text-xs font-mono font-bold text-right text-slate-900 outline-none ${
                             isConsolidated
                               ? 'bg-slate-100 text-slate-600 cursor-default'
@@ -1095,7 +1170,7 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                       <div className="space-y-1">
                         <div className="flex items-center justify-between text-[10px] font-mono">
                           <span className="text-slate-500">
-                            Realizado: <strong className="text-slate-800">R$ {realized.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</strong>
+                            Realizado: <strong className="text-slate-800">R$ {formatCurrencyBR(realized)}</strong>
                           </span>
                           <span className={pct >= 100 ? 'text-emerald-600 font-bold' : 'text-slate-600 font-semibold'}>
                             {goalVal > 0 ? `${((realized / goalVal) * 100).toFixed(0)}%` : '—'}
@@ -1875,17 +1950,20 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
                   <div>
                     <label className="font-semibold text-slate-700 block mb-1">Provedor</label>
-                    <select
-                      value={waSettings.apiProvider}
-                      onChange={e =>
-                        setWaSettings({ ...waSettings, apiProvider: e.target.value as any })
-                      }
-                      className="w-full bg-white border border-slate-300 rounded-lg p-2.5"
-                    >
-                      <option value="WEBHOOK">Webhook Customizado / n8n / Make</option>
-                      <option value="EVOLUTION">Evolution API</option>
-                      <option value="ZAPI">Z-API</option>
-                    </select>
+                    <div className="relative flex items-center">
+                      <select
+                        value={waSettings.apiProvider}
+                        onChange={e =>
+                          setWaSettings({ ...waSettings, apiProvider: e.target.value as any })
+                        }
+                        className="w-full h-9 appearance-none bg-white border border-slate-300 rounded-lg pl-3 pr-8 py-1 text-xs leading-normal cursor-pointer"
+                      >
+                        <option value="WEBHOOK">Webhook Customizado / n8n / Make</option>
+                        <option value="EVOLUTION">Evolution API</option>
+                        <option value="ZAPI">Z-API</option>
+                      </select>
+                      <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2" />
+                    </div>
                   </div>
                   <div>
                     <label className="font-semibold text-slate-700 block mb-1">Endpoint URL (POST)</label>
@@ -1938,9 +2016,9 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
 
       {/* Modal Incluir / Editar Usuário */}
       {showUserModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-md overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-slate-50">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-2 sm:p-4">
+          <div className="bg-white rounded-xl sm:rounded-2xl border border-slate-200 shadow-2xl w-full max-w-md max-h-[94dvh] sm:max-h-[92dvh] flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-3.5 py-2.5 sm:px-5 sm:py-3.5 border-b border-slate-100 bg-slate-50 shrink-0">
               <h3 className="text-sm font-bold text-slate-900">
                 {editingUser ? 'Editar Usuário' : 'Incluir Novo Usuário'}
               </h3>
@@ -1951,30 +2029,30 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <form onSubmit={handleSaveUserModal} className="p-5 space-y-3 text-xs">
+            <form onSubmit={handleSaveUserModal} className="p-3 sm:p-5 space-y-2.5 sm:space-y-3 text-xs overflow-y-auto">
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">Nome Completo *</label>
+                <label className="block font-semibold text-slate-700 mb-0.5 sm:mb-1">Nome Completo *</label>
                 <input
                   type="text"
                   required
                   value={userForm.nome}
                   onChange={e => setUserForm({ ...userForm, nome: e.target.value })}
-                  className="w-full border border-slate-300 rounded-lg p-2.5"
+                  className="w-full border border-slate-300 rounded-lg p-1.5 sm:p-2.5"
                 />
               </div>
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">E-mail *</label>
+                <label className="block font-semibold text-slate-700 mb-0.5 sm:mb-1">E-mail *</label>
                 <input
                   type="email"
                   required
                   disabled={!!editingUser}
                   value={userForm.email}
                   onChange={e => setUserForm({ ...userForm, email: e.target.value })}
-                  className="w-full border border-slate-300 rounded-lg p-2.5 disabled:bg-slate-100"
+                  className="w-full border border-slate-300 rounded-lg p-1.5 sm:p-2.5 disabled:bg-slate-100"
                 />
               </div>
               <div>
-                <label className="block font-semibold text-slate-700 mb-1">
+                <label className="block font-semibold text-slate-700 mb-0.5 sm:mb-1">
                   Senha de Acesso (8 números) {editingUser ? '(deixe em branco para manter)' : '*'}
                 </label>
                 <input
@@ -1985,34 +2063,40 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                   placeholder="•••••••• (8 dígitos numéricos)"
                   value={userForm.senha || ''}
                   onChange={e => setUserForm({ ...userForm, senha: e.target.value.replace(/\D/g, '').slice(0, 8) })}
-                  className="w-full border border-slate-300 rounded-lg p-2.5 font-mono tracking-widest"
+                  className="w-full border border-slate-300 rounded-lg p-1.5 sm:p-2.5 font-mono tracking-widest"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-2 sm:gap-3">
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Cargo (Role)</label>
-                  <select
-                    value={userForm.role}
-                    onChange={e => setUserForm({ ...userForm, role: e.target.value as any })}
-                    className="w-full border border-slate-300 rounded-lg p-2.5"
-                  >
-                    <option value="ADMIN">ADMIN</option>
-                    <option value="GERENTE">GERENTE</option>
-                    <option value="ATENDIMENTO">ATENDIMENTO</option>
-                    <option value="CONFEITEIRO">CONFEITEIRO</option>
-                  </select>
+                  <label className="block font-semibold text-slate-700 mb-0.5 sm:mb-1">Cargo (Role)</label>
+                  <div className="relative flex items-center">
+                    <select
+                      value={userForm.role}
+                      onChange={e => setUserForm({ ...userForm, role: e.target.value as any })}
+                      className="w-full h-9 appearance-none bg-white border border-slate-300 rounded-lg pl-3 pr-8 py-1 text-xs leading-normal cursor-pointer"
+                    >
+                      <option value="ADMIN">ADMIN</option>
+                      <option value="GERENTE">GERENTE</option>
+                      <option value="ATENDIMENTO">ATENDIMENTO</option>
+                      <option value="CONFEITEIRO">CONFEITEIRO</option>
+                    </select>
+                    <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2" />
+                  </div>
                 </div>
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Unidade Padrão</label>
-                  <select
-                    value={userForm.unidadePadraoId}
-                    onChange={e => setUserForm({ ...userForm, unidadePadraoId: e.target.value })}
-                    className="w-full border border-slate-300 rounded-lg p-2.5"
-                  >
-                    {units.map(u => (
-                      <option key={u.id} value={u.id}>{u.nome}</option>
-                    ))}
-                  </select>
+                  <label className="block font-semibold text-slate-700 mb-0.5 sm:mb-1">Unidade Padrão</label>
+                  <div className="relative flex items-center">
+                    <select
+                      value={userForm.unidadePadraoId}
+                      onChange={e => setUserForm({ ...userForm, unidadePadraoId: e.target.value })}
+                      className="w-full h-9 appearance-none bg-white border border-slate-300 rounded-lg pl-3 pr-8 py-1 text-xs leading-normal cursor-pointer"
+                    >
+                      {units.map(u => (
+                        <option key={u.id} value={u.id}>{u.nome}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="w-3.5 h-3.5 text-slate-400 pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2" />
+                  </div>
                 </div>
               </div>
               <div className="flex items-center gap-2 pt-1">
@@ -2027,17 +2111,17 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                   Usuário Ativo no Sistema
                 </label>
               </div>
-              <div className="pt-3 border-t border-slate-100 flex justify-end gap-2">
+              <div className="pt-2.5 sm:pt-3 border-t border-slate-100 flex justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setShowUserModal(false)}
-                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-semibold"
+                  className="px-3.5 sm:px-4 py-1.5 sm:py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-semibold"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg font-bold"
+                  className="px-3.5 sm:px-4 py-1.5 sm:py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg font-bold"
                 >
                   Salvar Usuário
                 </button>

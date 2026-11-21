@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { CurrencyInput } from '../components/CurrencyInput';
+import { CurrencyInput, formatCurrencyBR } from '../components/CurrencyInput';
 import { TimeSelect15 } from '../components/TimeSelect15';
 import {
   Product,
@@ -56,12 +56,14 @@ import {
   extractTimeHHmm,
   formatDeliveryTimeRange
 } from '../utils/deliveryTimeRange';
+import { computeReservedStockMap, getUnitProductAvailability } from '../utils/stockAvailability';
 
 interface CardapioDigitalScreenProps {
   products: Product[];
   categories: Category[];
   units: StoreUnit[];
   stock?: StockItem[];
+  orders?: Order[];
   customers?: Customer[];
   introConfig?: CardapioIntroConfig;
   thankYouConfig?: CardapioThankYouConfig;
@@ -80,6 +82,7 @@ export const CardapioDigitalScreen: React.FC<CardapioDigitalScreenProps> = ({
   categories,
   units,
   stock = [],
+  orders = [],
   customers = [],
   introConfig = { imageUrl: '/logo.jpg', phrase: 'Beju Caramelos', durationSeconds: 5 },
   thankYouConfig = { imageUrl: '/logo.jpg', phrase: 'Muito obrigado!', durationSeconds: 3 },
@@ -91,6 +94,8 @@ export const CardapioDigitalScreen: React.FC<CardapioDigitalScreenProps> = ({
     if (!raw) return null;
     return units.some(u => u.id === raw && u.ativo) ? raw : null;
   }, [units]);
+
+  const reservedStockMap = useMemo(() => computeReservedStockMap(orders), [orders]);
 
   const storeUnits = useMemo(
     () => units.filter(u => u.ativo),
@@ -570,7 +575,7 @@ export const CardapioDigitalScreen: React.FC<CardapioDigitalScreenProps> = ({
   const buildStoreWhatsAppSummary = (order: Order): string => {
     const prodMap = new Map(products.map(p => [p.id, p]));
     const itensList = order.itens
-      .map(i => `• ${i.quantidade}x ${prodMap.get(i.produtoId)?.descricao || 'Produto'} (R$ ${i.subtotal.toFixed(2)})`)
+      .map(i => `• ${i.quantidade}x ${prodMap.get(i.produtoId)?.descricao || 'Produto'} (R$ ${formatCurrencyBR(i.subtotal)})`)
       .join('\n');
 
     const paymentLabel = {
@@ -595,9 +600,9 @@ ${order.tipoEntrega === 'DELIVERY' ? `*Endereço:* ${order.enderecoEntrega}${cep
 *Itens do Pedido:*
 ${itensList}
 
-*Subtotal:* R$ ${order.valorSubtotal.toFixed(2)}
-${order.tipoEntrega === 'DELIVERY' ? `*Taxa de Entrega${distanceKm > 0 ? ` (~${distanceKm} km)` : ''}:* R$ ${order.taxaEntrega.toFixed(2)}\n` : ''}*TOTAL:* R$ ${order.valorTotal.toFixed(2)}
-*Pagamento:* ${paymentLabel}${order.trocoPara ? ` (Troco p/ R$ ${order.trocoPara.toFixed(2)})` : ''}${order.observacoes ? `\n*Obs:* ${order.observacoes}` : ''}`;
+*Subtotal:* R$ ${formatCurrencyBR(order.valorSubtotal)}
+${order.tipoEntrega === 'DELIVERY' ? `*Taxa de Entrega${distanceKm > 0 ? ` (~${distanceKm} km)` : ''}:* R$ ${formatCurrencyBR(order.taxaEntrega)}\n` : ''}*TOTAL:* R$ ${formatCurrencyBR(order.valorTotal)}
+*Pagamento:* ${paymentLabel}${order.trocoPara ? ` (Troco p/ R$ ${formatCurrencyBR(order.trocoPara)})` : ''}${order.observacoes ? `\n*Obs:* ${order.observacoes}` : ''}`;
   };
 
   const handleCheckout = async (e: React.FormEvent) => {
@@ -775,7 +780,7 @@ ${order.tipoEntrega === 'DELIVERY' ? `*Taxa de Entrega${distanceKm > 0 ? ` (~${d
                 return (
                   <div key={item.id} className="flex justify-between gap-2">
                     <span>{item.quantidade}x {prod?.descricao || 'Produto'}</span>
-                    <span>R$ {item.subtotal.toFixed(2)}</span>
+                    <span>R$ {formatCurrencyBR(item.subtotal)}</span>
                   </div>
                 );
               })}
@@ -783,17 +788,17 @@ ${order.tipoEntrega === 'DELIVERY' ? `*Taxa de Entrega${distanceKm > 0 ? ` (~${d
             <div className="space-y-0.5">
               <div className="flex justify-between">
                 <span>Subtotal</span>
-                <span>R$ {confirmedOrder.valorSubtotal.toFixed(2)}</span>
+                <span>R$ {formatCurrencyBR(confirmedOrder.valorSubtotal)}</span>
               </div>
               {confirmedOrder.tipoEntrega === 'DELIVERY' && (
                 <div className="flex justify-between">
                   <span>Taxa de Entrega</span>
-                  <span>R$ {confirmedOrder.taxaEntrega.toFixed(2)}</span>
+                  <span>R$ {formatCurrencyBR(confirmedOrder.taxaEntrega)}</span>
                 </div>
               )}
               <div className="flex justify-between font-bold text-xs pt-1 border-t border-slate-300">
                 <span>Total</span>
-                <span>R$ {confirmedOrder.valorTotal.toFixed(2)}</span>
+                <span>R$ {formatCurrencyBR(confirmedOrder.valorTotal)}</span>
               </div>
               <p className="pt-1"><strong>Pagamento:</strong> {confirmedOrder.formaPagamento.toUpperCase()}</p>
               {confirmedOrder.observacoes && (
@@ -916,7 +921,7 @@ ${order.tipoEntrega === 'DELIVERY' ? `*Taxa de Entrega${distanceKm > 0 ? ` (~${d
             >
               <ShoppingBag className="w-3.5 h-3.5 text-brand-600" />
               <span>{cartItems.reduce((acc, i) => acc + i.quantidade, 0)} item(ns)</span>
-              <span className="font-mono">• R$ {valorSubtotal.toFixed(2)}</span>
+              <span className="font-mono">• R$ {formatCurrencyBR(valorSubtotal)}</span>
             </a>
           </div>
         </div>
@@ -1027,6 +1032,10 @@ ${order.tipoEntrega === 'DELIVERY' ? `*Taxa de Entrega${distanceKm > 0 ? ` (~${d
                     {group.items.map(prod => {
                 const qty = cart[prod.id] || 0;
                 const catName = categoryMap.get(prod.categoriaId);
+                const avail =
+                  selectedUnit?.id && stock.length > 0
+                    ? getUnitProductAvailability(stock, reservedStockMap, selectedUnit.id, prod.id)
+                    : null;
                 return (
                   <div
                     key={prod.id}
@@ -1051,6 +1060,16 @@ ${order.tipoEntrega === 'DELIVERY' ? `*Taxa de Entrega${distanceKm > 0 ? ` (~${d
                             {catName}
                           </span>
                         )}
+                        {avail && avail.disponivel <= 0 && (
+                          <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
+                            Sob encomenda
+                          </span>
+                        )}
+                        {avail && avail.disponivel > 0 && qty > avail.disponivel && (
+                          <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
+                            Disp: {avail.disponivel} • restante sob encomenda
+                          </span>
+                        )}
                       </div>
                       <h3 className="text-[11px] font-bold text-slate-900 leading-snug line-clamp-2">
                         {prod.descricao}
@@ -1058,7 +1077,7 @@ ${order.tipoEntrega === 'DELIVERY' ? `*Taxa de Entrega${distanceKm > 0 ? ` (~${d
                       <div className="flex items-center justify-between pt-0.5">
                         <div>
                           <span className="text-xs font-mono font-bold text-brand-700">
-                            R$ {prod.precoUnitario.toFixed(2)}
+                            R$ {formatCurrencyBR(prod.precoUnitario)}
                           </span>
                           <span className="text-[9px] text-slate-400 ml-1">/{prod.unidade}</span>
                         </div>
@@ -1158,11 +1177,11 @@ ${order.tipoEntrega === 'DELIVERY' ? `*Taxa de Entrega${distanceKm > 0 ? ` (~${d
                         <div className="min-w-0 flex-1">
                           <p className="font-semibold text-slate-800 truncate">{prod?.descricao}</p>
                           <span className="text-[11px] font-mono text-slate-500">
-                            {item.quantidade}x R$ {item.precoUnitario.toFixed(2)}
+                            {item.quantidade}x R$ {formatCurrencyBR(item.precoUnitario)}
                           </span>
                         </div>
                         <span className="font-mono font-bold text-slate-900">
-                          R$ {item.subtotal.toFixed(2)}
+                          R$ {formatCurrencyBR(item.subtotal)}
                         </span>
                       </div>
                     );
@@ -1175,17 +1194,17 @@ ${order.tipoEntrega === 'DELIVERY' ? `*Taxa de Entrega${distanceKm > 0 ? ` (~${d
             <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 space-y-1 text-xs shadow-2xs">
               <div className="flex justify-between text-slate-600">
                 <span>Subtotal dos Itens</span>
-                <span className="font-mono">R$ {valorSubtotal.toFixed(2)}</span>
+                <span className="font-mono">R$ {formatCurrencyBR(valorSubtotal)}</span>
               </div>
               {tipoEntrega === 'DELIVERY' && (
                 <div className="flex justify-between text-slate-600">
                   <span>Taxa de Entrega ({selectedUnit?.nome})</span>
-                  <span className="font-mono">R$ {effectiveDeliveryFee.toFixed(2)}</span>
+                  <span className="font-mono">R$ {formatCurrencyBR(effectiveDeliveryFee)}</span>
                 </div>
               )}
               <div className="flex justify-between text-sm font-bold text-slate-900 pt-1 border-t border-sky-200/70">
                 <span>Total a Pagar</span>
-                <span className="font-mono text-brand-700">R$ {valorTotal.toFixed(2)}</span>
+                <span className="font-mono text-brand-700">R$ {formatCurrencyBR(valorTotal)}</span>
               </div>
             </div>
 
@@ -1381,11 +1400,11 @@ ${order.tipoEntrega === 'DELIVERY' ? `*Taxa de Entrega${distanceKm > 0 ? ` (~${d
                       </span>
                     </div>
                     <span className="font-mono font-bold text-brand-700">
-                      {isCalculatingFee ? 'Calculando...' : `Taxa: R$ ${taxaEntrega.toFixed(2)}`}
+                      {isCalculatingFee ? 'Calculando...' : `Taxa: R$ ${formatCurrencyBR(taxaEntrega)}`}
                     </span>
                   </div>
                   <p className="text-[10px] text-slate-500">
-                    Taxa base até {baseFeeMaxKm} km: R$ {(getWhatsAppAutomationSettings().baseFeeAmount ?? 18).toFixed(2)}
+                    Taxa base até {baseFeeMaxKm} km: R$ {formatCurrencyBR(getWhatsAppAutomationSettings().baseFeeAmount ?? 18)}
                   </p>
                   {exceedsMaxRadius && (
                     <p className="text-[10px] font-semibold text-amber-700">
@@ -1552,7 +1571,7 @@ ${order.tipoEntrega === 'DELIVERY' ? `*Taxa de Entrega${distanceKm > 0 ? ` (~${d
               {cartItems.reduce((acc, i) => acc + i.quantidade, 0)} item(ns) • {currentSellingUnit?.nome || 'Beju'}
             </p>
             <p className="text-sm font-mono font-bold text-slate-900">
-              R$ {valorSubtotal.toFixed(2)}
+              R$ {formatCurrencyBR(valorSubtotal)}
             </p>
           </div>
           <a
@@ -1597,7 +1616,7 @@ ${order.tipoEntrega === 'DELIVERY' ? `*Taxa de Entrega${distanceKm > 0 ? ` (~${d
               </div>
               <div className="absolute bottom-3 right-3 px-3.5 py-2 rounded-2xl bg-slate-900/85 text-white shadow-lg backdrop-blur-xs">
                 <span className="text-base font-mono font-extrabold">
-                  R$ {zoomedProduct.precoUnitario.toFixed(2)}
+                  R$ {formatCurrencyBR(zoomedProduct.precoUnitario)}
                 </span>
                 <span className="text-[11px] text-slate-300 ml-1">/{zoomedProduct.unidade}</span>
               </div>
