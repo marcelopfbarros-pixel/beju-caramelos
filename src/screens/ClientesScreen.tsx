@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Customer, Order } from '../types';
-import { Users, Plus, Search, Phone, MapPin, Edit2, Trash2, X, Save, Printer, LayoutGrid, List, Layers, Filter, Loader2, ChevronDown, ChevronRight } from 'lucide-react';
+import { Users, Plus, Search, Phone, MapPin, Trash2, X, Save, Printer, LayoutGrid, List, Layers, Filter, Loader2, ChevronDown, ChevronRight } from 'lucide-react';
 import { PrintReportHeader } from '../components/PrintReportHeader';
 import { HybridFilterSort } from '../components/HybridFilterSort';
 import { useExpandedGroups } from '../hooks/useExpandedGroups';
@@ -140,6 +140,9 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
       .map(([label, items]) => ({ label, items }))
       .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
   }, [filtered, groupBy, openOrdersByCustomer]);
+
+  const hidePedidosAbertos = groupBy === 'PENDENCIA';
+  const visibleColumnCount = 6 - (hidePedidosAbertos ? 1 : 0);
 
   const handleOpenNew = () => {
     setEditingCustomer({
@@ -393,17 +396,28 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {group.items.map(customer => {
                       const openOrdersCount = getOpenOrdersCount(customer);
+                      const isEditingCard = isModalOpen && editingCustomer.id === customer.id;
                       return (
-                        <div key={customer.id} className="bg-white border border-[#e2e8f0] rounded-xl p-4 shadow-xs flex flex-col justify-between gap-3 min-w-0 overflow-hidden">
+                        <div
+                          key={customer.id}
+                          onClick={() => handleOpenEdit(customer)}
+                          className={`border rounded-xl p-4 shadow-xs flex flex-col justify-between gap-3 min-w-0 overflow-hidden cursor-pointer transition-colors ${
+                            isEditingCard
+                              ? 'bg-brand-50/70 border-brand-400 ring-2 ring-brand-500 shadow-md'
+                              : 'bg-white border-[#e2e8f0] hover:border-brand-400'
+                          }`}
+                        >
                           <div className="space-y-2">
                             <div className="flex items-start justify-between gap-2">
                               <h3 className="text-sm font-bold text-slate-900">{customer.nome}</h3>
-                              {openOrdersCount > 0 ? (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-100 text-amber-800 border border-amber-300 shrink-0">
-                                  {openOrdersCount} aberto(s)
-                                </span>
-                              ) : (
-                                <span className="text-[10px] font-mono text-slate-400 shrink-0">0 abertos</span>
+                              {!hidePedidosAbertos && (
+                                openOrdersCount > 0 ? (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-100 text-amber-800 border border-amber-300 shrink-0">
+                                    {openOrdersCount} aberto(s)
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] font-mono text-slate-400 shrink-0">0 abertos</span>
+                                )
                               )}
                             </div>
                             <div className="flex items-center gap-1.5 text-xs font-mono text-slate-700">
@@ -412,6 +426,7 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
                                   href={`https://wa.me/${normalizePhoneForWhatsApp(customer.telefone)}`}
                                   target="_blank"
                                   rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
                                   title="Abrir conversa no WhatsApp"
                                   className="inline-flex items-center gap-1.5 text-emerald-700 hover:text-emerald-800 hover:underline"
                                 >
@@ -440,14 +455,7 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
                               <p className="text-[11px] text-slate-500 italic">{customer.observacoes}</p>
                             )}
                           </div>
-                          <div className="pt-2 border-t border-slate-100 flex items-center justify-end gap-2">
-                            <button
-                              onClick={() => handleOpenEdit(customer)}
-                              className="p-1.5 text-slate-500 hover:text-brand-700 hover:bg-brand-50 rounded-lg transition-colors"
-                              title="Editar Cliente"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
+                          <div className="pt-2 border-t border-slate-100 flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
                             <button
                               onClick={() => {
                                 if (confirm(`Deseja remover o cliente ${customer.nome}?`)) {
@@ -484,7 +492,7 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
                 <th className="py-3 px-4 font-semibold">Nome</th>
                 <th className="py-3 px-4 font-semibold">Telefone / WhatsApp</th>
                 <th className="py-3 px-4 font-semibold">Endereço Padrão</th>
-                <th className="py-3 px-4 font-semibold text-center">Pedidos Abertos</th>
+                {!hidePedidosAbertos && <th className="py-3 px-4 font-semibold text-center">Pedidos Abertos</th>}
                 <th className="py-3 px-4 font-semibold">Observações</th>
                 <th className="py-3 px-4 font-semibold text-right print:hidden">Ações</th>
               </tr>
@@ -492,7 +500,7 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
             <tbody className="divide-y divide-slate-100 text-xs">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-12 text-center text-slate-400">
+                  <td colSpan={visibleColumnCount} className="py-12 text-center text-slate-400">
                     <Users className="w-8 h-8 mx-auto text-slate-300 mb-2" />
                     <p>Nenhum cliente encontrado.</p>
                   </td>
@@ -507,7 +515,7 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
                         onClick={() => toggleGroup(group.label)}
                         className="bg-emerald-50 hover:bg-emerald-100/80 cursor-pointer transition-colors"
                       >
-                        <td colSpan={6} className="py-2 px-4 text-[11px] font-mono font-bold uppercase tracking-wider text-slate-700">
+                        <td colSpan={visibleColumnCount} className="py-2 px-4 text-[11px] font-mono font-bold uppercase tracking-wider text-slate-700">
                           <span className="inline-flex items-center gap-1.5">
                             {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                             <span>{group.label} ({group.items.length})</span>
@@ -517,8 +525,17 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
                     )}
                     {expanded && group.items.map(customer => {
                       const openOrdersCount = getOpenOrdersCount(customer);
+                      const isEditingRow = isModalOpen && editingCustomer.id === customer.id;
                       return (
-                      <tr key={customer.id} className="hover:bg-slate-50/70 transition-colors">
+                      <tr
+                        key={customer.id}
+                        onClick={() => handleOpenEdit(customer)}
+                        className={`cursor-pointer transition-colors ${
+                          isEditingRow
+                            ? 'bg-brand-50/70 ring-1 ring-inset ring-brand-400 border-l-4 border-l-brand-600'
+                            : 'hover:bg-slate-50/70'
+                        }`}
+                      >
                         <td className="py-3.5 px-4 font-bold text-slate-900">{customer.nome}</td>
                         <td className="py-3.5 px-4 font-mono text-slate-700">
                           {normalizePhoneForWhatsApp(customer.telefone) ? (
@@ -526,6 +543,7 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
                               href={`https://wa.me/${normalizePhoneForWhatsApp(customer.telefone)}`}
                               target="_blank"
                               rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
                               title="Abrir conversa no WhatsApp"
                               className="inline-flex items-center gap-1.5 text-emerald-700 hover:text-emerald-800 hover:underline"
                             >
@@ -552,6 +570,7 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
                             </span>
                           </span>
                         </td>
+                        {!hidePedidosAbertos && (
                         <td className="py-3.5 px-4 text-center">
                           {openOrdersCount > 0 ? (
                             <span className="inline-flex items-center justify-center px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-amber-100 text-amber-800 border border-amber-300">
@@ -561,17 +580,11 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
                             <span className="text-slate-400 font-mono text-[11px]">0</span>
                           )}
                         </td>
+                        )}
                         <td className="py-3.5 px-4 text-slate-500 italic">
                           {customer.observacoes || '—'}
                         </td>
-                        <td className="py-3.5 px-4 text-right space-x-2 print:hidden">
-                          <button
-                            onClick={() => handleOpenEdit(customer)}
-                            className="p-1.5 text-slate-500 hover:text-brand-700 hover:bg-brand-50 rounded-lg transition-colors"
-                            title="Editar Cliente"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
+                        <td className="py-3.5 px-4 text-right space-x-2 print:hidden" onClick={(e) => e.stopPropagation()}>
                           <button
                             onClick={() => {
                               if (confirm(`Deseja remover o cliente ${customer.nome}?`)) {

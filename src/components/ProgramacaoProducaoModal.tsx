@@ -2,7 +2,6 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Category, Order, Product, ProductionShift, StoreUnit } from '../types';
 import { X, Printer, Download, Calendar, Store } from 'lucide-react';
-import * as XLSX from 'xlsx';
 
 interface ProgramacaoProducaoModalProps {
   isOpen: boolean;
@@ -177,59 +176,67 @@ export const ProgramacaoProducaoModal: React.FC<ProgramacaoProducaoModalProps> =
     return { dateLine: `${dd}/${mm} (${weekday})`, shiftLine: shift };
   };
 
-  const handleExportExcel = () => {
-    const headerRow1 = ['Número do Pedido', 'Unidade', 'Data de Entrega', 'Cliente'];
-    const headerRow2 = ['', '', '', ''];
-    categoryGroups.forEach(g => {
-      g.products.forEach((p, idx) => {
-        headerRow1.push(idx === 0 ? g.nome.toUpperCase() : '');
-        headerRow2.push(p.descricao);
-      });
-    });
-    headerRow1.push('Observações');
-    headerRow2.push('');
+  const selectedUnitLabel =
+    unitFilter === 'all' ? 'Todas as Unidades' : unitMap.get(unitFilter)?.nome || 'Unidade';
 
-    const bodyRows = filteredOrders.map(o => {
+  const shiftsLabel = allShiftsSelected
+    ? 'Todos'
+    : selectedShifts.map(s => SHIFT_LABELS[s]).join(', ');
+
+  const handleExportExcel = async () => {
+    const rows = filteredOrders.map(o => {
       const lbl = formatDeliveryLabel(o.dataHoraEntrega);
-      const dateText = typeof lbl === 'string' ? lbl : `${lbl.dateLine} ${lbl.shiftLine}`;
+      const dateLine = typeof lbl === 'string' ? lbl : lbl.dateLine;
+      const shiftLine = typeof lbl === 'string' ? undefined : lbl.shiftLine;
       const unitName = unitMap.get(o.unidadeOrigemId)?.nome || '—';
       const qtyMap = orderQtyMap.get(o.id);
-      const row: (string | number)[] = [o.numeroPedido, unitName, dateText, o.clienteNome];
+      const quantitiesByProductId: Record<string, number> = {};
       orderedProducts.forEach(p => {
-        const q = qtyMap?.get(p.id) || 0;
-        row.push(q);
+        quantitiesByProductId[p.id] = qtyMap?.get(p.id) || 0;
       });
-      row.push(o.observacoes?.trim() || '—');
-      return row;
+      return {
+        numeroPedido: o.numeroPedido,
+        unitName,
+        dateLine,
+        shiftLine,
+        clienteNome: o.clienteNome,
+        quantitiesByProductId,
+        observacoes: o.observacoes?.trim() || '—',
+      };
     });
 
-    const totalProdRow: (string | number)[] = [
-      'TOTAL A PRODUZIR',
-      '',
-      `${filteredOrders.length} pedido(s)`,
-      '—',
-      ...orderedProducts.map(p => rawProductTotals.get(p.id) || 0),
-      '—',
-    ];
+    const productTotalsById: Record<string, number> = {};
+    orderedProducts.forEach(p => {
+      productTotalsById[p.id] = rawProductTotals.get(p.id) || 0;
+    });
 
-    const totalCatRow: (string | number)[] = ['TOTAL POR CATEGORIA', '', `${categoryGroups.length} categoria(s)`, '—'];
+    const categoryTotalsById: Record<string, number> = {};
     categoryGroups.forEach(g => {
-      g.products.forEach((_, idx) => {
-        totalCatRow.push(idx === 0 ? categoryTotals.get(g.id) || 0 : '');
-      });
+      categoryTotalsById[g.id] = categoryTotals.get(g.id) || 0;
     });
-    totalCatRow.push(`Total Geral: ${grandTotal}`);
 
-    const ws = XLSX.utils.aoa_to_sheet([headerRow1, headerRow2, ...bodyRows, totalProdRow, totalCatRow]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Programacao_Producao');
-    XLSX.writeFile(wb, `Programacao_Producao_${toLocalDateKey(new Date().toISOString())}.xlsx`);
+    const { exportProgramacaoProducaoExcel } = await import('../utils/programacaoProducaoExcel');
+    exportProgramacaoProducaoExcel(
+      {
+        selectedUnitLabel,
+        startDate,
+        endDate,
+        shiftsLabel,
+        categoryGroups: categoryGroups.map(g => ({
+          id: g.id,
+          nome: g.nome,
+          products: g.products,
+        })),
+        rows,
+        productTotalsById,
+        categoryTotalsById,
+        grandTotal,
+      },
+      `Programacao_Producao_${toLocalDateKey(new Date().toISOString())}.xlsx`
+    );
   };
 
   if (!isOpen) return null;
-
-  const selectedUnitLabel =
-    unitFilter === 'all' ? 'Todas as Unidades' : unitMap.get(unitFilter)?.nome || 'Unidade';
 
   return createPortal(
     <>
@@ -299,8 +306,7 @@ export const ProgramacaoProducaoModal: React.FC<ProgramacaoProducaoModalProps> =
               </div>
               <p className="text-[11px] text-slate-500 mt-0.5">
                 {selectedUnitLabel} • {startDate ? startDate.split('-').reverse().join('/') : 'Início'} até{' '}
-                {endDate ? endDate.split('-').reverse().join('/') : 'Fim'} • Turnos:{' '}
-                {allShiftsSelected ? 'Todos' : selectedShifts.map(s => SHIFT_LABELS[s]).join(', ')}
+                {endDate ? endDate.split('-').reverse().join('/') : 'Fim'} • Turnos: {shiftsLabel}
               </p>
             </div>
 

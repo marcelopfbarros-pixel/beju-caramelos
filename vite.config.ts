@@ -15,6 +15,7 @@ export default defineConfig({
           'vendor-react': ['react', 'react-dom'],
           'vendor-icons': ['lucide-react'],
           'vendor-xlsx': ['xlsx'],
+          'vendor-xlsx-style': ['xlsx-js-style'],
           'vendor-pdf': ['jspdf', 'jspdf-autotable'],
           'vendor-map': ['leaflet'],
           'vendor-supabase': ['@supabase/supabase-js']

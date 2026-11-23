@@ -201,6 +201,12 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
       );
   }, [pendingDeliveries, groupBy, unitMap]);
 
+  const hideEntrega = groupBy === 'LOJA_DATA_TURNO';
+  const hideStatus = groupBy === 'STATUS';
+  const hideLojaCard = groupBy === 'LOJA' || groupBy === 'LOJA_DATA_TURNO';
+  const visibleScreenCols = 8 - (hideEntrega ? 1 : 0) - (hideStatus ? 1 : 0);
+  const visiblePrintCols = 6 - (hideEntrega ? 1 : 0) - (hideStatus ? 1 : 0);
+
   const handlePrint = (order: Order, mode: 'receipt' | 'label' = 'receipt') => {
     setPrintMode(mode);
     setSelectedOrderForPrint(order);
@@ -278,28 +284,23 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                 .map(o => o.id);
               onChangeSelectedDeliveryIds(readyIds);
             }}
-            className={`h-8 min-h-8 max-h-8 w-8 md:w-auto px-0 md:px-2.5 inline-flex items-center justify-center leading-none gap-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors border ${
+            className={`h-8 w-8 p-0 inline-flex items-center justify-center rounded-lg transition-colors border shrink-0 ${
               selectedDeliveryIds.length > 0
                 ? 'bg-brand-600 text-white border-brand-600 hover:bg-brand-700'
                 : 'bg-white text-slate-700 border-slate-300 hover:border-brand-500'
             }`}
             title={
               selectedDeliveryIds.length > 0
-                ? 'Abrir ferramenta Roteiro com as entregas selecionadas'
+                ? `Rota (${selectedDeliveryIds.length} selecionada(s)) — Abrir ferramenta Roteiro`
                 : 'Selecionar entregas com status Pronto para planejar rota'
             }
             aria-label={
               selectedDeliveryIds.length > 0
-                ? 'Abrir ferramenta Roteiro com as entregas selecionadas'
+                ? `Rota (${selectedDeliveryIds.length} selecionada(s)) — Abrir ferramenta Roteiro`
                 : 'Selecionar entregas com status Pronto para planejar rota'
             }
           >
-            <MapPin className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">
-              {selectedDeliveryIds.length > 0
-                ? `Rota: ${selectedDeliveryIds.length} selecionada(s)`
-                : 'Selecionar Prontas p/ Rota'}
-            </span>
+            <MapPin className="w-4 h-4" />
           </button>
           {selectedDeliveryIds.length > 0 && (
             <button
@@ -307,10 +308,9 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
               onClick={() => onChangeSelectedDeliveryIds?.([])}
               title="Limpar Rota"
               aria-label="Limpar Rota"
-              className="h-8 min-h-8 max-h-8 w-8 md:w-auto px-0 md:px-2.5 inline-flex items-center justify-center leading-none gap-1 rounded-lg text-[11px] font-semibold whitespace-nowrap text-slate-600 bg-slate-100 border border-slate-200 hover:bg-slate-200 transition-colors"
+              className="h-8 w-8 p-0 inline-flex items-center justify-center rounded-lg text-slate-600 bg-slate-100 border border-slate-200 hover:bg-slate-200 transition-colors shrink-0"
             >
-              <X className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">Limpar Rota</span>
+              <X className="w-4 h-4" />
             </button>
           )}
 
@@ -338,15 +338,15 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
           <button
             onClick={handlePrintBatchLabels}
             disabled={pendingDeliveries.length === 0}
-            title="Etiquetas em lote"
-            className={`h-8 flex items-center gap-1.5 px-3 rounded-lg text-xs font-bold text-white disabled:opacity-40 shadow-xs transition-all ${
+            title={`Imprimir etiquetas em lote (${pendingDeliveries.length})`}
+            aria-label={`Imprimir etiquetas em lote (${pendingDeliveries.length})`}
+            className={`h-8 w-8 p-0 flex items-center justify-center rounded-lg text-white disabled:opacity-40 shadow-xs transition-all ${
               labelColorMode === 'BW'
                 ? 'bg-slate-900 hover:bg-slate-800'
                 : 'bg-gradient-to-r from-rose-500 to-pink-600 hover:from-rose-600 hover:to-pink-700'
             }`}
           >
-            <Tag className="w-3.5 h-3.5" />
-            <span>Etiquetas ({pendingDeliveries.length})</span>
+            <Tag className="w-4 h-4" />
           </button>
 
           <button
@@ -516,13 +516,19 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                                   />
                                   <div>
                                     <span className="text-xs font-mono font-bold text-slate-900">{order.numeroPedido}</span>
-                                    <span className="text-[10px] text-slate-500 block font-medium">Origem: {unit?.nome}</span>
+                                    {!hideLojaCard && (
+                                      <span className="text-[10px] text-slate-500 block font-medium">Origem: {unit?.nome}</span>
+                                    )}
                                   </div>
                                 </div>
                                 <div className="flex items-center gap-1 text-xs font-mono font-semibold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
                                   <Clock className="w-3.5 h-3.5 text-amber-600" />
                                   <span>
-                                    {new Date(order.dataHoraEntrega).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}{' '}
+                                    {!hideEntrega && (
+                                      <>
+                                        {new Date(order.dataHoraEntrega).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}{' '}
+                                      </>
+                                    )}
                                     {new Date(order.dataHoraEntrega).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                                   </span>
                                 </div>
@@ -691,8 +697,8 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                   <th className="py-3 px-4">Pedido</th>
                   <th className="py-3 px-4">Cliente</th>
                   <th className="py-3 px-4">Endereço</th>
-                  <th className="py-3 px-4">Entrega</th>
-                  <th className="py-3 px-4">Status</th>
+                  {!hideEntrega && <th className="py-3 px-4">Entrega</th>}
+                  {!hideStatus && <th className="py-3 px-4">Status</th>}
                   <th className="py-3 px-4 text-right">Total</th>
                   <th className="py-3 px-4 text-right">Ações</th>
                 </tr>
@@ -707,7 +713,7 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                         onClick={() => toggleGroup(`tg:${group.label}`)}
                         className="bg-emerald-50 hover:bg-emerald-100/80 cursor-pointer transition-colors"
                       >
-                        <td colSpan={8} className="py-2 px-4 text-[11px] font-mono font-bold uppercase tracking-wider text-slate-700">
+                        <td colSpan={visibleScreenCols} className="py-2 px-4 text-[11px] font-mono font-bold uppercase tracking-wider text-slate-700">
                           <span className="inline-flex items-center gap-1.5">
                             {groupExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                             <span>{group.label} ({group.totalCount})</span>
@@ -725,7 +731,7 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                             onClick={() => toggleGroup(subKey)}
                             className="bg-emerald-50/60 hover:bg-emerald-100/60 cursor-pointer transition-colors"
                           >
-                            <td colSpan={8} className="py-1.5 px-6 text-[11px] font-mono font-semibold text-slate-600">
+                            <td colSpan={visibleScreenCols} className="py-1.5 px-6 text-[11px] font-mono font-semibold text-slate-600">
                               <span className="inline-flex items-center gap-1.5">
                                 {subExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                                 <span>{sub.subLabel} ({sub.items.length})</span>
@@ -769,13 +775,17 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                                 <div className="text-[11px] font-mono text-slate-500">{order.clienteTelefone}</div>
                               </td>
                               <td className="py-3 px-4 text-slate-600 max-w-xs truncate">{order.enderecoEntrega || '-'}</td>
+                              {!hideEntrega && (
                               <td className="py-3 px-4 font-mono text-slate-700">
                                 {formatDeliveryTimeRange(order.dataHoraEntrega, order.dataHoraEntregaFim, {
                                   tipoEntrega: order.tipoEntrega,
                                   turnoEntrega: order.tipoEntrega === 'DELIVERY' ? order.turnoEntrega : undefined
                                 })}
                               </td>
+                              )}
+                              {!hideStatus && (
                               <td className="py-3 px-4 font-mono text-[11px] font-bold">{order.status}</td>
+                              )}
                               <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
                                 <div>R$ {formatCurrencyBR(order.valorTotal)}</div>
                                 {(() => {
@@ -863,8 +873,8 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                 <th className="py-2 px-3">Pedido</th>
                 <th className="py-2 px-3">Cliente</th>
                 <th className="py-2 px-3">Endereço</th>
-                <th className="py-2 px-3">Entrega</th>
-                <th className="py-2 px-3">Status</th>
+                {!hideEntrega && <th className="py-2 px-3">Entrega</th>}
+                {!hideStatus && <th className="py-2 px-3">Status</th>}
                 <th className="py-2 px-3 text-right">Total</th>
               </tr>
             </thead>
@@ -873,7 +883,7 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                 <React.Fragment key={group.label}>
                   {groupBy !== 'NENHUM' && (
                     <tr className="bg-slate-100">
-                      <td colSpan={6} className="py-1.5 px-3 font-mono font-bold text-[11px] uppercase text-slate-800">
+                      <td colSpan={visiblePrintCols} className="py-1.5 px-3 font-mono font-bold text-[11px] uppercase text-slate-800">
                         {group.label} ({group.totalCount})
                       </td>
                     </tr>
@@ -882,7 +892,7 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                     <React.Fragment key={sub.subLabel || 'all'}>
                       {sub.subLabel && (
                         <tr className="bg-slate-50">
-                          <td colSpan={6} className="py-1 px-5 font-mono font-semibold text-[10px] text-slate-700">
+                          <td colSpan={visiblePrintCols} className="py-1 px-5 font-mono font-semibold text-[10px] text-slate-700">
                             {sub.subLabel} ({sub.items.length})
                           </td>
                         </tr>
@@ -892,10 +902,14 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                           <td className="py-2 px-3 font-mono font-bold">{order.numeroPedido}</td>
                           <td className="py-2 px-3">{order.clienteNome} ({order.clienteTelefone})</td>
                           <td className="py-2 px-3">{order.enderecoEntrega || '-'}</td>
+                          {!hideEntrega && (
                           <td className="py-2 px-3 font-mono">
                             {new Date(order.dataHoraEntrega).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
                           </td>
+                          )}
+                          {!hideStatus && (
                           <td className="py-2 px-3 font-mono">{order.status}</td>
+                          )}
                           <td className="py-2 px-3 text-right font-mono font-bold">R$ {formatCurrencyBR(order.valorTotal)}</td>
                         </tr>
                       ))}

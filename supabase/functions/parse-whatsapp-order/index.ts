@@ -109,7 +109,8 @@ REGRAS DE EXTRAÇÃO:
 3. Modalidade: Use "RETIRADA" se o cliente disser que vai buscar/retirar na loja; caso contrário use "DELIVERY".
 4. Pagamento: Mapeie para 'pix', 'debito', 'credito' ou 'dinheiro'. Se mencionar troco (ex: "troco para 200"), preencha "trocoPara" com o valor numérico.
 5. Faixa de Data/Hora de Entrega ou Retirada: Retorne "dataHoraEntrega" (início) e "dataHoraEntregaFim" (fim) no formato ISO local "YYYY-MM-DDTHH:mm" (ex: "2026-11-14T14:30" e "2026-11-14T17:30"). Se o cliente informar uma faixa (ex: "das 14h às 16h"), use início e fim exatos. O padrão de +1 hora em "dataHoraEntregaFim" só deve ser usado quando o horário final não for especificado.
-6. Desconto: Preencha "desconto" APENAS com o valor abatido em reais (R$), NUNCA com o total final a pagar. Se a conversa disser "desconto de R$ 20", retorne 20. Se disser "10% de desconto", calcule 10% do subtotal dos itens. Se disser "com desconto fica R$ 120" (informando o total final), retorne apenas a diferença (subtotal - 120) se positiva. Caso não haja desconto, retorne 0.`;
+6. Desconto: Preencha "desconto" APENAS com o valor abatido em reais (R$), NUNCA com o total final a pagar. Se a conversa disser "desconto de R$ 20" ou "*Desconto:* -R$ 20,00", retorne 20. Se disser "10% de desconto", calcule 10% do subtotal dos itens. Se disser "com desconto fica R$ 120" ou "total com desconto: R$ 120" (informando o total final), retorne apenas a diferença ((subtotal dos itens + taxaEntrega) - 120) se positiva. Caso não haja desconto, retorne 0.
+7. Taxa de Entrega: Se a conversa mencionar explicitamente um valor de taxa/frete (ex: "*Taxa de Entrega:* R$ 15,00" ou "frete R$ 20"), preencha "taxaEntrega" com o valor numérico. Se mencionar "frete grátis" / "sem taxa" ou se a modalidade for "RETIRADA", retorne 0. Caso não seja informada taxa na conversa de entrega, omita "taxaEntrega".`;
 
     const responseSchema = {
       type: "OBJECT",
@@ -123,6 +124,7 @@ REGRAS DE EXTRAÇÃO:
         dataHoraEntregaFim: { type: "STRING" },
         formaPagamento: { type: "STRING", enum: ["pix", "debito", "credito", "dinheiro"] },
         trocoPara: { type: "NUMBER" },
+        taxaEntrega: { type: "NUMBER" },
         desconto: { type: "NUMBER" },
         observacoes: { type: "STRING" },
         itens: {

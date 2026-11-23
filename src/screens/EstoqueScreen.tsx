@@ -8,7 +8,6 @@ import {
   Plus, 
   Check, 
   X, 
-  Edit2,
   Trash2,
   Save,
   Printer,
@@ -135,6 +134,10 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
       .map(([label, items]) => ({ label, items }))
       .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
   }, [filteredStock, groupBy, unitMap]);
+
+  const hideLoja = groupBy === 'LOJA';
+  const hideSituacao = groupBy === 'SITUACAO';
+  const visibleColumnCount = 7 - (hideLoja ? 1 : 0) - (hideSituacao ? 1 : 0);
 
   const handleExecuteTransfer = () => {
     if (transferOrigin === transferDestination) {
@@ -529,33 +532,46 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
                     const isLow = item.quantidadeAtual <= item.quantidadeMinima;
                     const reservado = reservedMap.get(stockReservationKey(item.unidadeId, item.produtoId)) || 0;
                     const disponivel = Math.max(0, item.quantidadeAtual - reservado);
+                    const isEditingCard = isStockModalOpen && editingStockId === item.id;
 
                     return (
                       <div
                         key={item.id}
-                        className={`bg-white border rounded-xl p-4 shadow-xs flex flex-col justify-between gap-3 min-w-0 overflow-hidden ${
-                          isLow ? 'border-rose-200 bg-rose-50/20' : 'border-[#e2e8f0]'
+                        onClick={() => {
+                          if (canEdit) handleOpenEditStock(item);
+                        }}
+                        className={`border rounded-xl p-4 shadow-xs flex flex-col justify-between gap-3 min-w-0 overflow-hidden transition-colors ${
+                          canEdit ? 'cursor-pointer hover:border-brand-400 ' : ''
+                        }${
+                          isEditingCard
+                            ? 'bg-brand-50/70 border-brand-400 ring-2 ring-brand-500 shadow-md'
+                            : isLow
+                            ? 'border-rose-200 bg-rose-50/20'
+                            : 'bg-white border-[#e2e8f0]'
                         }`}
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div>
                             <div className="text-[11px] font-mono text-slate-500">
-                              {unit?.tipo === 'CENTRAL' ? '🏭 ' : '🏪 '}{unit?.nome || item.unidadeId} • {prod?.sku || '-'}
+                              {!hideLoja && `${unit?.tipo === 'CENTRAL' ? '🏭 ' : '🏪 '}${unit?.nome || item.unidadeId} • `}
+                              {prod?.sku || '-'}
                             </div>
                             <h3 className="text-sm font-bold text-slate-900 mt-0.5">
                               {prod?.descricao || 'Produto não encontrado'}
                             </h3>
                           </div>
-                          {isLow ? (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200 shrink-0">
-                              <AlertTriangle className="w-3 h-3" />
-                              Reposição
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 shrink-0">
-                              <Check className="w-3 h-3" />
-                              OK
-                            </span>
+                          {!hideSituacao && (
+                            isLow ? (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200 shrink-0">
+                                <AlertTriangle className="w-3 h-3" />
+                                Reposição
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 shrink-0">
+                                <Check className="w-3 h-3" />
+                                OK
+                              </span>
+                            )
                           )}
                         </div>
 
@@ -592,7 +608,7 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
                           </div>
 
                           {canEdit && (
-                          <div className="inline-flex items-center gap-1.5">
+                          <div className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                             <div className="inline-flex items-center gap-1 bg-slate-100 rounded-lg p-1">
                               <button
                                 onClick={() => handleAdjustQuantity(item.id, -1)}
@@ -618,13 +634,6 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
                               aria-label="Histórico de movimentações deste item"
                             >
                               <History className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleOpenEditStock(item)}
-                              className="p-1.5 text-slate-500 hover:text-brand-700 hover:bg-brand-50 rounded-lg transition-colors"
-                              title="Editar Saldo e Mínimo"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={() => handleDeleteStock(item)}
@@ -656,12 +665,12 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
           <table className="w-full text-left text-xs border-collapse">
             <thead className="bg-[#f8f9ff] border-b border-[#e2e8f0] text-[11px] font-mono font-semibold uppercase text-slate-500 tracking-wider">
               <tr>
-                <th className="py-3 px-4">Loja / Unidade</th>
+                {!hideLoja && <th className="py-3 px-4">Loja / Unidade</th>}
                 <th className="py-3 px-4">SKU</th>
                 <th className="py-3 px-4">Produto</th>
                 <th className="py-3 px-4 text-center">Saldo Atual</th>
                 <th className="py-3 px-4 text-center">Estoque Mínimo</th>
-                <th className="py-3 px-4 text-center">Situação</th>
+                {!hideSituacao && <th className="py-3 px-4 text-center">Situação</th>}
                 <th className="py-3 px-4 text-right print:hidden">Ações</th>
               </tr>
             </thead>
@@ -675,7 +684,7 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
                       onClick={() => toggleGroup(group.label)}
                       className="bg-emerald-50 hover:bg-emerald-100/80 cursor-pointer transition-colors"
                     >
-                      <td colSpan={7} className="py-2 px-4 text-[11px] font-mono font-bold uppercase tracking-wider text-slate-700">
+                      <td colSpan={visibleColumnCount} className="py-2 px-4 text-[11px] font-mono font-bold uppercase tracking-wider text-slate-700">
                         <span className="inline-flex items-center gap-1.5">
                           {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                           <span>{group.label} ({group.items.length})</span>
@@ -689,13 +698,26 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
                     const isLow = item.quantidadeAtual <= item.quantidadeMinima;
                     const reservado = reservedMap.get(stockReservationKey(item.unidadeId, item.produtoId)) || 0;
                     const disponivel = Math.max(0, item.quantidadeAtual - reservado);
+                    const isEditingRow = isStockModalOpen && editingStockId === item.id;
 
                     return (
-                      <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
+                      <tr
+                        key={item.id}
+                        onClick={() => {
+                          if (canEdit) handleOpenEditStock(item);
+                        }}
+                        className={`transition-colors ${canEdit ? 'cursor-pointer ' : ''}${
+                          isEditingRow
+                            ? 'bg-brand-50/70 ring-1 ring-inset ring-brand-400 border-l-4 border-l-brand-600'
+                            : 'hover:bg-slate-50/80'
+                        }`}
+                      >
+                        {!hideLoja && (
                         <td className="py-3 px-4 font-semibold text-slate-900">
                           {unit?.tipo === 'CENTRAL' ? '🏭 ' : '🏪 '}
                           {unit?.nome || item.unidadeId}
                         </td>
+                        )}
                         <td className="py-3 px-4 font-mono font-bold text-slate-700">
                           {prod?.sku || '-'}
                         </td>
@@ -712,7 +734,10 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
                               {item.quantidadeAtual} {prod?.unidade || 'UN'}
                             </span>
                             {canEdit && (
-                            <div className="inline-flex flex-col items-center bg-slate-100 border border-slate-200 rounded-lg p-0.5 print:hidden">
+                            <div
+                              className="inline-flex flex-col items-center bg-slate-100 border border-slate-200 rounded-lg p-0.5 print:hidden"
+                              onClick={(e) => e.stopPropagation()}
+                            >
                               <button
                                 onClick={() => handleAdjustQuantity(item.id, 1)}
                                 className="px-2 py-0.5 text-slate-600 hover:text-black hover:bg-white rounded font-bold text-xs leading-none cursor-pointer transition-colors"
@@ -739,6 +764,7 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
                         <td className="py-3 px-4 text-center font-mono text-slate-500">
                           {item.quantidadeMinima} {prod?.unidade || 'UN'}
                         </td>
+                        {!hideSituacao && (
                         <td className="py-3 px-4 text-center">
                           {isLow ? (
                             <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200">
@@ -752,7 +778,8 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
                             </span>
                           )}
                         </td>
-                        <td className="py-3 px-4 text-right print:hidden">
+                        )}
+                        <td className="py-3 px-4 text-right print:hidden" onClick={(e) => e.stopPropagation()}>
                           {canEdit && (
                           <div className="inline-flex items-center gap-1.5">
                             <button
@@ -768,13 +795,6 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
                               aria-label="Histórico de movimentações deste item"
                             >
                               <History className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleOpenEditStock(item)}
-                              className="p-1.5 text-slate-500 hover:text-brand-700 hover:bg-brand-50 rounded-lg transition-colors"
-                              title="Editar Saldo e Mínimo"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={() => handleDeleteStock(item)}

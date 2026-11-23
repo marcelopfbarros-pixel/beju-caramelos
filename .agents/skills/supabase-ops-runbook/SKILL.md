@@ -46,3 +46,15 @@ Never apply strict `authenticated`-only RLS lockdown before operators can receiv
 1. **Passo A — Deploy Edge Functions**: Confirm `operator-auth` (`verify_jwt: false`) and `parse-whatsapp-order` (`verify_jwt: true`) are `ACTIVE`.
 2. **Passo B — Verify Live JWT Login**: Sign in on production (`https://juju-delivery-app.netlify.app`), confirm **"Sessão BD Ativa"** in the profile modal, and verify `auth.users` + `private.operador_credenciais.auth_user_id` linkage via `execute_sql`.
 3. **Passo C — Execute Final RLS Lockdown SQL**: Run the migration dropping legacy permissive policies and plaintext columns only after Passos A & B succeed, then audit `pg_policies`, `get_advisors(type: "security")`, and `information_schema.columns`.
+
+## 4. Syncing Postgres `CHECK` Constraints Before Adding Frontend Status/Enum Values
+
+Before introducing or renaming any status/enum literal in `src/types.ts` (such as adding `'CANCELADA'` to `ProductionStatus`), always verify the live database constraint first:
+1. Inspect existing `CHECK` constraints via MCP `execute_sql`:
+   ```sql
+   SELECT conname, pg_get_constraintdef(oid)
+   FROM pg_constraint
+   WHERE conrelid = 'public.<table_name>'::regclass AND contype = 'c';
+   ```
+2. Apply an explicit migration (`apply_migration` or Dashboard SQL Editor if MCP auto-cancels) updating the constraint to allow the new value, and re-run the `pg_constraint` query to confirm.
+3. Keep `supabase/schema.sql` synchronized with the live constraint definition before modifying frontend screens.

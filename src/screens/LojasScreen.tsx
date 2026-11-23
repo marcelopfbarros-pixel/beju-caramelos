@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { StoreUnit, Product, Category, StockItem, Order } from '../types';
-import { Building2, Plus, Phone, MapPin, Edit2, X, CheckCircle, Shield, Printer, LayoutGrid, List, Layers, Filter, Search, Loader2, ClipboardList, AlertTriangle, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
+import { Building2, Plus, Phone, MapPin, X, CheckCircle, Shield, Printer, LayoutGrid, List, Layers, Filter, Search, Loader2, ClipboardList, AlertTriangle, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
 import { PrintReportHeader } from '../components/PrintReportHeader';
 import { HybridFilterSort } from '../components/HybridFilterSort';
 import { useExpandedGroups } from '../hooks/useExpandedGroups';
@@ -256,6 +256,10 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
       .map(([label, items]) => ({ label, items }))
       .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
   }, [filteredUnits, groupBy]);
+
+  const hideTipo = groupBy === 'TIPO';
+  const hideStatus = groupBy === 'STATUS';
+  const visibleColumnCount = 7 - (hideTipo ? 1 : 0) - (hideStatus ? 1 : 0);
   const [editingUnit, setEditingUnit] = useState<Partial<StoreUnit>>({
     codigo: `LOJA-0${units.length}`,
     nome: '',
@@ -625,10 +629,10 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
               <tr>
                 <th className="py-3 px-4">Código</th>
                 <th className="py-3 px-4">Nome</th>
-                <th className="py-3 px-4">Tipo</th>
+                {!hideTipo && <th className="py-3 px-4">Tipo</th>}
                 <th className="py-3 px-4">Endereço / Cidade</th>
                 <th className="py-3 px-4">Telefone</th>
-                <th className="py-3 px-4">Status</th>
+                {!hideStatus && <th className="py-3 px-4">Status</th>}
                 <th className="py-3 px-4 text-right print:hidden">Ações</th>
               </tr>
             </thead>
@@ -642,7 +646,7 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                       onClick={() => toggleGroup(group.label)}
                       className="bg-emerald-50 hover:bg-emerald-100/80 cursor-pointer transition-colors"
                     >
-                      <td colSpan={7} className="py-2 px-4 text-[11px] font-mono font-bold uppercase tracking-wider text-slate-700">
+                      <td colSpan={visibleColumnCount} className="py-2 px-4 text-[11px] font-mono font-bold uppercase tracking-wider text-slate-700">
                         <span className="inline-flex items-center gap-1.5">
                           {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                           <span>{group.label} ({group.items.length})</span>
@@ -650,11 +654,26 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                       </td>
                     </tr>
                   )}
-                  {expanded && group.items.map(u => (
-                    <tr key={u.id} className="hover:bg-slate-50/70 transition-colors">
+                  {expanded && group.items.map(u => {
+                    const isEditingRow = isModalOpen && editingUnit.id === u.id;
+                    return (
+                    <tr
+                      key={u.id}
+                      onClick={() => {
+                        if (canManage) {
+                          setEditingUnit(u);
+                          setIsModalOpen(true);
+                        }
+                      }}
+                      className={`transition-colors ${canManage ? 'cursor-pointer ' : ''}${
+                        isEditingRow
+                          ? 'bg-brand-50/70 ring-1 ring-inset ring-brand-400 border-l-4 border-l-brand-600'
+                          : 'hover:bg-slate-50/70'
+                      }`}
+                    >
                       <td className="py-3 px-4 font-mono font-bold text-slate-800">{u.codigo}</td>
                       <td className="py-3 px-4 font-semibold text-slate-900">{u.nome}</td>
-                      <td className="py-3 px-4">{u.tipo}</td>
+                      {!hideTipo && <td className="py-3 px-4">{u.tipo}</td>}
                       <td className="py-3 px-4 text-slate-600">
                         <div>{u.endereco}, {u.cidade}</div>
                         {u.cep && (
@@ -662,7 +681,8 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                         )}
                       </td>
                       <td className="py-3 px-4 font-mono text-slate-700">{u.telefone || '—'}</td>
-                      <td className="py-3 px-4">
+                      {!hideStatus && (
+                      <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
                         <button
                           type="button"
                           disabled={!canManage}
@@ -685,7 +705,8 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                           {u.ativo ? 'Ativa' : 'Inativa'}
                         </button>
                       </td>
-                      <td className="py-3 px-4 text-right print:hidden">
+                      )}
+                      <td className="py-3 px-4 text-right print:hidden" onClick={(e) => e.stopPropagation()}>
                         <div className="inline-flex items-center gap-1">
                           <button
                             onClick={() => openProductsModal(u)}
@@ -703,22 +724,11 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                             <RefreshCw className="w-3.5 h-3.5" />
                             <span>Reposição</span>
                           </button>
-                          {canManage && (
-                          <button
-                            onClick={() => {
-                              setEditingUnit(u);
-                              setIsModalOpen(true);
-                            }}
-                            className="p-1.5 text-slate-500 hover:text-brand-700 hover:bg-brand-50 rounded-lg transition-colors"
-                            title="Editar Loja"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          )}
                         </div>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </React.Fragment>
                 );
               })}
@@ -749,10 +759,24 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                 )}
                 {expanded && (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {group.items.map(unit => (
+                  {group.items.map(unit => {
+                    const isEditingCard = isModalOpen && editingUnit.id === unit.id;
+                    return (
                     <div
                       key={unit.id}
-                      className="bg-white border border-[#e2e8f0] rounded-xl p-4 sm:p-5 shadow-xs flex flex-col justify-between hover:border-brand-500 transition-colors min-w-0 overflow-hidden"
+                      onClick={() => {
+                        if (canManage) {
+                          setEditingUnit(unit);
+                          setIsModalOpen(true);
+                        }
+                      }}
+                      className={`border rounded-xl p-4 sm:p-5 shadow-xs flex flex-col justify-between transition-colors min-w-0 overflow-hidden ${
+                        canManage ? 'cursor-pointer hover:border-brand-500 ' : ''
+                      }${
+                        isEditingCard
+                          ? 'bg-brand-50/70 border-brand-400 ring-2 ring-brand-500 shadow-md'
+                          : 'bg-white border-[#e2e8f0]'
+                      }`}
                     >
                       <div className="space-y-3">
                         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -768,10 +792,14 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                             </div>
                           </div>
 
+                          {!hideStatus && (
                           <button
                             type="button"
                             disabled={!canManage}
-                            onClick={() => canManage && onSaveUnit({ ...unit, ativo: !unit.ativo })}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (canManage) onSaveUnit({ ...unit, ativo: !unit.ativo });
+                            }}
                             title={
                               !canManage
                                 ? 'Somente leitura'
@@ -789,6 +817,7 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                           >
                             {unit.ativo ? 'Ativa' : 'Inativa'}
                           </button>
+                          )}
                         </div>
 
                         <div className="space-y-2 text-xs text-slate-600">
@@ -840,7 +869,7 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                         </div>
                       </div>
 
-                      <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-1.5 min-w-0">
+                      <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-1.5 min-w-0" onClick={(e) => e.stopPropagation()}>
                         <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                           <button
                             type="button"
@@ -861,24 +890,10 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                             <span>Reposição</span>
                           </button>
                         </div>
-
-                        <div className="flex items-center gap-1 shrink-0 ml-auto">
-                          {canManage && (
-                          <button
-                            onClick={() => {
-                              setEditingUnit(unit);
-                              setIsModalOpen(true);
-                            }}
-                            className="p-1.5 text-slate-500 hover:text-brand-700 hover:bg-brand-50 rounded-lg transition-colors"
-                            title="Editar Loja"
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </button>
-                          )}
-                        </div>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 )}
               </div>

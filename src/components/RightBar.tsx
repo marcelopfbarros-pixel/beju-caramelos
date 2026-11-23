@@ -337,7 +337,7 @@ Obrigado por escolher a Beju Caramelos! ✨`
 
   if (isCollapsed && !isMobileDrawer && !isMobileScreen) {
     return (
-      <aside className="hidden lg:flex w-12 bg-white border-l border-[#e2e8f0] flex-col items-center py-3 gap-4 shrink-0 h-[calc(100vh-4rem)] transition-all duration-200 print:hidden">
+      <aside className="hidden lg:flex w-12 bg-white border-l border-[#e2e8f0] flex-col items-center py-3 gap-4 shrink-0 h-full transition-all duration-200 print:hidden">
         <button
           onClick={() => setIsCollapsed(false)}
           title="Expandir Painel Lateral"
@@ -380,10 +380,10 @@ Obrigado por escolher a Beju Caramelos! ✨`
           ? 'w-full flex-1 h-full bg-white flex flex-col justify-between overflow-y-auto print:hidden'
           : isMobileDrawer
           ? 'w-full h-full bg-white flex flex-col justify-between overflow-y-auto print:hidden'
-          : 'hidden lg:flex w-80 bg-white border-l border-[#e2e8f0] flex-col justify-between shrink-0 h-[calc(100vh-4rem)] overflow-y-auto transition-all duration-200 print:hidden'
+          : 'hidden lg:flex w-72 2xl:w-80 bg-white border-l border-[#e2e8f0] flex-col justify-between shrink-0 h-full overflow-y-auto transition-all duration-200 print:hidden'
       }
     >
-      <div className="p-4 space-y-4">
+      <div className="p-3 2xl:p-4 space-y-3.5">
         {/* Top Header with Tabs: Indicadores | Ferramentas */}
         <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-200">
           <div className="grid grid-cols-2 flex-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
@@ -688,7 +688,7 @@ Obrigado por escolher a Beju Caramelos! ✨`
                 onClick={() =>
                   setExpandedTool(prev => (prev === 'WHATSAPP' ? null : 'WHATSAPP'))
                 }
-                className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100/80 transition-colors cursor-pointer text-left"
+                className="w-full flex items-center justify-between gap-2 px-3 py-2.5 bg-emerald-50 hover:bg-emerald-100/80 transition-colors cursor-pointer text-left"
               >
                 <button
                   type="button"
@@ -721,7 +721,7 @@ Obrigado por escolher a Beju Caramelos! ✨`
                             onSelectOrder?.(chosen);
                           }
                         }}
-                        className="appearance-none text-[10px] font-mono font-bold pl-2.5 pr-5 py-0.5 rounded-full bg-brand-50 text-brand-700 border border-brand-200 cursor-pointer focus:outline-none focus:ring-1 focus:ring-brand-500 max-w-[120px] truncate"
+                        className="appearance-none text-[10px] font-mono font-bold pl-2.5 pr-5 py-0.5 rounded-full bg-brand-50 text-brand-700 border border-brand-200 cursor-pointer focus:outline-none focus:ring-1 focus:ring-brand-500 max-w-[104px] 2xl:max-w-[120px] truncate"
                       >
                         {selectableOrders.map(o => (
                           <option key={o.id} value={o.id}>

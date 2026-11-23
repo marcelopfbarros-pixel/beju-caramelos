@@ -6,7 +6,6 @@ import {
   Upload, 
   Search, 
   Tag, 
-  Edit2, 
   Trash2, 
   Check, 
   X, 
@@ -149,6 +148,11 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
       .map(([label, items]) => ({ label, items }))
       .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
   }, [filteredProducts, groupBy, categories]);
+
+  const hideCategoria = groupBy === 'CATEGORIA';
+  const hideStatus = groupBy === 'STATUS';
+  const hideUnidade = groupBy === 'UNIDADE';
+  const visibleColumnCount = 7 - (hideCategoria ? 1 : 0) - (hideStatus ? 1 : 0);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -398,17 +402,17 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
                 <tr className="bg-slate-50/90 border-b border-slate-200 text-[11px] font-mono uppercase tracking-wider text-slate-500">
                   <th className="py-3 px-4 font-semibold">SKU</th>
                   <th className="py-3 px-4 font-semibold">Produto</th>
-                  <th className="py-3 px-4 font-semibold">Categoria</th>
+                  {!hideCategoria && <th className="py-3 px-4 font-semibold">Categoria</th>}
                   <th className="py-3 px-4 font-semibold text-right">Preço Unitário</th>
                   <th className="py-3 px-4 font-semibold text-center">Tempo Prep.</th>
-                  <th className="py-3 px-4 font-semibold text-center">Status</th>
+                  {!hideStatus && <th className="py-3 px-4 font-semibold text-center">Status</th>}
                   <th className="py-3 px-4 font-semibold text-right print:hidden">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs">
                 {filteredProducts.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="py-10 text-center text-slate-400">
+                    <td colSpan={visibleColumnCount} className="py-10 text-center text-slate-400">
                       Nenhum produto encontrado.
                     </td>
                   </tr>
@@ -422,7 +426,7 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
                           onClick={() => toggleGroup(group.label)}
                           className="bg-emerald-50 hover:bg-emerald-100/80 cursor-pointer transition-colors"
                         >
-                          <td colSpan={7} className="py-2 px-4 text-[11px] font-mono font-bold uppercase tracking-wider text-slate-700">
+                          <td colSpan={visibleColumnCount} className="py-2 px-4 text-[11px] font-mono font-bold uppercase tracking-wider text-slate-700">
                             <span className="inline-flex items-center gap-1.5">
                               {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                               <span>{group.label} ({group.items.length})</span>
@@ -432,8 +436,22 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
                       )}
                       {expanded && group.items.map(prod => {
                         const cat = categories.find(c => c.id === prod.categoriaId);
+                        const isEditingRow = isProductModalOpen && editingProduct.id === prod.id;
                         return (
-                          <tr key={prod.id} className="hover:bg-slate-50/70 transition-colors">
+                          <tr
+                            key={prod.id}
+                            onClick={() => {
+                              if (canEdit) {
+                                setEditingProduct(prod);
+                                setIsProductModalOpen(true);
+                              }
+                            }}
+                            className={`transition-colors ${canEdit ? 'cursor-pointer ' : ''}${
+                              isEditingRow
+                                ? 'bg-brand-50/70 ring-1 ring-inset ring-brand-400 border-l-4 border-l-brand-600'
+                                : 'hover:bg-slate-50/70'
+                            }`}
+                          >
                             <td className="py-3 px-4 font-mono text-slate-600 font-semibold">{prod.sku}</td>
                             <td className="py-3 px-4">
                               <div className="flex items-center gap-2.5">
@@ -445,19 +463,22 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
                                 <span className="font-bold text-slate-900">{prod.descricao}</span>
                               </div>
                             </td>
+                            {!hideCategoria && (
                             <td className="py-3 px-4">
                               <span className="text-[11px] font-medium text-brand-700 bg-brand-50 border border-brand-200/60 px-2 py-0.5 rounded-full">
                                 {cat?.nome || 'Sobremesas'}
                               </span>
                             </td>
+                            )}
                             <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
                               R$ {formatCurrencyBR(prod.precoUnitario)}
-                              <span className="text-[10px] font-normal text-slate-500 ml-1">/{prod.unidade}</span>
+                              {!hideUnidade && <span className="text-[10px] font-normal text-slate-500 ml-1">/{prod.unidade}</span>}
                             </td>
                             <td className="py-3 px-4 text-center font-mono text-slate-600">
                               {prod.tempoProducaoMinutos} min
                             </td>
-                            <td className="py-3 px-4 text-center">
+                            {!hideStatus && (
+                            <td className="py-3 px-4 text-center" onClick={(e) => e.stopPropagation()}>
                               <button
                                 type="button"
                                 disabled={!canEdit}
@@ -480,19 +501,10 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
                                 {prod.ativo ? 'Ativo' : 'Inativo'}
                               </button>
                             </td>
-                            <td className="py-3 px-4 text-right print:hidden">
+                            )}
+                            <td className="py-3 px-4 text-right print:hidden" onClick={(e) => e.stopPropagation()}>
                               {canEdit && (
                               <div className="inline-flex items-center gap-1">
-                                <button
-                                  onClick={() => {
-                                    setEditingProduct(prod);
-                                    setIsProductModalOpen(true);
-                                  }}
-                                  className="p-1.5 text-slate-500 hover:text-brand-700 hover:bg-brand-50 rounded-lg transition-colors"
-                                  title="Editar Produto"
-                                >
-                                  <Edit2 className="w-3.5 h-3.5" />
-                                </button>
                                 <button
                                   onClick={() => {
                                     if (confirm(`Deseja excluir o produto "${prod.descricao}"?`)) {
@@ -542,10 +554,23 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
                 {group.items.map(prod => {
                   const cat = categories.find(c => c.id === prod.categoriaId);
+                  const isEditingCard = isProductModalOpen && editingProduct.id === prod.id;
                   return (
                     <div
                       key={prod.id}
-                      className="bg-white border border-[#e2e8f0] rounded-xl min-w-0 overflow-hidden shadow-xs hover:shadow-sm transition-all flex flex-col justify-between"
+                      onClick={() => {
+                        if (canEdit) {
+                          setEditingProduct(prod);
+                          setIsProductModalOpen(true);
+                        }
+                      }}
+                      className={`border rounded-xl min-w-0 overflow-hidden shadow-xs hover:shadow-sm transition-all flex flex-col justify-between ${
+                        canEdit ? 'cursor-pointer hover:border-brand-400 ' : ''
+                      }${
+                        isEditingCard
+                          ? 'bg-brand-50/70 border-brand-400 ring-2 ring-brand-500 shadow-md'
+                          : 'bg-white border-[#e2e8f0]'
+                      }`}
                     >
                       <div>
                         {/* Image container */}
@@ -564,14 +589,21 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
 
                         {/* Body Content */}
                         <div className="p-2.5">
+                          {(!hideCategoria || !hideStatus) && (
                           <div className="flex items-center flex-wrap gap-1 mb-1">
+                            {!hideCategoria && (
                             <span className="text-[9px] font-medium text-brand-700 bg-brand-50 border border-brand-200/60 px-1.5 py-0.5 rounded-full inline-block">
                               {cat?.nome || 'Sobremesas'}
                             </span>
+                            )}
+                            {!hideStatus && (
                             <button
                               type="button"
                               disabled={!canEdit}
-                              onClick={() => canEdit && onSaveProduct({ ...prod, ativo: !prod.ativo })}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (canEdit) onSaveProduct({ ...prod, ativo: !prod.ativo });
+                              }}
                               title={
                                 !canEdit
                                   ? 'Somente leitura'
@@ -589,7 +621,9 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
                             >
                               {prod.ativo ? 'Ativo' : 'Inativo'}
                             </button>
+                            )}
                           </div>
+                          )}
                           <h3 className="text-[11px] font-bold text-slate-900 line-clamp-2 leading-tight">
                             {prod.descricao}
                           </h3>
@@ -602,22 +636,12 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
                           <span className="text-[9px] text-slate-400 block">Preço</span>
                           <span className="text-xs font-mono font-bold text-slate-900">
                             R$ {formatCurrencyBR(prod.precoUnitario)}
-                            <span className="text-[9px] font-normal text-slate-500 ml-0.5">/{prod.unidade}</span>
+                            {!hideUnidade && <span className="text-[9px] font-normal text-slate-500 ml-0.5">/{prod.unidade}</span>}
                           </span>
                         </div>
 
                         {canEdit && (
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => {
-                              setEditingProduct(prod);
-                              setIsProductModalOpen(true);
-                            }}
-                            className="p-1.5 text-slate-500 hover:text-brand-700 hover:bg-brand-50 rounded-lg transition-colors"
-                            title="Editar Produto"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
+                        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                           <button
                             onClick={() => {
                               if (confirm(`Deseja excluir o produto "${prod.descricao}"?`)) {

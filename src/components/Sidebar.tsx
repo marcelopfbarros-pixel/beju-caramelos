@@ -22,7 +22,7 @@ interface SidebarProps {
   currentScreen: ScreenId;
   onNavigate: (screen: ScreenId) => void;
   userRole?: UserProfile['role'];
-  pendingOrdersCount: number;
+  confirmedOrdersCount: number;
   itemsToProduceCount: number;
   lowStockCount: number;
   pendingDeliveriesCount: number;
@@ -34,7 +34,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   currentScreen,
   onNavigate,
   userRole = 'ADMIN',
-  pendingOrdersCount,
+  confirmedOrdersCount,
   itemsToProduceCount,
   lowStockCount,
   pendingDeliveriesCount,
@@ -60,7 +60,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'pedidos' as ScreenId,
       label: 'Pedidos',
       icon: ShoppingBag,
-      badge: pendingOrdersCount,
+      badge: confirmedOrdersCount,
       badgeColor: 'bg-amber-100 text-amber-800 border-amber-200'
     },
     {

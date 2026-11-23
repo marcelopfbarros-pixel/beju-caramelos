@@ -9,7 +9,7 @@ import {
   ProductionShift, 
   ProductionStatus 
 } from '../types';
-import { ChefHat, Clock, Download, ArrowRight, ChevronLeft, ChevronRight, ChevronDown, Plus, X, Save, Trash2, Edit3, Printer, LayoutGrid, Table as TableIcon } from 'lucide-react';
+import { ChefHat, Clock, Download, ArrowRight, ChevronRight, ChevronDown, Plus, X, Save, Trash2, Printer, LayoutGrid, Table as TableIcon } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { PrintReportHeader } from '../components/PrintReportHeader';
 import { HybridFilterSort } from '../components/HybridFilterSort';
@@ -70,7 +70,7 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
   onUpdateOrderStatus
 }) => {
   const canEdit = canEditProduction(userRole);
-  const [selectedDateFilter, setSelectedDateFilter] = useState<'TODAS' | 'HOJE' | 'AMANHA'>('TODAS');
+  const [selectedDateFilter, setSelectedDateFilter] = useState<'PROXIMOS_7_DIAS' | 'TODAS' | 'HOJE' | 'AMANHA'>('PROXIMOS_7_DIAS');
   const [selectedShift, setSelectedShift] = useState<'TODOS' | ProductionShift>('TODOS');
   const [sortBy, setSortBy] = useState<'DATA_TURNO_ASC' | 'DATA_TURNO_DESC' | 'QTD_DESC' | 'PRODUTO_ASC'>('DATA_TURNO_ASC');
   const [groupBy, setGroupBy] = useState<'NENHUM' | 'TURNO_DATA' | 'PRODUTO'>('TURNO_DATA');
@@ -94,6 +94,11 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
     const t = new Date();
     t.setDate(t.getDate() + 1);
     return getLocalDateKey(t.toISOString());
+  }, []);
+  const next7DaysEndKey = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    return getLocalDateKey(d.toISOString());
   }, []);
 
   const prodMap = useMemo(() => new Map(products.map(p => [p.id, p])), [products]);
@@ -222,6 +227,9 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
         const matchesShift = selectedShift === 'TODOS' || item.turno === selectedShift;
         const matchesDate =
           selectedDateFilter === 'TODAS' ||
+          (selectedDateFilter === 'PROXIMOS_7_DIAS' &&
+            item.dataProducao >= todayKey &&
+            item.dataProducao <= next7DaysEndKey) ||
           (selectedDateFilter === 'HOJE' && item.dataProducao === todayKey) ||
           (selectedDateFilter === 'AMANHA' && item.dataProducao === tomorrowKey);
         return matchesShift && matchesDate;
@@ -242,7 +250,7 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
         }
         return a.descricao.localeCompare(b.descricao, 'pt-BR');
       });
-  }, [allConsolidatedItems, selectedShift, selectedDateFilter, sortBy, todayKey, tomorrowKey]);
+  }, [allConsolidatedItems, selectedShift, selectedDateFilter, sortBy, todayKey, tomorrowKey, next7DaysEndKey]);
 
   const [editingItem, setEditingItem] = useState<ConsolidatedProductionItem | null>(null);
   const [editForm, setEditForm] = useState<{
@@ -276,6 +284,19 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
     });
   };
 
+  const deriveBatchStatus = (statuses: ProductionStatus[]): ProductionStatus => {
+    if (statuses.length > 0 && statuses.every(st => st === 'CANCELADA')) {
+      return 'CANCELADA';
+    }
+    if (statuses.length > 0 && statuses.every(st => st === 'CONCLUIDA' || st === 'CANCELADA')) {
+      return 'CONCLUIDA';
+    }
+    if (statuses.some(st => st === 'EM_PREPARO' || st === 'CONCLUIDA')) {
+      return 'EM_PREPARO';
+    }
+    return 'PLANEJADA';
+  };
+
   const handleSaveEditModal = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingItem) return;
@@ -300,14 +321,15 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
               }
             : it
         );
-        const allDone = updatedItens.every(it => nextItemStatuses[it.produtoId] === 'CONCLUIDA');
-        const anyProg = updatedItens.some(it => ['EM_PREPARO', 'CONCLUIDA'].includes(nextItemStatuses[it.produtoId] || ''));
+        const batchManualStatus = deriveBatchStatus(
+          updatedItens.map(it => nextItemStatuses[it.produtoId] || 'PLANEJADA')
+        );
         onSaveProductionOrder({
           ...po,
           dataProducao: editForm.dataProducao,
           turno: editForm.turno,
           observacoes: editForm.observacoes,
-          status: allDone ? 'CONCLUIDA' : anyProg ? 'EM_PREPARO' : 'PLANEJADA',
+          status: batchManualStatus,
           itemStatuses: nextItemStatuses,
           itens: updatedItens
         });
@@ -341,12 +363,22 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
           quantidadeProduzida: editForm.status === 'CONCLUIDA' ? editForm.quantidadeTotal : 0
         });
       }
+      const batchConsolidatedStatus = deriveBatchStatus(
+        updatedItens.map(
+          it =>
+            it.produtoId === editingItem.produtoId
+              ? editForm.status
+              : nextItemStatuses[it.produtoId] ||
+                itemsInBatch.find(b => b.produtoId === it.produtoId)?.status ||
+                'PLANEJADA'
+        )
+      );
       onSaveProductionOrder({
         id: existingPO?.id || `op-${Date.now()}`,
         codigoOrdem: existingPO?.codigoOrdem || codigoOrdem,
         dataProducao: editForm.dataProducao,
         turno: editForm.turno,
-        status: editForm.status,
+        status: batchConsolidatedStatus,
         unidadeId: centralUnitId,
         observacoes: editForm.observacoes || existingPO?.observacoes || `Lote consolidado ${editForm.turno} (${editForm.dataProducao})`,
         itemStatuses: nextItemStatuses,
@@ -357,7 +389,7 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
     setEditingItem(null);
   };
 
-  const STAGE_FLOW: ProductionStatus[] = ['PLANEJADA', 'EM_PREPARO', 'CONCLUIDA'];
+  const STAGE_FLOW: ProductionStatus[] = ['PLANEJADA', 'EM_PREPARO', 'CONCLUIDA', 'CANCELADA'];
 
   const handleChangeStage = (targetItem: ConsolidatedProductionItem, nextStatus: ProductionStatus) => {
     if (targetItem.status === nextStatus) return;
@@ -381,11 +413,12 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
           ? { ...it, quantidadeProduzida: nextStatus === 'CONCLUIDA' ? it.quantidadePlanejada : 0 }
           : it
       );
-      const allDone = updatedItens.every(it => manualStatuses[it.produtoId] === 'CONCLUIDA');
-      const anyProg = updatedItens.some(it => ['EM_PREPARO', 'CONCLUIDA'].includes(manualStatuses[it.produtoId] || ''));
+      const manualBatchStatus = deriveBatchStatus(
+        updatedItens.map(it => manualStatuses[it.produtoId] || 'PLANEJADA')
+      );
       onSaveProductionOrder({
         ...po,
-        status: allDone ? 'CONCLUIDA' : anyProg ? 'EM_PREPARO' : 'PLANEJADA',
+        status: manualBatchStatus,
         itemStatuses: manualStatuses,
         itens: updatedItens
       });
@@ -408,19 +441,11 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
     };
     nextItemStatuses[targetItem.produtoId] = nextStatus;
 
-    const allBatchDone = itemsInBatch.every(
-      i => (i.produtoId === targetItem.produtoId ? nextStatus : nextItemStatuses[i.produtoId] || i.status) === 'CONCLUIDA'
+    const batchStatus = deriveBatchStatus(
+      itemsInBatch.map(i =>
+        i.produtoId === targetItem.produtoId ? nextStatus : nextItemStatuses[i.produtoId] || i.status
+      )
     );
-    const anyInProgress = itemsInBatch.some(i => {
-      const st = i.produtoId === targetItem.produtoId ? nextStatus : nextItemStatuses[i.produtoId] || i.status;
-      return st === 'EM_PREPARO' || st === 'CONCLUIDA';
-    });
-
-    const batchStatus: ProductionStatus = allBatchDone
-      ? 'CONCLUIDA'
-      : anyInProgress
-      ? 'EM_PREPARO'
-      : 'PLANEJADA';
 
     if (existingPO || targetItem.pedidosVinculados.length > 0 || matchingManualOrders.length === 0) {
       const updatedPO: ProductionOrder = {
@@ -561,34 +586,46 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
   const statusConfig: Record<ProductionStatus, { label: string; color: string }> = {
     PLANEJADA: { label: 'Planejada', color: 'bg-slate-100 text-slate-700 border-slate-300' },
     EM_PREPARO: { label: 'Em Preparo', color: 'bg-amber-100 text-amber-800 border-amber-300' },
-    CONCLUIDA: { label: 'Concluída', color: 'bg-emerald-100 text-emerald-800 border-emerald-300' }
+    CONCLUIDA: { label: 'Concluída', color: 'bg-emerald-100 text-emerald-800 border-emerald-300' },
+    CANCELADA: { label: 'Cancelada', color: 'bg-red-100 text-red-800 border-red-300' }
+  };
+
+  const STORE_BADGE_PALETTE = [
+    'bg-amber-100 text-amber-900 border-amber-300',
+    'bg-rose-100 text-rose-900 border-rose-300',
+    'bg-indigo-100 text-indigo-900 border-indigo-300',
+    'bg-emerald-100 text-emerald-900 border-emerald-300',
+    'bg-purple-100 text-purple-900 border-purple-300',
+    'bg-cyan-100 text-cyan-900 border-cyan-300',
+    'bg-orange-100 text-orange-900 border-orange-300',
+    'bg-teal-100 text-teal-900 border-teal-300'
+  ];
+
+  const getStoreBadgeClasses = (lojaName: string): string => {
+    const baseName = lojaName.replace(/\s*\(Manual\/Antec\.\)$/, '').trim();
+    let idx = units.findIndex(u => u.nome === baseName);
+    if (idx < 0) {
+      idx = Array.from(baseName).reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+    }
+    return STORE_BADGE_PALETTE[idx % STORE_BADGE_PALETTE.length];
   };
 
   const renderStageControl = (item: ConsolidatedProductionItem) => {
-    const idx = STAGE_FLOW.indexOf(item.status);
-    const prevStage = idx > 0 ? STAGE_FLOW[idx - 1] : null;
-    const nextStage = idx >= 0 && idx < STAGE_FLOW.length - 1 ? STAGE_FLOW[idx + 1] : null;
     const stInfo = statusConfig[item.status];
 
     if (!canEdit) {
       return (
-        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold border print:hidden ${stInfo.color}`}>
+        <span
+          onClick={(e) => e.stopPropagation()}
+          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold border print:hidden ${stInfo.color}`}
+        >
           {stInfo.label}
         </span>
       );
     }
 
     return (
-      <div className="inline-flex items-center gap-0.5 print:hidden">
-        <button
-          type="button"
-          disabled={!prevStage}
-          onClick={() => prevStage && handleChangeStage(item, prevStage)}
-          title={prevStage ? `Voltar para ${statusConfig[prevStage].label}` : 'Primeiro estágio'}
-          className="p-0.5 rounded hover:bg-slate-200 text-slate-600 disabled:opacity-25 disabled:pointer-events-none transition-colors cursor-pointer"
-        >
-          <ChevronLeft className="w-3.5 h-3.5" />
-        </button>
+      <div className="inline-flex items-center print:hidden" onClick={(e) => e.stopPropagation()}>
         <select
           value={item.status}
           onChange={(e) => handleChangeStage(item, e.target.value as ProductionStatus)}
@@ -601,15 +638,6 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
             </option>
           ))}
         </select>
-        <button
-          type="button"
-          disabled={!nextStage}
-          onClick={() => nextStage && handleChangeStage(item, nextStage)}
-          title={nextStage ? `Avançar para ${statusConfig[nextStage].label}` : 'Último estágio'}
-          className="p-0.5 rounded hover:bg-slate-200 text-slate-600 disabled:opacity-25 disabled:pointer-events-none transition-colors cursor-pointer"
-        >
-          <ChevronRight className="w-3.5 h-3.5" />
-        </button>
       </div>
     );
   };
@@ -620,7 +648,9 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
     NOITE: 'Noite (18h+)'
   };
 
-  const totalUnitsToProduce = productionList.reduce((acc, i) => acc + i.quantidadeTotal, 0);
+  const totalUnitsToProduce = productionList
+    .filter(i => i.status !== 'CANCELADA')
+    .reduce((acc, i) => acc + i.quantidadeTotal, 0);
 
   const groupedProduction = useMemo(() => {
     if (groupBy === 'NENHUM') {
@@ -637,7 +667,7 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
           ? `${item.dataProducao.split('-').reverse().join('/')} — Turno ${item.turno}`
           : `${item.descricao} (${item.sku})`;
       const cur = map.get(key) || { key, label, totalQty: 0, items: [] };
-      cur.totalQty += item.quantidadeTotal;
+      cur.totalQty += item.status === 'CANCELADA' ? 0 : item.quantidadeTotal;
       cur.items.push(item);
       map.set(key, cur);
     });
@@ -652,6 +682,10 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
       return a.label.localeCompare(b.label, 'pt-BR');
     });
   }, [productionList, groupBy, totalUnitsToProduce]);
+
+  const hideTurnoData = groupBy === 'TURNO_DATA';
+  const hideProduto = groupBy === 'PRODUTO';
+  const visibleColumnCount = 7 - (hideTurnoData ? 1 : 0) - (hideProduto ? 1 : 0);
 
   return (
     <div className="flex-1 min-w-0 flex flex-col h-full bg-[#f8f9ff] overflow-hidden">
@@ -738,11 +772,12 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
           <HybridFilterSort
             dateLabel="Data:"
             dateValue={selectedDateFilter}
-            onDateChange={(v) => setSelectedDateFilter(v as 'TODAS' | 'HOJE' | 'AMANHA')}
+            onDateChange={(v) => setSelectedDateFilter(v as 'PROXIMOS_7_DIAS' | 'TODAS' | 'HOJE' | 'AMANHA')}
             dateOptions={[
-              { value: 'TODAS', label: 'Todas as Datas' },
+              { value: 'PROXIMOS_7_DIAS', label: 'Próximos 7 dias' },
               { value: 'HOJE', label: 'Hoje' },
-              { value: 'AMANHA', label: 'Amanhã' }
+              { value: 'AMANHA', label: 'Amanhã' },
+              { value: 'TODAS', label: 'Todas as Datas' }
             ]}
             filterLabel="Turno:"
             filterValue={selectedShift}
@@ -773,12 +808,18 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-3 sm:p-6">
+      <div
+        className={
+          viewMode === 'TABLE'
+            ? 'flex-1 min-h-0 min-w-0 flex flex-col p-2.5 sm:p-3 overflow-hidden'
+            : 'flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-2.5 sm:p-3'
+        }
+      >
         <div
           id="print-report-area"
           className={
             viewMode === 'TABLE'
-              ? 'bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-x-auto max-w-full'
+              ? 'bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-auto max-w-full max-h-full min-h-0 print:overflow-visible print:max-h-none'
               : 'hidden print:block bg-white'
           }
         >
@@ -794,22 +835,21 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
             }
           />
           <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50/90 border-b border-slate-200 text-[11px] font-mono uppercase tracking-wider text-slate-500">
-                <th className="py-3 px-4 font-semibold">Turno / Data</th>
-                <th className="py-3 px-4 font-semibold">Produto & SKU</th>
-                <th className="py-3 px-4 font-semibold">Categoria</th>
-                <th className="py-3 px-4 font-semibold text-center">Quantidade Total</th>
-                <th className="py-3 px-4 font-semibold">Distribuição (Lojas)</th>
-                <th className="py-3 px-4 font-semibold">Pedidos Origem</th>
-                <th className="py-3 px-4 font-semibold text-center">Estágio Cozinha</th>
-                <th className="py-3 px-4 font-semibold text-right print:hidden">Ação</th>
+            <thead className="sticky top-0 z-10 bg-slate-50/95 border-b border-slate-200 text-[10px] font-mono uppercase tracking-tight text-slate-500">
+              <tr>
+                {!hideTurnoData && <th className="py-2 px-2 font-semibold">Turno / Data</th>}
+                {!hideProduto && <th className="py-2 px-2 font-semibold">Produto & SKU</th>}
+                <th className="py-2 px-2 font-semibold">Categoria</th>
+                <th className="py-2 px-2 font-semibold text-center">Quantidade Total</th>
+                <th className="py-2 px-2 font-semibold">Destino</th>
+                <th className="py-2 px-2 font-semibold">Pedidos Origem</th>
+                <th className="py-2 px-2 font-semibold text-center">Estágio Cozinha</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-xs">
               {productionList.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-400">
+                  <td colSpan={visibleColumnCount} className="py-12 text-center text-slate-400">
                     <ChefHat className="w-8 h-8 mx-auto text-slate-300 mb-2" />
                     <p>Nenhuma demanda de produção para o filtro selecionado.</p>
                   </td>
@@ -824,13 +864,13 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
                         onClick={() => toggleGroup(group.key)}
                         className="bg-emerald-50 hover:bg-emerald-100/80 border-y border-emerald-200 cursor-pointer transition-colors"
                       >
-                        <td colSpan={8} className="py-2 px-4 font-bold text-slate-800 text-xs">
-                          <div className="flex items-center justify-between">
+                        <td colSpan={visibleColumnCount} className="py-2 px-3 font-bold text-slate-800 text-xs">
+                          <div className="flex items-center justify-between gap-2">
                             <span className="inline-flex items-center gap-1.5">
                               {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                               <span>{group.label}</span>
                             </span>
-                            <span className="font-mono text-[11px] text-slate-600">
+                            <span className="font-mono text-[11px] text-slate-600 whitespace-nowrap">
                               {group.items.length} lote(s) • Total: {group.totalQty} un.
                             </span>
                           </div>
@@ -840,16 +880,25 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
                     {expanded && group.items.map(item => {
                   const stInfo = statusConfig[item.status];
                   const hasReplenishment = item.pedidosVinculados.some(isReplenishmentOrder);
+                  const isEditingRow = editingItem?.key === item.key;
                   return (
                     <tr
                       key={item.key}
-                      className={`transition-colors ${
-                        hasReplenishment
+                      onClick={() => {
+                        if (canEdit) openEditModal(item);
+                      }}
+                      className={`transition-colors ${canEdit ? 'cursor-pointer ' : ''}${
+                        isEditingRow
+                          ? `bg-brand-50/70 ring-1 ring-inset ring-brand-400 border-l-4 ${
+                              hasReplenishment ? 'border-l-sky-500' : 'border-l-brand-600'
+                            }`
+                          : hasReplenishment
                           ? 'bg-sky-50/90 hover:bg-sky-100/70 border-l-4 border-l-sky-500'
                           : 'hover:bg-slate-50/60'
                       }`}
                     >
-                      <td className="py-3.5 px-4">
+                      {!hideTurnoData && (
+                      <td className="py-2 px-2 whitespace-nowrap">
                         <span className="font-mono font-bold text-slate-800 block">
                           {item.turno}
                         </span>
@@ -862,52 +911,54 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
                           </span>
                         )}
                       </td>
-                      <td className="py-3.5 px-4">
+                      )}
+                      {!hideProduto && (
+                      <td className="py-2 px-2">
                         <div className="font-semibold text-slate-900">{item.descricao}</div>
-                        <span className="font-mono text-[10px] text-slate-500">{item.sku}</span>
+                        <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                          <span className="font-mono text-[10px] text-slate-500">{item.sku}</span>
+                          {hideTurnoData && hasReplenishment && (
+                            <span className="inline-block px-1.5 py-0.5 rounded bg-sky-600 text-white text-[9px] font-bold uppercase tracking-wider">
+                              Reposição
+                            </span>
+                          )}
+                        </div>
                       </td>
-                      <td className="py-3.5 px-4">
-                        <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[11px] font-medium">
+                      )}
+                      <td className="py-2 px-2">
+                        <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-medium whitespace-nowrap">
                           {item.categoriaNome}
                         </span>
                       </td>
-                      <td className="py-3.5 px-4 text-center">
-                        <span className="text-sm font-bold font-mono text-brand-700 bg-brand-50 px-3 py-1 rounded-lg border border-brand-200">
+                      <td className="py-2 px-2 text-center whitespace-nowrap">
+                        <span className="text-xs font-bold font-mono text-brand-700 bg-brand-50 px-2.5 py-1 rounded-lg border border-brand-200">
                           {item.quantidadeTotal} {item.unidadeMedida}
                         </span>
                       </td>
-                      <td className="py-3.5 px-4">
+                      <td className="py-2 px-2 max-w-[170px]">
                         <div className="flex flex-wrap gap-1">
                           {item.lojasDestino.map((loja, i) => (
                             <span
                               key={i}
-                              className="text-[10px] px-2 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200 font-medium"
+                              className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold truncate max-w-[160px] ${getStoreBadgeClasses(loja)}`}
+                              title={loja}
                             >
                               {loja}
                             </span>
                           ))}
                         </div>
                       </td>
-                      <td className="py-3.5 px-4 font-mono text-[11px] text-slate-600">
+                      <td
+                        className="py-2 px-2 font-mono text-[10px] text-slate-600 max-w-[170px] truncate"
+                        title={item.pedidosVinculados.map(o => o.numeroPedido).join(', ')}
+                      >
                         {item.pedidosVinculados.map(o => o.numeroPedido).join(', ')}
                       </td>
-                      <td className="py-3.5 px-4 text-center">
+                      <td className="py-2 px-2 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                         {renderStageControl(item)}
                         <span className={`hidden print:inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold border ${stInfo.color}`}>
                           {stInfo.label}
                         </span>
-                      </td>
-                      <td className="py-3.5 px-4 text-right print:hidden">
-                        {canEdit && (
-                        <button
-                          onClick={() => openEditModal(item)}
-                          title="Editar"
-                          aria-label="Editar"
-                          className="inline-flex items-center justify-center p-1.5 text-slate-600 bg-white border border-slate-300 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors shadow-2xs cursor-pointer"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                        </button>
-                        )}
                       </td>
                     </tr>
                   );
@@ -935,13 +986,13 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
                     <button
                       type="button"
                       onClick={() => toggleGroup(group.key)}
-                      className="w-full flex items-center justify-between px-3 py-2 bg-slate-100 hover:bg-slate-200/70 rounded-lg border border-slate-200 text-xs font-bold text-slate-800 cursor-pointer transition-colors"
+                      className="w-full flex items-center justify-between gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200/70 rounded-lg border border-slate-200 text-xs font-bold text-slate-800 cursor-pointer transition-colors"
                     >
                       <span className="inline-flex items-center gap-1.5">
                         {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                         <span>{group.label}</span>
                       </span>
-                      <span className="font-mono text-[11px] text-slate-600">
+                      <span className="font-mono text-[11px] text-slate-600 whitespace-nowrap">
                         {group.items.length} lote(s) • Total: {group.totalQty} un.
                       </span>
                     </button>
@@ -951,51 +1002,69 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
                     {group.items.map(item => {
                       const stInfo = statusConfig[item.status];
                       const hasReplenishment = item.pedidosVinculados.some(isReplenishmentOrder);
+                      const isEditingRow = editingItem?.key === item.key;
                       return (
                         <div
                           key={item.key}
+                          onClick={() => {
+                            if (canEdit) openEditModal(item);
+                          }}
                           className={`border rounded-xl p-4 shadow-xs flex flex-col justify-between gap-3 min-w-0 overflow-hidden ${
-                            hasReplenishment
+                            canEdit ? 'cursor-pointer hover:border-brand-400 transition-colors ' : ''
+                          }${
+                            isEditingRow
+                              ? 'bg-brand-50/70 border-brand-400 ring-2 ring-brand-500 shadow-md'
+                              : hasReplenishment
                               ? 'bg-sky-50/90 border-sky-400 ring-1 ring-sky-200'
                               : 'bg-white border-[#e2e8f0]'
                           }`}
                         >
-                          <div className="flex items-start justify-between border-b border-slate-100 pb-2">
-                            <div>
-                              <div className="flex items-center gap-1.5">
-                                <span className="font-mono font-bold text-xs text-slate-900">{item.turno}</span>
-                                {hasReplenishment && (
-                                  <span className="px-1.5 py-0.5 rounded bg-sky-600 text-white text-[9px] font-bold uppercase">
-                                    Reposição
-                                  </span>
-                                )}
+                          <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-2">
+                            {hideTurnoData ? (
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="font-bold text-xs text-slate-900">{item.descricao}</span>
+                                  {hasReplenishment && (
+                                    <span className="px-1.5 py-0.5 rounded bg-sky-600 text-white text-[9px] font-bold uppercase">
+                                      Reposição
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="block text-[10px] font-mono text-slate-500">
+                                  {item.sku} • {item.categoriaNome}
+                                </span>
                               </div>
-                              <span className="block text-[10px] font-mono text-slate-500">{item.dataProducao.split('-').reverse().join('/')}</span>
-                            </div>
+                            ) : (
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="font-mono font-bold text-xs text-slate-900">{item.turno}</span>
+                                  {hasReplenishment && (
+                                    <span className="px-1.5 py-0.5 rounded bg-sky-600 text-white text-[9px] font-bold uppercase">
+                                      Reposição
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="block text-[10px] font-mono text-slate-500">{item.dataProducao.split('-').reverse().join('/')}</span>
+                              </div>
+                            )}
                             {renderStageControl(item)}
                             <span className={`hidden print:inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold border ${stInfo.color}`}>
                               {stInfo.label}
                             </span>
                           </div>
                           <div className="space-y-1 text-xs">
-                            <div className="font-bold text-slate-900">{item.descricao}</div>
-                            <div className="font-mono text-[10px] text-slate-500">{item.sku} • {item.categoriaNome}</div>
+                            {hideTurnoData ? null : hideProduto ? (
+                              <div className="font-mono text-[10px] text-slate-500">{item.categoriaNome}</div>
+                            ) : (
+                              <>
+                                <div className="font-bold text-slate-900">{item.descricao}</div>
+                                <div className="font-mono text-[10px] text-slate-500">{item.sku} • {item.categoriaNome}</div>
+                              </>
+                            )}
                             <div className="text-sm font-bold font-mono text-brand-700 pt-1">
                               {item.quantidadeTotal} {item.unidadeMedida}
                             </div>
                           </div>
-                          {canEdit && (
-                          <div className="pt-2 border-t border-slate-100 flex items-center justify-end">
-                            <button
-                              onClick={() => openEditModal(item)}
-                              title="Editar"
-                              aria-label="Editar"
-                              className="inline-flex items-center justify-center p-1.5 text-slate-600 bg-white border border-slate-300 hover:bg-slate-100 hover:text-slate-900 rounded-lg cursor-pointer"
-                            >
-                              <Edit3 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                          )}
                         </div>
                       );
                     })}
@@ -1216,6 +1285,7 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
                     <option value="PLANEJADA">Planejada</option>
                     <option value="EM_PREPARO">Em Preparo</option>
                     <option value="CONCLUIDA">Concluída</option>
+                    <option value="CANCELADA">Cancelada</option>
                   </select>
                 </div>
               </div>

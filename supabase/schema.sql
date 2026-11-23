@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS public.ordens_producao (
     codigo_ordem VARCHAR(30) UNIQUE NOT NULL, -- Ex: 'OP-20261114-M'
     data_producao DATE NOT NULL,
     turno VARCHAR(15) NOT NULL CHECK (turno IN ('MANHA', 'TARDE', 'NOITE')),
-    status VARCHAR(20) NOT NULL DEFAULT 'PLANEJADA' CHECK (status IN ('PLANEJADA', 'EM_PREPARO', 'DECORACAO', 'CONCLUIDA')),
+    status VARCHAR(20) NOT NULL DEFAULT 'PLANEJADA' CHECK (status IN ('PLANEJADA', 'EM_PREPARO', 'DECORACAO', 'CONCLUIDA', 'CANCELADA')),
     unidade_id UUID NOT NULL REFERENCES public.empresas_unidades(id) ON DELETE RESTRICT,
     observacoes TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

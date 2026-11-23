@@ -46,7 +46,7 @@ const SCREEN_TUTORIALS: Record<ScreenId, TutorialStep[]> = {
     },
     {
       title: 'Alterar Status com Confirmação',
-      description: 'Use os botões < / > ou o seletor na coluna Status para avançar ou voltar o pedido (com confirmação).',
+      description: 'Use a caixa de seleção na coluna Status para alterar o status do pedido (com confirmação) ou clique em um registro para abrir a edição.',
       findTarget: () => findVisible('main select[aria-label^="Alterar status"]') || findVisible('main table') || findVisible('main'),
     },
     {
@@ -63,12 +63,12 @@ const SCREEN_TUTORIALS: Record<ScreenId, TutorialStep[]> = {
     },
     {
       title: 'Filtrar Data e Turno',
-      description: 'Alterne entre Hoje, Amanhã, Todas ou escolha uma data específica para organizar a cozinha.',
+      description: 'Por padrão exibe os Próximos 7 dias; alterne entre Hoje, Amanhã ou Todas as Datas e filtre por turno.',
       findTarget: () => findInMainByText('button', 'Hoje') || findVisible('main input[type="date"]'),
     },
     {
       title: 'Alterar Estágio da Cozinha',
-      description: 'Avance ou volte entre Planejada, Em Preparo e Concluída. Ao concluir, o estoque é atualizado.',
+      description: 'Use a caixa de seleção em Estágio Cozinha para alternar entre Planejada, Em Preparo, Concluída e Cancelada, ou clique em um registro para editar.',
       findTarget: () => findVisible('main select[aria-label^="Estágio da cozinha"]') || findVisible('main table'),
     },
     {
@@ -107,8 +107,8 @@ const SCREEN_TUTORIALS: Record<ScreenId, TutorialStep[]> = {
     },
     {
       title: 'Abrir Roteiro no Mapa',
-      description: 'Clique em "Rota" para enviar as entregas selecionadas diretamente ao roteirizador na barra direita.',
-      findTarget: () => findInMainByText('button', 'Rota'),
+      description: 'Clique no botão de mapa para enviar as entregas selecionadas ao roteirizador na barra direita.',
+      findTarget: () => findVisible('main button[aria-label*="Roteiro"], main button[aria-label*="rota"]') || findVisible('main'),
     },
     {
       title: 'Filtrar por Status e Data',

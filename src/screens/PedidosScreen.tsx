@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { HybridFilterSort } from '../components/HybridFilterSort';
 import { CurrencyInput, formatCurrencyBR } from '../components/CurrencyInput';
 import { TimeSelect15 } from '../components/TimeSelect15';
@@ -47,7 +47,6 @@ import {
   Check, 
   X, 
   Trash2, 
-  ChevronLeft,
   ChevronRight,
   ChevronDown,
   Filter,
@@ -117,7 +116,6 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
   requestedStatusFilter,
   onSaveOrder,
   onDeleteOrder,
-  selectedOrderId,
   onSelectOrder,
   onSaveCustomer
 }) => {
@@ -169,6 +167,14 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
   const [selectedQtyToAdd, setSelectedQtyToAdd] = useState<number>(1);
   const [discountType, setDiscountType] = useState<'R$' | '%'>('R$');
   const [discountValue, setDiscountValue] = useState<number>(0);
+  const discountConfigRef = useRef<{ type: 'R$' | '%'; value: number }>({ type: 'R$', value: 0 });
+  const routeCalcRequestIdRef = useRef(0);
+
+  const updateDiscountConfig = (type: 'R$' | '%', value: number) => {
+    discountConfigRef.current = { type, value };
+    setDiscountType(type);
+    setDiscountValue(value);
+  };
   const [saveCustomerToBase, setSaveCustomerToBase] = useState<boolean>(true);
   const [showCustomerSuggestions, setShowCustomerSuggestions] = useState<boolean>(false);
 
@@ -235,8 +241,8 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
 
   // Calculate Order Totals dynamically
   const calculateTotals = (itens: OrderItem[], taxa: number, desc: number) => {
-    const subtotal = itens.reduce((acc, i) => acc + (i.quantidade * i.precoUnitario), 0);
-    const total = Math.max(0, subtotal + taxa - desc);
+    const subtotal = Number(itens.reduce((acc, i) => acc + i.quantidade * i.precoUnitario, 0).toFixed(2));
+    const total = Number(Math.max(0, subtotal + taxa - desc).toFixed(2));
     return { subtotal, total };
   };
 
@@ -408,10 +414,10 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
   const [routeCalcBadge, setRouteCalcBadge] = useState<string | null>(null);
 
   const handleOpenEditOrder = (order: Order) => {
+    routeCalcRequestIdRef.current += 1;
     setImportBanner(null);
     setRouteCalcBadge(null);
-    setDiscountType('R$');
-    setDiscountValue(order.desconto || 0);
+    updateDiscountConfig('R$', order.desconto || 0);
     setSelectedProdToAdd(products.find(p => p.ativo)?.id || '');
     setSelectedQtyToAdd(1);
     setEditingOrder({
@@ -434,18 +440,24 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
     addr: string,
     cep: string | undefined,
     itensToCalc?: OrderItem[],
-    preferExplicitUnitId?: string
+    preferExplicitUnitId?: string,
+    preserveExplicitFee?: number
   ) => {
     if (!addr.trim() && !(cep || '').replace(/\D/g, '')) return;
+    const requestId = ++routeCalcRequestIdRef.current;
     setRouteCalcBadge('Calculando loja mais próxima e taxa...');
     try {
       const res = await calculateNearestUnitAndDeliveryFee(addr, cep, units);
+      if (requestId !== routeCalcRequestIdRef.current) return;
+      const { type: activeDiscountType, value: activeDiscountValue } = discountConfigRef.current;
+      const resolvedFee = preserveExplicitFee !== undefined ? preserveExplicitFee : res.deliveryFee;
+
       setEditingOrder(prev => {
         const items = itensToCalc || prev.itens || [];
-        const subtotal = items.reduce((acc, i) => acc + i.quantidade * i.precoUnitario, 0);
-        const fee = prev.tipoEntrega === 'RETIRADA' ? 0 : res.deliveryFee;
-        const computedDesc = computeDiscountAmount(subtotal, discountType, discountValue);
-        const total = Math.max(0, subtotal + fee - computedDesc);
+        const fee = prev.tipoEntrega === 'RETIRADA' ? 0 : resolvedFee;
+        const rawSubtotal = Number(items.reduce((acc, i) => acc + i.quantidade * i.precoUnitario, 0).toFixed(2));
+        const computedDesc = computeDiscountAmount(rawSubtotal, activeDiscountType, activeDiscountValue);
+        const { subtotal, total } = calculateTotals(items, fee, computedDesc);
         return {
           ...prev,
           unidadeOrigemId: preferExplicitUnitId || res.nearestUnit?.id || prev.unidadeOrigemId,
@@ -456,21 +468,29 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
         };
       });
       setRouteCalcBadge(
-        `Loja mais próxima: ${res.nearestUnit?.nome} (~${res.distanceKm} km) • Taxa: R$ ${formatCurrencyBR(res.deliveryFee)}`
+        `Loja mais próxima: ${res.nearestUnit?.nome} (~${res.distanceKm} km) • Taxa: R$ ${formatCurrencyBR(resolvedFee)}`
       );
     } catch {
-      setRouteCalcBadge(null);
+      if (requestId === routeCalcRequestIdRef.current) {
+        setRouteCalcBadge(null);
+      }
     }
   };
 
   const handleWhatsAppOrderParsed = (parsed: ParsedWhatsAppOrder) => {
+    routeCalcRequestIdRef.current += 1;
     const defaultFee = getWhatsAppAutomationSettings().defaultDeliveryFee ?? 18.0;
-    const taxa = parsed.tipoEntrega === 'DELIVERY' ? defaultFee : 0.00;
-    const desconto = parsed.desconto || 0;
+    const hasExplicitTaxa = parsed.taxaEntrega !== undefined;
+    const taxa =
+      parsed.tipoEntrega === 'DELIVERY'
+        ? hasExplicitTaxa
+          ? parsed.taxaEntrega!
+          : defaultFee
+        : 0.0;
+    const desconto = Number((parsed.desconto || 0).toFixed(2));
     const { subtotal, total } = calculateTotals(parsed.itens, taxa, desconto);
     setRouteCalcBadge(null);
-    setDiscountType('R$');
-    setDiscountValue(desconto);
+    updateDiscountConfig('R$', desconto);
 
     setEditingOrder({
       numeroPedido: `#PED-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -500,12 +520,22 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
     });
 
     if (parsed.tipoEntrega === 'DELIVERY' && parsed.enderecoEntrega) {
-      recalculateNearestStoreAndFee(
-        parsed.enderecoEntrega,
-        undefined,
-        parsed.itens,
-        parsed.unidadeSugeridaId
-      );
+      if (!hasExplicitTaxa) {
+        recalculateNearestStoreAndFee(
+          parsed.enderecoEntrega,
+          undefined,
+          parsed.itens,
+          parsed.unidadeSugeridaId
+        );
+      } else if (!parsed.unidadeSugeridaId) {
+        recalculateNearestStoreAndFee(
+          parsed.enderecoEntrega,
+          undefined,
+          parsed.itens,
+          undefined,
+          taxa
+        );
+      }
     }
 
     setImportBanner({
@@ -595,29 +625,16 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
   };
 
   const renderStatusControl = (order: Order) => {
-    const flowIdx = ORDER_STATUS_FLOW.indexOf(order.status);
-    const prevStatus = flowIdx > 0 ? ORDER_STATUS_FLOW[flowIdx - 1] : null;
-    const nextStatus = flowIdx >= 0 && flowIdx < ORDER_STATUS_FLOW.length - 1 ? ORDER_STATUS_FLOW[flowIdx + 1] : null;
-
     return (
       <div
-        className="inline-flex items-center gap-0.5 print:hidden"
+        className="inline-flex items-center print:hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        <button
-          type="button"
-          disabled={!prevStatus}
-          onClick={() => prevStatus && handleQuickStatusChange(order, prevStatus)}
-          title={prevStatus ? `Voltar para ${prevStatus}` : 'Sem status anterior'}
-          className="p-0.5 rounded hover:bg-slate-200 text-slate-600 disabled:opacity-25 disabled:pointer-events-none transition-colors cursor-pointer"
-        >
-          <ChevronLeft className="w-3.5 h-3.5" />
-        </button>
         <select
           value={order.status}
           onChange={(e) => handleQuickStatusChange(order, e.target.value as OrderStatus)}
           aria-label={`Alterar status do pedido ${order.numeroPedido}`}
-          className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border cursor-pointer focus:outline-none ${STATUS_BADGES[order.status]}`}
+          className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border cursor-pointer focus:outline-none max-w-[108px] ${STATUS_BADGES[order.status]}`}
         >
           {ALL_ORDER_STATUSES.map(st => (
             <option key={st} value={st} className="bg-white text-slate-900">
@@ -625,18 +642,13 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
             </option>
           ))}
         </select>
-        <button
-          type="button"
-          disabled={!nextStatus}
-          onClick={() => nextStatus && handleQuickStatusChange(order, nextStatus)}
-          title={nextStatus ? `Avançar para ${nextStatus}` : 'Último status do fluxo'}
-          className="p-0.5 rounded hover:bg-slate-200 text-slate-600 disabled:opacity-25 disabled:pointer-events-none transition-colors cursor-pointer"
-        >
-          <ChevronRight className="w-3.5 h-3.5" />
-        </button>
       </div>
     );
   };
+
+  const hideModalidade = groupBy === 'MODALIDADE';
+  const hideLojaOrigem = groupBy === 'LOJA_ORIGEM';
+  const visibleColumnCount = 9 - (hideModalidade ? 1 : 0) - (hideLojaOrigem ? 1 : 0);
 
   return (
     <div className="flex-1 min-w-0 flex flex-col h-full bg-[#f8f9ff] overflow-hidden">
@@ -707,10 +719,10 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
 
           <button
             onClick={() => {
+              routeCalcRequestIdRef.current += 1;
               setImportBanner(null);
               setRouteCalcBadge(null);
-              setDiscountType('R$');
-              setDiscountValue(0);
+              updateDiscountConfig('R$', 0);
               setSelectedProdToAdd(products.find(p => p.ativo)?.id || '');
               setSelectedQtyToAdd(1);
               const nowLocal = getCurrentLocalDateTime();
@@ -808,12 +820,18 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
       </div>
 
       {/* Orders Table / Cards */}
-      <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-3 sm:p-4">
+      <div
+        className={
+          viewMode === 'TABLE'
+            ? 'flex-1 min-h-0 min-w-0 flex flex-col p-2.5 sm:p-3 overflow-hidden'
+            : 'flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-2.5 sm:p-3'
+        }
+      >
         <div
           id="print-report-area"
           className={
             viewMode === 'TABLE'
-              ? 'bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-x-auto max-w-full'
+              ? 'bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-auto max-w-full max-h-full min-h-0 print:overflow-visible print:max-h-none'
               : 'hidden print:block bg-white'
           }
         >
@@ -829,23 +847,23 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
             }
           />
           <table className="w-full text-left text-xs border-collapse">
-            <thead className="bg-[#f8f9ff] border-b border-[#e2e8f0] text-[10px] font-mono font-semibold uppercase text-slate-500 tracking-wider">
+            <thead className="sticky top-0 z-10 bg-[#f8f9ff] border-b border-[#e2e8f0] text-[10px] font-mono font-semibold uppercase text-slate-500 tracking-tight">
               <tr>
-                <th className="py-2.5 px-2">Nº Pedido</th>
-                <th className="py-2.5 px-2">Entrega / Retirada</th>
-                <th className="py-2.5 px-2">Cliente & WhatsApp</th>
-                <th className="py-2.5 px-2">Modalidade</th>
-                <th className="py-2.5 px-2">Loja Origem</th>
-                <th className="py-2.5 px-2">Pagamento</th>
-                <th className="py-2.5 px-2 text-right">Total (R$)</th>
-                <th className="py-2.5 px-2 text-center">Status</th>
-                <th className="py-2.5 px-2 text-center print:hidden">Ações</th>
+                <th className="py-2 px-1.5">Nº Pedido</th>
+                <th className="py-2 px-1.5">Data Combinada</th>
+                <th className="py-2 px-1.5">Cliente & WhatsApp</th>
+                {!hideModalidade && <th className="py-2 px-1.5">Modalidade</th>}
+                {!hideLojaOrigem && <th className="py-2 px-1.5">Loja Origem</th>}
+                <th className="py-2 px-1.5">Pagamento</th>
+                <th className="py-2 px-1.5 text-right">Total (R$)</th>
+                <th className="py-2 px-1.5 text-center">Status</th>
+                <th className="py-2 px-1.5 text-center print:hidden">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#e2e8f0]">
               {filteredOrders.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-slate-400 text-xs">
+                  <td colSpan={visibleColumnCount} className="py-12 text-center text-slate-400 text-xs">
                     Nenhum pedido encontrado com os filtros atuais.
                   </td>
                 </tr>
@@ -880,13 +898,13 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                           onClick={() => toggleGroup(group.key)}
                           className="bg-emerald-50 hover:bg-emerald-100/80 border-y border-emerald-200 cursor-pointer transition-colors"
                         >
-                          <td colSpan={9} className="py-2 px-4 font-bold text-slate-800 text-xs">
-                            <div className="flex items-center justify-between">
+                          <td colSpan={visibleColumnCount} className="py-2 px-3 font-bold text-slate-800 text-xs">
+                            <div className="flex items-center justify-between gap-2">
                               <span className="inline-flex items-center gap-1.5">
                                 {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                                 <span>{group.label}</span>
                               </span>
-                              <span className="font-mono text-[11px] text-slate-600">
+                              <span className="font-mono text-[11px] text-slate-600 whitespace-nowrap">
                                 {group.orders.length} pedido(s) • Total: R$ {formatCurrencyBR(group.orders.reduce((s, o) => s + o.valorTotal, 0))}
                               </span>
                             </div>
@@ -919,11 +937,14 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                   };
 
                   const isRep = isReplenishmentOrder(order);
-                  const isSelected = selectedOrderId === order.id;
+                  const isSelected = isModalOpen && editingOrder.id === order.id;
                   return (
                     <tr
                       key={order.id}
-                      onClick={() => onSelectOrder(order)}
+                      onClick={() => {
+                        onSelectOrder(order);
+                        handleOpenEditOrder(order);
+                      }}
                       className={`cursor-pointer transition-colors ${
                         isSelected
                           ? `bg-brand-50/70 ring-1 ring-inset ring-brand-400 border-l-4 ${
@@ -934,7 +955,7 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                           : 'hover:bg-slate-50/80'
                       }`}
                     >
-                      <td className="py-2.5 px-2 font-mono font-bold text-slate-900 whitespace-nowrap">
+                      <td className="py-2 px-1.5 font-mono text-[11px] font-bold text-slate-900 whitespace-nowrap">
                         <div>{order.numeroPedido}</div>
                         {isRep && (
                           <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-sky-600 text-white text-[9px] font-sans font-bold uppercase tracking-wider">
@@ -942,7 +963,7 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                           </span>
                         )}
                       </td>
-                      <td className="py-2.5 px-2.5 font-mono text-slate-700">
+                      <td className="py-2 px-1.5 font-mono text-[11px] text-slate-700 whitespace-nowrap">
                         <div>
                           {formatDeliveryTimeRange(order.dataHoraEntrega, order.dataHoraEntregaFim, {
                             tipoEntrega: order.tipoEntrega,
@@ -951,16 +972,16 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                         </div>
                         {order.detalheEntrega && (
                           <div
-                            className="text-[11px] font-sans font-medium text-blue-600 mt-0.5 max-w-[190px] truncate"
+                            className="text-[10px] font-sans font-medium text-blue-600 mt-0.5 max-w-[140px] truncate"
                             title={order.detalheEntrega}
                           >
                             {order.detalheEntrega}
                           </div>
                         )}
                       </td>
-                      <td className="py-2.5 px-2">
-                        <div className="font-semibold text-slate-900">{order.clienteNome}</div>
-                        <div className="text-[11px] font-mono text-emerald-700 flex items-center gap-1 mt-0.5">
+                      <td className="py-2 px-1.5 max-w-[140px]">
+                        <div className="font-semibold text-slate-900 text-xs max-w-[135px] truncate" title={order.clienteNome}>{order.clienteNome}</div>
+                        <div className="text-[10px] font-mono text-emerald-700 flex items-center gap-1 mt-0.5 whitespace-nowrap">
                           {normalizePhoneForWhatsApp(order.clienteTelefone) ? (
                             <a
                               href={`https://wa.me/${normalizePhoneForWhatsApp(order.clienteTelefone)}`}
@@ -970,19 +991,20 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                               title="Abrir conversa no WhatsApp"
                               className="inline-flex items-center gap-1 text-emerald-700 hover:text-emerald-800 hover:underline"
                             >
-                              <Phone className="w-3 h-3" />
+                              <Phone className="w-3 h-3 shrink-0" />
                               <span>{order.clienteTelefone}</span>
                             </a>
                           ) : (
                             <>
-                              <Phone className="w-3 h-3" />
+                              <Phone className="w-3 h-3 shrink-0" />
                               <span>{order.clienteTelefone}</span>
                             </>
                           )}
                         </div>
                       </td>
-                      <td className="py-2.5 px-2">
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+                      {!hideModalidade && (
+                      <td className="py-2 px-1.5 whitespace-nowrap">
+                        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${
                           order.tipoEntrega === 'DELIVERY'
                             ? 'bg-blue-50 text-blue-700 border-blue-200'
                             : 'bg-amber-50 text-amber-700 border-amber-200'
@@ -991,10 +1013,13 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                           {order.tipoEntrega === 'DELIVERY' ? 'Entrega' : 'Retirada'}
                         </span>
                       </td>
-                      <td className={`py-2.5 px-2 font-semibold ${unitColorClass}`}>
+                      )}
+                      {!hideLojaOrigem && (
+                      <td className={`py-2 px-1.5 font-semibold text-[11px] max-w-[100px] truncate ${unitColorClass}`} title={unit?.nome || '-'}>
                         {unit?.nome || '-'}
                       </td>
-                      <td className="py-2.5 px-2">
+                      )}
+                      <td className="py-2 px-1.5 whitespace-nowrap">
                         {isRep ? (
                           <span className="text-[11px] font-semibold text-sky-700">—</span>
                         ) : (() => {
@@ -1002,7 +1027,7 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                           const remaining = getOrderRemainingAmount(order);
                           return (
                             <div className="flex flex-col items-start gap-0.5">
-                              <span className="font-mono uppercase font-semibold text-[11px] px-2 py-0.5 bg-slate-100 rounded text-slate-800 border border-slate-200">
+                              <span className="font-mono uppercase font-semibold text-[10px] px-1.5 py-0.5 bg-slate-100 rounded text-slate-800 border border-slate-200">
                                 {order.formaPagamento}
                               </span>
                               <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${PAYMENT_STATUS_BADGE_CLASSES[payStatus]}`}>
@@ -1014,43 +1039,36 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                           );
                         })()}
                       </td>
-                      <td className="py-2.5 px-2 font-mono font-bold text-right text-slate-900 whitespace-nowrap">
+                      <td className="py-2 px-1.5 font-mono text-[11px] font-bold text-right text-slate-900 whitespace-nowrap">
                         R$ {formatCurrencyBR(order.valorTotal)}
                       </td>
-                      <td className="py-2.5 px-2 text-center">
+                      <td className="py-2 px-1.5 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                         {renderStatusControl(order)}
                         <span className={`hidden print:inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold border ${STATUS_BADGES[order.status]}`}>
                           {order.status}
                         </span>
                       </td>
                       <td
-                        className="py-2.5 px-2 text-center print:hidden"
+                        className="py-2 px-1.5 text-center print:hidden whitespace-nowrap"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <div className="flex items-center justify-center gap-1">
+                        <div className="flex items-center justify-center gap-0.5">
                           <button
                             onClick={() => {
                               const msg = formatStatusNotificationMessage(order, order.status, products, units);
                               dispatchWhatsAppMessage(order.clienteTelefone, msg);
                             }}
                             title={`Notificar status (${order.status}) no WhatsApp`}
-                            className="p-1.5 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 rounded-lg transition-colors"
+                            className="p-1 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 rounded-lg transition-colors"
                           >
                             <MessageSquare className="w-4 h-4" />
                           </button>
                           <button
                             onClick={() => handleCopySummary(order)}
                             title="Copiar Resumo para WhatsApp"
-                            className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors"
+                            className="p-1 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors"
                           >
                             <Copy className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => handleOpenEditOrder(order)}
-                            title="Editar Pedido"
-                            className="p-1.5 text-slate-500 hover:text-brand-700 hover:bg-brand-50 rounded-lg transition-colors"
-                          >
-                            <ChevronRight className="w-4 h-4" />
                           </button>
                           {order.status === 'PENDENTE' && onDeleteOrder && (
                             <button
@@ -1058,7 +1076,7 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                               onClick={() => setOrderToDelete(order)}
                               title="Excluir Pedido Pendente"
                               aria-label="Excluir Pedido Pendente"
-                              className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                              className="p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -1131,11 +1149,14 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                       {group.orders.map(order => {
                         const unit = units.find(u => u.id === order.unidadeOrigemId);
                         const isRep = isReplenishmentOrder(order);
-                        const isSelected = selectedOrderId === order.id;
+                        const isSelected = isModalOpen && editingOrder.id === order.id;
                         return (
                           <div
                             key={order.id}
-                            onClick={() => onSelectOrder(order)}
+                            onClick={() => {
+                              onSelectOrder(order);
+                              handleOpenEditOrder(order);
+                            }}
                             className={`border rounded-xl p-4 shadow-xs transition-colors cursor-pointer flex flex-col justify-between gap-3 min-w-0 overflow-hidden ${
                               isRep ? REPLENISHMENT_CARD_STYLE : ORDER_CARD_STATUS_STYLES[order.status]
                             }${isSelected ? ' ring-2 ring-brand-500 shadow-md' : ''}`}
@@ -1150,7 +1171,9 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                                     </span>
                                   )}
                                 </div>
-                                <span className="block text-[10px] text-slate-500">{unit?.nome || '-'}</span>
+                                {!hideLojaOrigem && (
+                                  <span className="block text-[10px] text-slate-500">{unit?.nome || '-'}</span>
+                                )}
                               </div>
                               {renderStatusControl(order)}
                               <span className="hidden print:inline-block text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
@@ -1178,8 +1201,12 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                                 {formatDeliveryTimeRange(order.dataHoraEntrega, order.dataHoraEntregaFim, {
                                   tipoEntrega: order.tipoEntrega,
                                   turnoEntrega: order.tipoEntrega === 'DELIVERY' ? order.turnoEntrega : undefined
-                                })} •{' '}
-                                {order.tipoEntrega === 'DELIVERY' ? 'Entrega' : 'Retirada'}
+                                })}
+                                {!hideModalidade && (
+                                  <>
+                                    {' '}• {order.tipoEntrega === 'DELIVERY' ? 'Entrega' : 'Retirada'}
+                                  </>
+                                )}
                               </div>
                             </div>
                             <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
@@ -1214,13 +1241,6 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                                   title="Copiar Resumo WhatsApp"
                                 >
                                   <Copy className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  onClick={() => handleOpenEditOrder(order)}
-                                  className="p-1.5 text-slate-500 hover:text-brand-700 hover:bg-brand-50 rounded-lg"
-                                  title="Editar Pedido"
-                                >
-                                  <ChevronRight className="w-4 h-4" />
                                 </button>
                                 {order.status === 'PENDENTE' && onDeleteOrder && (
                                   <button
@@ -1480,13 +1500,20 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                           const currentDate = (editingOrder.dataHoraEntrega || getCurrentLocalDateTime()).slice(0, 10);
                           const shift = editingOrder.turnoEntrega || inferDeliveryShiftFromDateTime(editingOrder.dataHoraEntrega);
                           const { start, end } = applyDeliveryShiftToDate(currentDate, shift);
+                          const items = editingOrder.itens || [];
+                          const sub = Number(items.reduce((acc, i) => acc + i.quantidade * i.precoUnitario, 0).toFixed(2));
+                          const descAmt = computeDiscountAmount(sub, discountConfigRef.current.type, discountConfigRef.current.value);
+                          const { subtotal, total } = calculateTotals(items, editingOrder.taxaEntrega || 0, descAmt);
                           setEditingOrder({
                             ...editingOrder,
                             tipoEntrega: 'DELIVERY',
                             unidadeRetiradaId: undefined,
                             turnoEntrega: shift,
                             dataHoraEntrega: start,
-                            dataHoraEntregaFim: end
+                            dataHoraEntregaFim: end,
+                            desconto: descAmt,
+                            valorSubtotal: subtotal,
+                            valorTotal: total
                           });
                         }}
                         className="text-brand-600 focus:ring-brand-500"
@@ -1498,16 +1525,22 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                         type="radio"
                         name="modalidade"
                         checked={editingOrder.tipoEntrega === 'RETIRADA'}
-                        onChange={() =>
+                        onChange={() => {
+                          const items = editingOrder.itens || [];
+                          const sub = Number(items.reduce((acc, i) => acc + i.quantidade * i.precoUnitario, 0).toFixed(2));
+                          const descAmt = computeDiscountAmount(sub, discountConfigRef.current.type, discountConfigRef.current.value);
+                          const { subtotal, total } = calculateTotals(items, 0, descAmt);
                           setEditingOrder({
                             ...editingOrder,
                             tipoEntrega: 'RETIRADA',
                             unidadeRetiradaId: editingOrder.unidadeRetiradaId || editingOrder.unidadeOrigemId,
                             turnoEntrega: undefined,
                             taxaEntrega: 0,
-                            valorTotal: Math.max(0, (editingOrder.valorSubtotal || 0) - (editingOrder.desconto || 0))
-                          })
-                        }
+                            desconto: descAmt,
+                            valorSubtotal: subtotal,
+                            valorTotal: total
+                          });
+                        }}
                         className="text-brand-600 focus:ring-brand-500"
                       />
                       <span>🏪 Retirada</span>
@@ -1977,8 +2010,11 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                     <CurrencyInput
                       value={editingOrder.taxaEntrega || 0}
                       onChangeValue={(taxa) => {
-                        const { total } = calculateTotals(editingOrder.itens || [], taxa, editingOrder.desconto || 0);
-                        setEditingOrder({ ...editingOrder, taxaEntrega: taxa, valorTotal: total });
+                        const items = editingOrder.itens || [];
+                        const sub = Number(items.reduce((acc, i) => acc + i.quantidade * i.precoUnitario, 0).toFixed(2));
+                        const descAmt = computeDiscountAmount(sub, discountConfigRef.current.type, discountConfigRef.current.value);
+                        const { subtotal, total } = calculateTotals(items, taxa, descAmt);
+                        setEditingOrder({ ...editingOrder, taxaEntrega: taxa, desconto: descAmt, valorSubtotal: subtotal, valorTotal: total });
                       }}
                       className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-mono"
                     />
@@ -1990,11 +2026,12 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                         value={discountType}
                         onChange={(e) => {
                           const newType = e.target.value as 'R$' | '%';
-                          setDiscountType(newType);
-                          const sub = (editingOrder.itens || []).reduce((acc, i) => acc + (i.quantidade * i.precoUnitario), 0);
+                          updateDiscountConfig(newType, discountValue);
+                          const items = editingOrder.itens || [];
+                          const sub = Number(items.reduce((acc, i) => acc + i.quantidade * i.precoUnitario, 0).toFixed(2));
                           const descAmt = computeDiscountAmount(sub, newType, discountValue);
-                          const { total } = calculateTotals(editingOrder.itens || [], editingOrder.taxaEntrega || 0, descAmt);
-                          setEditingOrder({ ...editingOrder, desconto: descAmt, valorTotal: total });
+                          const { subtotal, total } = calculateTotals(items, editingOrder.taxaEntrega || 0, descAmt);
+                          setEditingOrder({ ...editingOrder, desconto: descAmt, valorSubtotal: subtotal, valorTotal: total });
                         }}
                         className="bg-white border border-slate-300 rounded-lg px-1.5 sm:px-2 py-1.5 sm:py-2 font-mono font-bold text-slate-700"
                       >
@@ -2005,11 +2042,12 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                         <CurrencyInput
                           value={discountValue}
                           onChangeValue={(val) => {
-                            setDiscountValue(val);
-                            const sub = (editingOrder.itens || []).reduce((acc, i) => acc + (i.quantidade * i.precoUnitario), 0);
+                            updateDiscountConfig(discountType, val);
+                            const items = editingOrder.itens || [];
+                            const sub = Number(items.reduce((acc, i) => acc + i.quantidade * i.precoUnitario, 0).toFixed(2));
                             const descAmt = computeDiscountAmount(sub, discountType, val);
-                            const { total } = calculateTotals(editingOrder.itens || [], editingOrder.taxaEntrega || 0, descAmt);
-                            setEditingOrder({ ...editingOrder, desconto: descAmt, valorTotal: total });
+                            const { subtotal, total } = calculateTotals(items, editingOrder.taxaEntrega || 0, descAmt);
+                            setEditingOrder({ ...editingOrder, desconto: descAmt, valorSubtotal: subtotal, valorTotal: total });
                           }}
                           className="w-full min-w-0 bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-mono text-rose-600"
                         />
@@ -2022,11 +2060,12 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                           value={discountValue}
                           onChange={(e) => {
                             const val = Math.max(0, Number(e.target.value));
-                            setDiscountValue(val);
-                            const sub = (editingOrder.itens || []).reduce((acc, i) => acc + (i.quantidade * i.precoUnitario), 0);
+                            updateDiscountConfig(discountType, val);
+                            const items = editingOrder.itens || [];
+                            const sub = Number(items.reduce((acc, i) => acc + i.quantidade * i.precoUnitario, 0).toFixed(2));
                             const descAmt = computeDiscountAmount(sub, discountType, val);
-                            const { total } = calculateTotals(editingOrder.itens || [], editingOrder.taxaEntrega || 0, descAmt);
-                            setEditingOrder({ ...editingOrder, desconto: descAmt, valorTotal: total });
+                            const { subtotal, total } = calculateTotals(items, editingOrder.taxaEntrega || 0, descAmt);
+                            setEditingOrder({ ...editingOrder, desconto: descAmt, valorSubtotal: subtotal, valorTotal: total });
                           }}
                           className="w-full min-w-0 bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-mono text-rose-600"
                         />

@@ -14,7 +14,6 @@ import {
   RefreshCw,
   ExternalLink,
   Plus,
-  Edit3,
   Power,
   X,
   Users,
@@ -662,12 +661,16 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                   {users.map(u => {
                     const isActive = u.ativo !== false;
                     const unitName = units.find(un => un.id === u.unidadePadraoId)?.nome || 'Não definida';
+                    const isEditingCard = showUserModal && Boolean(editingUser && (editingUser.id ? editingUser.id === u.id : editingUser.email === u.email));
                     return (
                       <div
                         key={u.id || u.email}
-                        className={`rounded-xl border border-slate-200 bg-slate-50/40 p-3.5 flex flex-col justify-between gap-3 min-w-0 overflow-hidden ${
-                          !isActive ? 'opacity-60' : ''
-                        }`}
+                        onClick={() => openEditUserModal(u)}
+                        className={`rounded-xl border p-3.5 flex flex-col justify-between gap-3 min-w-0 overflow-hidden cursor-pointer transition-colors ${
+                          isEditingCard
+                            ? 'bg-brand-50/70 border-brand-400 ring-2 ring-brand-500 shadow-md'
+                            : 'border-slate-200 bg-slate-50/40 hover:border-brand-400'
+                        } ${!isActive ? 'opacity-60' : ''}`}
                       >
                         <div className="flex items-start justify-between gap-2 min-w-0">
                           <div className="flex items-center gap-2.5 min-w-0">
@@ -707,15 +710,7 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                               {unitName}
                             </span>
                           </div>
-                          <div className="inline-flex items-center gap-1.5 shrink-0">
-                            <button
-                              onClick={() => openEditUserModal(u)}
-                              title="Editar usuário"
-                              aria-label="Editar usuário"
-                              className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                            >
-                              <Edit3 className="w-3.5 h-3.5" />
-                            </button>
+                          <div className="inline-flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
                             <button
                               onClick={() => onToggleUserActive(u.id || u.email, !isActive)}
                               title={isActive ? 'Desativar usuário' : 'Ativar usuário'}
@@ -759,8 +754,17 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                     users.map(u => {
                       const isActive = u.ativo !== false;
                       const unitName = units.find(un => un.id === u.unidadePadraoId)?.nome || 'Não definida';
+                      const isEditingRow = showUserModal && Boolean(editingUser && (editingUser.id ? editingUser.id === u.id : editingUser.email === u.email));
                       return (
-                        <tr key={u.id || u.email} className={`hover:bg-slate-50/70 ${!isActive ? 'opacity-60' : ''}`}>
+                        <tr
+                          key={u.id || u.email}
+                          onClick={() => openEditUserModal(u)}
+                          className={`cursor-pointer transition-colors ${
+                            isEditingRow
+                              ? 'bg-brand-50/70 ring-1 ring-inset ring-brand-400 border-l-4 border-l-brand-600'
+                              : 'hover:bg-slate-50/70'
+                          } ${!isActive ? 'opacity-60' : ''}`}
+                        >
                           <td className="py-2.5 px-3 font-semibold text-slate-800 flex items-center gap-2">
                             {u.avatarUrl ? (
                               <img src={u.avatarUrl} alt={u.nome} className="w-7 h-7 rounded-full object-cover border border-slate-200" />
@@ -785,15 +789,8 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                               {isActive ? 'Ativo' : 'Inativo'}
                             </span>
                           </td>
-                          <td className="py-2.5 px-3 text-right">
+                          <td className="py-2.5 px-3 text-right" onClick={(e) => e.stopPropagation()}>
                             <div className="inline-flex items-center gap-1.5">
-                              <button
-                                onClick={() => openEditUserModal(u)}
-                                title="Editar usuário"
-                                className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                              >
-                                <Edit3 className="w-3.5 h-3.5" />
-                              </button>
                               <button
                                 onClick={() => onToggleUserActive(u.id || u.email, !isActive)}
                                 title={isActive ? 'Desativar usuário' : 'Ativar usuário'}

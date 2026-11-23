@@ -17,6 +17,7 @@ export interface ParsedWhatsAppOrder {
   dataHoraEntregaFim?: string;
   formaPagamento: PaymentMethod;
   trocoPara?: number;
+  taxaEntrega?: number;
   desconto?: number;
   observacoes?: string;
   itens: OrderItem[];
@@ -129,40 +130,121 @@ function extractDeliveryDateTimeRange(rawText: string): { start: string; end: st
   return { start: startStr, end: addHoursToDateTime(startStr, 1), hasExplicitEnd: false };
 }
 
-function extractDiscountInfo(rawText: string, subtotal: number): { discount: number; explicitFinalTotal?: number } {
-  const normFull = normalizeText(rawText);
+export function cleanTextForMoneyParsing(rawText: string): string {
+  return normalizeText(rawText).replace(/[*_~]+/g, ' ');
+}
 
-  // 1. Desconto percentual: "10% de desconto" ou "desconto de 10%"
+export function parseBrazilianCurrency(raw: string): number {
+  const cleaned = raw.trim().replace(/\s+/g, '');
+  if (!cleaned) return NaN;
+  if (cleaned.includes(',')) {
+    return parseFloat(cleaned.replace(/\./g, '').replace(',', '.'));
+  }
+  if (/^\d{1,3}(?:\.\d{3})+$/.test(cleaned)) {
+    return parseFloat(cleaned.replace(/\./g, ''));
+  }
+  return parseFloat(cleaned);
+}
+
+const BR_AMOUNT_PATTERN = '(\\d{1,3}(?:\\.\\d{3})*(?:,\\d{1,2})|\\d+(?:[.,]\\d{1,2})?)(?![\\d.,/%]|\\s*(?:%|km|h|hs|hrs)\\b)';
+
+export function extractDeliveryFee(rawText: string, tipoEntrega: DeliveryType): number | undefined {
+  if (tipoEntrega === 'RETIRADA') return 0;
+
+  const normClean = cleanTextForMoneyParsing(rawText);
+
+  if (
+    /\b(?:frete\s+gratis|entrega\s+gratuita|taxa\s+(?:de\s+)?entrega\s+(?:gratis|gratuita|isenta|inclusa|cortesia)|sem\s+taxa\s+de\s+entrega)\b/.test(
+      normClean
+    )
+  ) {
+    return 0;
+  }
+
+  const feePatterns = [
+    new RegExp(
+      `\\b(?:taxa\\s+(?:de\\s+)?entrega|taxa\\s+delivery|valor\\s+da\\s+entrega|frete)\\s*(?:\\([^)]*\\))?\\s*(?:de|:|=|-)?\\s*(?:\\+\\s*)?(?:r\\$\\s*)?${BR_AMOUNT_PATTERN}`,
+      'i'
+    ),
+    new RegExp(
+      `\\bentrega\\s*(?:[:=]\\s*(?:\\+\\s*)?(?:r\\$\\s*)?|(?:de\\s+)?r\\$\\s*)${BR_AMOUNT_PATTERN}`,
+      'i'
+    ),
+  ];
+
+  for (const pattern of feePatterns) {
+    const match = normClean.match(pattern);
+    if (match?.[1]) {
+      const val = parseBrazilianCurrency(match[1]);
+      if (Number.isFinite(val) && val >= 0 && val <= 500) {
+        return Number(val.toFixed(2));
+      }
+    }
+  }
+
+  return undefined;
+}
+
+export function extractDiscountInfo(
+  rawText: string,
+  subtotal: number,
+  deliveryFee = 0
+): { discount: number; explicitFinalTotal?: number } {
+  const normClean = cleanTextForMoneyParsing(rawText);
+  const baseTotal = Number((subtotal + deliveryFee).toFixed(2));
+
+  // 1. Desconto explícito em valor (ex: "*Desconto:* -R$ 20,00", "desconto de R$ 20,00", "20 reais de desconto")
+  const explicitDiscountPatterns = [
+    new RegExp(
+      `(?<!\\bcom\\s)\\b(?:desconto|desc\\.?)\\s*(?:\\([^)]*\\))?\\s*(?:(?:de|concedido(?:\\s+de)?)\\s*(?:-\\s*)?(?:r\\$\\s*)?|(?::|=)\\s*(?:-\\s*)?(?:r\\$\\s*)?|-\\s*(?:r\\$\\s*)?|r\\$\\s*)${BR_AMOUNT_PATTERN}`,
+      'i'
+    ),
+    /(?:^|\s)(?:r\$\s*)?(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})|\d+(?:[.,]\d{1,2})?)(?![\d.,/%]|\s*%)\s*(?:reais\s+)?de\s+desconto\b/i,
+  ];
+
+  for (const pattern of explicitDiscountPatterns) {
+    const explicitValMatch = normClean.match(pattern);
+    if (explicitValMatch?.[1]) {
+      const val = parseBrazilianCurrency(explicitValMatch[1]);
+      if (Number.isFinite(val) && val > 0 && (baseTotal <= 0 || val <= baseTotal)) {
+        return { discount: Number(val.toFixed(2)) };
+      }
+    }
+  }
+
+  // 2. Desconto percentual: "10% de desconto", "desconto de 10%" ou "desconto: 10%"
   const pctMatch =
-    normFull.match(/desconto\s*(?:de|concedido(?:\s+de)?|:)?\s*(\d+(?:[.,]\d{1,2})?)\s*%/) ||
-    normFull.match(/(\d+(?:[.,]\d{1,2})?)\s*%\s*(?:de\s+)?desconto/);
+    normClean.match(/desconto\s*(?:de|concedido(?:\s+de)?|:|=)?\s*(\d+(?:[.,]\d{1,2})?)\s*%/) ||
+    normClean.match(/(\d+(?:[.,]\d{1,2})?)\s*%\s*(?:de\s+)?desconto/);
   if (pctMatch) {
     const pct = parseFloat(pctMatch[1].replace(',', '.'));
-    if (pct > 0 && pct < 100 && subtotal > 0) {
+    if (pct > 0 && pct <= 100 && subtotal > 0) {
       return { discount: Number(((subtotal * pct) / 100).toFixed(2)) };
     }
   }
 
-  // 2. Caso informe o total final com desconto ("Valor total com desconto: 265,50", "com desconto fica R$ 120")
-  const totalWithDiscountMatch = normFull.match(
-    /(?:valor\s+total\s+com\s+desconto|total\s+com\s+desconto|valor\s+com\s+desconto|com\s+desconto\s+(?:fica|sai|e|eh)?)\s*(?::|por|fica)?\s*(?:r\$\s*)?(\d+(?:[.,]\d{1,2})?)/
+  // 3. Caso informe o total final com desconto ("Total com desconto: R$ 195,00", "com desconto fica R$ 195")
+  const totalWithDiscountMatch = normClean.match(
+    /(?:valor\s+total\s+com\s+desconto|total\s+com\s+desconto|valor\s+com\s+desconto|com\s+desconto\s+(?:fica|sai|e|eh)?)\s*(?::|=|por|fica)?\s*(?:r\$\s*)?(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})|\d+(?:[.,]\d{1,2})?)(?![\d.,/%]|\s*%)/i
   );
-  if (totalWithDiscountMatch) {
-    const finalVal = parseFloat(totalWithDiscountMatch[1].replace(',', '.'));
-    if (finalVal > 0 && subtotal > finalVal) {
-      return { discount: Number((subtotal - finalVal).toFixed(2)), explicitFinalTotal: finalVal };
+  if (totalWithDiscountMatch?.[1]) {
+    const finalVal = parseBrazilianCurrency(totalWithDiscountMatch[1]);
+    if (Number.isFinite(finalVal) && finalVal >= 0 && baseTotal > finalVal) {
+      return { discount: Number((baseTotal - finalVal).toFixed(2)), explicitFinalTotal: finalVal };
     }
-    return { discount: 0, explicitFinalTotal: finalVal };
+    return { discount: 0, explicitFinalTotal: Number.isFinite(finalVal) ? finalVal : undefined };
   }
 
-  // 3. Desconto explícito em valor (ex: "desconto de R$ 20,00", "20 reais de desconto", "desc. de 15")
-  const explicitValMatch =
-    normFull.match(/(?<!\bcom\s)\b(?:desconto|desc\.?)\s+(?:de|concedido(?:\s+de)?|:)\s*(?:r\$\s*)?(\d+(?:[.,]\d{1,2})?)(?!\s*%)/) ||
-    normFull.match(/\b(\d+(?:[.,]\d{1,2})?)\s*(?:reais|r\$)?\s+de\s+desconto\b/);
-  if (explicitValMatch) {
-    const val = parseFloat(explicitValMatch[1].replace(',', '.'));
-    if (val > 0 && (subtotal <= 0 || val < subtotal)) {
-      return { discount: Number(val.toFixed(2)) };
+  // 4. Caso cite desconto e informe um total explícito inferior a subtotal + entrega
+  if (/\bdesconto\b/.test(normClean) && baseTotal > 0) {
+    const explicitTotalMatch = normClean.match(
+      /(?:valor\s+total|total\s+a\s+pagar|total)\s*[:=]\s*(?:r\$\s*)?(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})|\d+(?:[.,]\d{1,2})?)(?![\d.,/%]|\s*%)/i
+    );
+    if (explicitTotalMatch?.[1]) {
+      const finalVal = parseBrazilianCurrency(explicitTotalMatch[1]);
+      if (Number.isFinite(finalVal) && finalVal >= 0 && baseTotal > finalVal) {
+        return { discount: Number((baseTotal - finalVal).toFixed(2)), explicitFinalTotal: finalVal };
+      }
     }
   }
 
@@ -261,10 +343,11 @@ function localFallbackParse(
 
   // Ignora linhas de metadados (endereço, totais, pagamento, data/hora) para não casar com nome da loja/rua
   const isMetadataLine = (line: string): boolean => {
-    const n = normalizeText(line);
+    const n = cleanTextForMoneyParsing(line).trim();
     return (
-      /^(?:endereco|endere[cç]o|entregar\s+em|rua|av\.?|avenida|alameda|travessa|cep|bairro|nome|cliente|whatsapp|telefone|fone|pagamento|forma\s+de\s+pagamento|pix|troco|valor\s+total|total|subtotal|desconto|pedido\s+para|retirada|delivery|data|horario|hora)\b/.test(n) ||
-      /\bbeju\s+caramelos\b/.test(n)
+      /^(?:endereco|entregar\s+em|rua|av\.?|avenida|alameda|travessa|cep|bairro|nome|cliente|whatsapp|telefone|fone|pagamento|forma\s+de\s+pagamento|pix|chave\s+pix|troco|valor\s+total|total(?:\s+a\s+pagar)?|subtotal|desconto|taxa(?:\s+de)?\s+entrega|taxa\s+delivery|frete|modalidade|itens\s+(?:solicitados|do\s+pedido)|obs\.?|pedido(?:\s+para)?|retirada|delivery|data|horario|hora)\b/.test(
+        n
+      ) || /\bbeju\s+caramelos\b/.test(n)
     );
   };
 
@@ -346,7 +429,8 @@ function localFallbackParse(
   }
 
   const itensSubtotal = itens.reduce((acc, i) => acc + i.subtotal, 0);
-  const { discount: desconto } = extractDiscountInfo(rawText, itensSubtotal);
+  const taxaEntrega = extractDeliveryFee(rawText, tipoEntrega);
+  const { discount: desconto } = extractDiscountInfo(rawText, itensSubtotal, taxaEntrega ?? 0);
 
   let turnoEntrega: DeliveryShift | undefined;
   if (tipoEntrega === 'DELIVERY') {
@@ -367,6 +451,7 @@ function localFallbackParse(
     dataHoraEntregaFim,
     formaPagamento,
     trocoPara,
+    taxaEntrega,
     desconto,
     observacoes: `Importado via WhatsApp:\n${rawText.slice(0, 220)}${rawText.length > 220 ? '...' : ''}`,
     itens,
@@ -463,18 +548,40 @@ export class WhatsAppParserService {
           ? `${resolvedStart.slice(0, 10)}T${localRange.end.slice(11, 16)}`
           : addHoursToDateTime(resolvedStart, 1);
 
+      const resolvedTipoEntrega: DeliveryType =
+        parsed.tipoEntrega === 'RETIRADA' ? 'RETIRADA' : 'DELIVERY';
+
       const itensSubtotal = itens.reduce((acc, i) => acc + i.subtotal, 0);
-      const { discount: localDiscount, explicitFinalTotal } = extractDiscountInfo(rawText, itensSubtotal);
+      const localDeliveryFee = extractDeliveryFee(rawText, resolvedTipoEntrega);
+      const aiDeliveryFee =
+        parsed.taxaEntrega != null && Number.isFinite(Number(parsed.taxaEntrega)) && Number(parsed.taxaEntrega) >= 0
+          ? Number(Number(parsed.taxaEntrega).toFixed(2))
+          : undefined;
+      const resolvedTaxaEntrega =
+        resolvedTipoEntrega === 'RETIRADA'
+          ? 0
+          : localDeliveryFee !== undefined
+          ? localDeliveryFee
+          : aiDeliveryFee !== undefined && aiDeliveryFee > 0
+          ? aiDeliveryFee
+          : undefined;
+
+      const baseTotal = Number((itensSubtotal + (resolvedTaxaEntrega ?? 0)).toFixed(2));
+      const { discount: localDiscount, explicitFinalTotal } = extractDiscountInfo(
+        rawText,
+        itensSubtotal,
+        resolvedTaxaEntrega ?? 0
+      );
       const aiDiscount = parsed.desconto != null ? Number(parsed.desconto) : 0;
       const aiMistookFinalTotal =
         explicitFinalTotal !== undefined && Math.abs(aiDiscount - explicitFinalTotal) < 0.01;
       const resolvedDiscount =
-        !aiMistookFinalTotal && aiDiscount > 0 && (itensSubtotal <= 0 || aiDiscount < itensSubtotal)
-          ? aiDiscount
-          : localDiscount;
+        localDiscount > 0
+          ? localDiscount
+          : !aiMistookFinalTotal && aiDiscount > 0 && (baseTotal <= 0 || aiDiscount <= baseTotal)
+          ? Number(aiDiscount.toFixed(2))
+          : 0;
 
-      const resolvedTipoEntrega: DeliveryType =
-        parsed.tipoEntrega === 'RETIRADA' ? 'RETIRADA' : 'DELIVERY';
       const normRaw = normalizeText(rawText);
       const resolvedTurnoEntrega: DeliveryShift | undefined =
         resolvedTipoEntrega === 'DELIVERY'
@@ -500,6 +607,7 @@ export class WhatsAppParserService {
           ? parsed.formaPagamento
           : 'pix') as PaymentMethod,
         trocoPara: parsed.trocoPara ? Number(parsed.trocoPara) : undefined,
+        taxaEntrega: resolvedTaxaEntrega,
         desconto: resolvedDiscount,
         observacoes: obs,
         itens,

@@ -1159,8 +1159,8 @@ export const App: React.FC = () => {
   }, [currentScreen, effectiveUserProfile.role]);
 
   // Dynamic navigation badges synced with activeUnitId and live order/stock statuses
-  const pendingOrdersCount = React.useMemo(
-    () => scopedOrders.filter(o => o.status === 'PENDENTE').length,
+  const confirmedOrdersCount = React.useMemo(
+    () => scopedOrders.filter(o => o.status === 'CONFIRMADO').length,
     [scopedOrders]
   );
 
@@ -1238,7 +1238,7 @@ export const App: React.FC = () => {
       const isManual = po.codigoOrdem.startsWith('OP-MANUAL-');
       po.itens.forEach(it => {
         const st = po.itemStatuses?.[it.produtoId] || po.status;
-        if (st === 'CONCLUIDA') {
+        if (st === 'CONCLUIDA' || st === 'CANCELADA') {
           concludedKeys.add(`${po.dataProducao}|${po.turno}|${it.produtoId}`);
         } else if (isManual && (activeUnitId === 'all' || po.unidadeId === activeUnitId)) {
           manualPendingQty += Math.max(0, it.quantidadePlanejada - it.quantidadeProduzida);
@@ -1421,7 +1421,7 @@ export const App: React.FC = () => {
 
   return (
     <div
-      className="w-screen flex flex-col bg-[#f8f9ff] text-[#0f172a] select-none overflow-hidden font-sans"
+      className="w-full flex flex-col bg-[#f8f9ff] text-[#0f172a] select-none overflow-hidden font-sans"
       style={{ height: '100dvh' }}
     >
       {/* 1. Top Title Bar */}
@@ -1450,13 +1450,13 @@ export const App: React.FC = () => {
       />
 
       {/* 2. Main Workspace Layout with 3 Columns */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 min-h-0 w-full flex overflow-hidden">
         {/* Column 1: Left Navigation Rail */}
         <Sidebar
           currentScreen={currentScreen}
           onNavigate={setCurrentScreen}
           userRole={effectiveUserProfile.role}
-          pendingOrdersCount={pendingOrdersCount}
+          confirmedOrdersCount={confirmedOrdersCount}
           itemsToProduceCount={itemsToProduceCount}
           lowStockCount={lowStockCount}
           pendingDeliveriesCount={pendingDeliveriesCount}

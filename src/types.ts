@@ -110,7 +110,7 @@ export interface StockMovement {
 }
 
 export type ProductionShift = 'MANHA' | 'TARDE' | 'NOITE';
-export type ProductionStatus = 'PLANEJADA' | 'EM_PREPARO' | 'CONCLUIDA';
+export type ProductionStatus = 'PLANEJADA' | 'EM_PREPARO' | 'CONCLUIDA' | 'CANCELADA';
 
 export interface ProductionItem {
   produtoId: string;
