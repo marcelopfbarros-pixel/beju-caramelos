@@ -2,6 +2,11 @@ import { Order, OrderStatus, Product, StoreUnit } from '../types';
 import { resolveCoordinates, haversineKm } from './routeOptimizerService';
 import { formatDeliveryTimeRange } from '../utils/deliveryTimeRange';
 import { formatCurrencyBR } from '../components/CurrencyInput';
+import {
+  getEffectivePaymentStatus,
+  getOrderPaidAmount,
+  getOrderRemainingAmount
+} from '../utils/paymentStatus';
 
 export interface WhatsAppAutomationSettings {
   autoPromptOnStatusChange: boolean;
@@ -96,6 +101,28 @@ export function normalizePhoneForWhatsApp(rawPhone: string): string {
   return digits;
 }
 
+export function resolveOrderUnit(order: Partial<Order>, units: StoreUnit[]): StoreUnit | undefined {
+  const preferredId =
+    order.tipoEntrega === 'RETIRADA'
+      ? order.unidadeRetiradaId || order.unidadeOrigemId
+      : order.unidadeOrigemId;
+
+  return (
+    (preferredId ? units.find(u => u.id === preferredId) : undefined) ||
+    (order.unidadeOrigemId ? units.find(u => u.id === order.unidadeOrigemId) : undefined) ||
+    units[0]
+  );
+}
+
+export function formatUnitAddress(unit?: StoreUnit): string {
+  if (!unit) return '';
+  const addr = (unit.endereco || '').trim();
+  const city = (unit.cidade || '').trim();
+  if (!addr) return city;
+  if (!city) return addr;
+  return addr.toLowerCase().includes(city.toLowerCase()) ? addr : `${addr} - ${city}`;
+}
+
 export function formatStatusNotificationMessage(
   order: Order,
   status: OrderStatus,
@@ -106,7 +133,9 @@ export function formatStatusNotificationMessage(
   const settings = customSettings || getWhatsAppAutomationSettings();
   const template = settings.templates[status] || DEFAULT_WHATSAPP_TEMPLATES[status];
   const prodMap = new Map(products.map(p => [p.id, p]));
-  const unit = units.find(u => u.id === (order.unidadeRetiradaId || order.unidadeOrigemId)) || units[0];
+  const originUnit = units.find(u => u.id === order.unidadeOrigemId) || units[0];
+  const pickupUnit = resolveOrderUnit(order, units) || originUnit;
+  const activeUnit = status === 'EM_ROTA' ? originUnit || pickupUnit : pickupUnit;
 
   const itensText = (order.itens || [])
     .map(i => `• ${i.quantidade}x ${prodMap.get(i.produtoId)?.descricao || 'Produto'} (R$ ${formatCurrencyBR(i.subtotal)})`)
@@ -119,14 +148,33 @@ export function formatStatusNotificationMessage(
     dinheiro: 'Dinheiro'
   }[order.formaPagamento] || order.formaPagamento;
 
+  const payStatus = getEffectivePaymentStatus(order);
+  const remainingAmt = getOrderRemainingAmount(order);
+  const paymentStatusNote =
+    payStatus === 'PAGO'
+      ? ' • [PAGO]'
+      : payStatus === 'SINAL'
+      ? ` • [Sinal pago: R$ ${formatCurrencyBR(getOrderPaidAmount(order))} | Restante: R$ ${formatCurrencyBR(remainingAmt)}]`
+      : '';
+  const paymentWithStatus = `${paymentLabel}${paymentStatusNote}`;
+
+  const pickupAddress = formatUnitAddress(pickupUnit);
+  const deliveryAddress = `${order.enderecoEntrega || 'Endereço cadastrado'}${
+    order.detalheEntrega ? ` • ${order.detalheEntrega}` : ''
+  }`;
+
   const modalidadeText =
     order.tipoEntrega === 'DELIVERY'
-      ? `Entrega Delivery (${order.enderecoEntrega || 'Endereço cadastrado'})`
-      : `Retirada na Loja (${unit?.nome || 'Unidade'})`;
+      ? `Entrega (${deliveryAddress})`
+      : `Retirada no Balcão (${pickupUnit?.nome || 'Loja'})${
+          !template.includes('{endereco}') && pickupAddress
+            ? `\n*Endereço de Coleta:* ${pickupAddress}`
+            : ''
+        }`;
 
   const pixInfo =
-    order.formaPagamento === 'pix'
-      ? `*Chave PIX:* ${unit?.chavePix || 'financeiro@bejucaramelos.com.br'}`
+    order.formaPagamento === 'pix' && payStatus !== 'PAGO'
+      ? `*Chave PIX:* ${originUnit?.chavePix || pickupUnit?.chavePix || 'financeiro@bejucaramelos.com.br'}`
       : '';
 
   const horarioText = formatDeliveryTimeRange(order.dataHoraEntrega, order.dataHoraEntregaFim, {
@@ -134,16 +182,27 @@ export function formatStatusNotificationMessage(
     turnoEntrega: order.tipoEntrega === 'DELIVERY' ? order.turnoEntrega : undefined
   });
 
+  const resolvedAddress = order.tipoEntrega === 'DELIVERY' ? deliveryAddress : pickupAddress;
+  const standaloneAddressLine =
+    order.tipoEntrega === 'DELIVERY'
+      ? resolvedAddress
+        ? `*Endereço de Entrega:* ${resolvedAddress}`
+        : ''
+      : resolvedAddress
+      ? `*Endereço de Coleta:* ${resolvedAddress}`
+      : '';
+
   return template
     .replace(/\{cliente\}/g, order.clienteNome || 'Cliente')
     .replace(/\{pedido\}/g, order.numeroPedido || '')
     .replace(/\{itens\}/g, itensText || '—')
     .replace(/\{total\}/g, formatCurrencyBR(order.valorTotal))
     .replace(/\{modalidade\}/g, modalidadeText)
-    .replace(/\{endereco\}/g, order.enderecoEntrega || unit?.endereco || '')
-    .replace(/\{unidade\}/g, unit?.nome || 'Beju Caramelos')
+    .replace(/(^|\n)\{endereco\}(?=\n|$)/g, `$1${standaloneAddressLine}`)
+    .replace(/\{endereco\}/g, resolvedAddress)
+    .replace(/\{unidade\}/g, activeUnit?.nome || 'Beju Caramelos')
     .replace(/\{horario\}/g, horarioText)
-    .replace(/\{pagamento\}/g, paymentLabel)
+    .replace(/\{pagamento\}/g, paymentWithStatus)
     .replace(/\{pix\}/g, pixInfo)
     .replace(/\n{3,}/g, '\n\n')
     .trim();

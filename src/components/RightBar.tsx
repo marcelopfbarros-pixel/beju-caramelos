@@ -50,7 +50,9 @@ import {
 } from '../services/routeOptimizerService';
 import {
   formatStatusNotificationMessage,
-  dispatchWhatsAppMessage
+  dispatchWhatsAppMessage,
+  resolveOrderUnit,
+  formatUnitAddress
 } from '../services/whatsappAutomationService';
 
 interface RightBarProps {
@@ -262,10 +264,13 @@ export const RightBar: React.FC<RightBarProps> = ({
         : scopedOrders
       : orders;
   const prodMap = new Map(products.map(p => [p.id, p]));
-  const unit = units.find(u => u.id === targetOrder?.unidadeOrigemId) || units[0];
 
   const generateWhatsAppText = (order?: Order): string => {
     if (!order) return 'Nenhum pedido selecionado.';
+
+    const originUnit = units.find(u => u.id === order.unidadeOrigemId) || units[0];
+    const pickupUnit = resolveOrderUnit(order, units) || originUnit;
+    const pickupAddress = formatUnitAddress(pickupUnit);
 
     const itensList = order.itens
       .map(i => {
@@ -290,6 +295,11 @@ export const RightBar: React.FC<RightBarProps> = ({
         ? ` • [Sinal pago: R$ ${formatCurrencyBR(getOrderPaidAmount(order))} | Restante: R$ ${formatCurrencyBR(remainingAmt)}]`
         : '';
 
+    const modalidadeLine =
+      order.tipoEntrega === 'DELIVERY'
+        ? `*Modalidade:* Entrega (${order.enderecoEntrega || 'Endereço informado'}${order.detalheEntrega ? ` • ${order.detalheEntrega}` : ''})`
+        : `*Modalidade:* Retirada no Balcão (${pickupUnit?.nome || 'Loja'})${pickupAddress ? `\n*Endereço de Coleta:* ${pickupAddress}` : ''}`;
+
     return `🍰 *Beju Caramelos*
 Olá, *${order.clienteNome}*! Confirmamos o seu pedido:
 
@@ -298,19 +308,20 @@ Olá, *${order.clienteNome}*! Confirmamos o seu pedido:
   tipoEntrega: order.tipoEntrega,
   turnoEntrega: order.tipoEntrega === 'DELIVERY' ? order.turnoEntrega : undefined
 })}
-*Modalidade:* ${order.tipoEntrega === 'DELIVERY' ? `Entrega (${order.enderecoEntrega || 'Endereço informado'})` : `Retirada no Balcão (${unit?.nome || 'Loja'})`}
+${modalidadeLine}
 
 *Itens Solicitados:*
 ${itensList}
 
 *Subtotal:* R$ ${formatCurrencyBR(order.valorSubtotal)}
-*Taxa de Entrega:* R$ ${formatCurrencyBR(order.taxaEntrega)}
-${order.desconto > 0 ? `*Desconto:* -R$ ${formatCurrencyBR(order.desconto)}\n` : ''}*TOTAL A PAGAR:* R$ ${formatCurrencyBR(order.valorTotal)}
+${order.tipoEntrega === 'DELIVERY' || order.taxaEntrega > 0 ? `*Taxa de Entrega:* R$ ${formatCurrencyBR(order.taxaEntrega)}\n` : ''}${order.desconto > 0 ? `*Desconto:* -R$ ${formatCurrencyBR(order.desconto)}\n` : ''}*TOTAL A PAGAR:* R$ ${formatCurrencyBR(order.valorTotal)}
 
 *Forma de Pagamento:* ${paymentLabel}${paymentStatusNote}${order.trocoPara ? ` (Troco para R$ ${formatCurrencyBR(order.trocoPara)})` : ''}
-${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro@bejucaramelos.com.br'}\n_Favor enviar o comprovante por aqui para finalizarmos o preparo!_` : ''}
+${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${originUnit?.chavePix || pickupUnit?.chavePix || 'financeiro@bejucaramelos.com.br'}\n_Favor enviar o comprovante por aqui para finalizarmos o preparo!_` : ''}
 ${order.observacoes ? `\n*Obs:* ${order.observacoes}` : ''}
-Obrigado por escolher a Beju Caramelos! ✨`;
+Obrigado por escolher a Beju Caramelos! ✨`
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
   };
 
   const whatsappMessage =
@@ -2167,12 +2178,12 @@ const RoutePlannerTool: React.FC<RoutePlannerToolProps> = ({
     )}&daddr=${encodeURIComponent(daddrQuery)}&dirflg=d&travelmode=driving&output=embed`;
   }, [selectedDeliveries, originAddress, originUnit]);
 
-  const buildWhatsappRouteMessage = () => {
+  const buildWhatsappRouteMessage = (deliveriesList: Order[] = selectedDeliveries) => {
     const lines = [
       `🚚 *ROTA DE ENTREGAS - BEJU CARAMELOS*`,
       `📍 *Partida (${originUnit?.nome || 'Unidade'}):* ${originAddress}`,
-      `📦 *Paradas (${selectedDeliveries.length}):*`,
-      ...selectedDeliveries.map((o, idx) => {
+      `📦 *Paradas (${deliveriesList.length}):*`,
+      ...deliveriesList.map((o, idx) => {
         const detail = getOrderDeliveryDetail(o);
         return `${idx + 1}. *${o.clienteNome}* (${o.clienteTelefone})\n   📌 ${o.enderecoEntrega || '-'}${
           detail !== '-' ? ` | Compl: ${detail}` : ''
@@ -2287,7 +2298,7 @@ const RoutePlannerTool: React.FC<RoutePlannerToolProps> = ({
         if (nav.canShare({ files: [pdfFile] })) {
           await nav.share({
             title: 'Romaneio de Entregas - Beju Caramelos',
-            text: buildWhatsappRouteMessage(),
+            text: buildWhatsappRouteMessage(deliveriesToExport),
             files: [pdfFile]
           });
           return;
@@ -2297,7 +2308,7 @@ const RoutePlannerTool: React.FC<RoutePlannerToolProps> = ({
       }
     }
 
-    const msg = `${buildWhatsappRouteMessage()}\n\n📄 *O PDF com a tabela de entregas (${fileName}) foi baixado para envio ao entregador!*`;
+    const msg = `${buildWhatsappRouteMessage(deliveriesToExport)}\n\n📄 *O PDF com a tabela de entregas (${fileName}) foi baixado para envio ao entregador!*`;
     const waUrl = `https://wa.me/?text=${encodeURIComponent(msg)}`;
     window.open(waUrl, '_blank', 'noopener,noreferrer');
   };

@@ -185,7 +185,7 @@ const SCREEN_TUTORIALS: Record<ScreenId, TutorialStep[]> = {
   configuracoes: [
     {
       title: 'Navegar pelas Abas de Configuração',
-      description: 'Alterne entre Usuários, Unidades, Metas, Whatsapp e Dados.',
+      description: 'Alterne entre Perfil, Usuários, Unidades, Metas, WhatsApp, Cardápio e Dados.',
       findTarget: () => findInMainByText('button', 'Usuários') || findVisible('main'),
     },
     {
@@ -195,8 +195,13 @@ const SCREEN_TUTORIALS: Record<ScreenId, TutorialStep[]> = {
     },
     {
       title: 'Configurar WhatsApp e Taxas',
-      description: 'Na aba Whatsapp, ajuste templates de mensagem, taxa base por km e link do Cardápio Digital.',
-      findTarget: () => findInMainByText('button', 'Whatsapp') || findVisible('main'),
+      description: 'Na aba WhatsApp, ajuste regras de taxa de entrega por km, templates de mensagem e integração opcional via API.',
+      findTarget: () => findInMainByText('button', 'WhatsApp') || findVisible('main'),
+    },
+    {
+      title: 'Personalizar Cardápio Digital',
+      description: 'Na aba Cardápio, compartilhe o link público e configure as animações de abertura e agradecimento.',
+      findTarget: () => findInMainByText('button', 'Cardápio') || findVisible('main'),
     },
     {
       title: 'Gerenciar Dados e Backup',

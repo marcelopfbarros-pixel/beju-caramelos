@@ -120,7 +120,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <div
       className={`relative shrink-0 print:hidden ${
-        isCollapsed ? 'w-14 sm:w-16' : 'w-14 sm:w-16 lg:w-64'
+        isCollapsed ? 'w-11 sm:w-12' : 'w-11 sm:w-12 lg:w-36'
       } h-[calc(100vh-3.5rem)] md:h-[calc(100vh-4rem)] transition-all duration-200`}
     >
       {!isCollapsed && (
@@ -132,12 +132,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
       )}
       <aside
         className={`flex ${
-          isCollapsed ? 'w-14 sm:w-16' : 'w-60 sm:w-64 shadow-2xl lg:shadow-none'
+          isCollapsed ? 'w-11 sm:w-12' : 'w-36 shadow-2xl lg:shadow-none'
         } bg-white border-r border-[#e2e8f0] flex-col justify-between h-full transition-all duration-200 absolute left-0 top-0 z-40 lg:relative`}
       >
       {/* Navigation Items */}
-      <div className="p-2.5 space-y-1 overflow-y-auto">
-        <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'gap-1.5 px-1.5'} py-2`}>
+      <div className="px-1.5 py-2 space-y-1 overflow-y-auto">
+        <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'gap-1 px-0.5'} py-1.5`}>
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
             title={isCollapsed ? 'Expandir Menu' : 'Recolher Menu'}
@@ -168,14 +168,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
               }}
               title={isCollapsed ? (item.title || item.label) : undefined}
               className={`${item.mobileOnly ? 'lg:hidden ' : ''}w-full flex items-center ${
-                isCollapsed ? 'justify-center px-2' : 'justify-between px-3'
+                isCollapsed ? 'justify-center px-1' : 'justify-between gap-1 px-1.5'
               } py-2.5 rounded-lg text-xs font-medium transition-all relative ${
                 isActive
                   ? 'bg-brand-50 text-brand-900 border border-brand-200/80 font-semibold shadow-xs'
                   : 'text-[#475569] hover:bg-[#f8f9ff] hover:text-[#0f172a]'
               }`}
             >
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-1.5 min-w-0">
                 <Icon
                   className={`w-4 h-4 shrink-0 ${
                     isActive ? 'text-brand-600' : 'text-[#64748b]'
@@ -186,7 +186,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
               {!isCollapsed && item.badge !== undefined && (
                 <span
-                  className={`text-[11px] font-mono px-2 py-0.5 rounded-full border ${item.badgeColor} font-semibold`}
+                  className={`text-[10px] font-mono px-1.5 py-0.5 leading-none rounded-full border ${item.badgeColor} font-semibold shrink-0`}
                 >
                   {item.badge}
                 </span>
@@ -202,7 +202,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Bottom Footer */}
       {!isCollapsed && (
-        <div className="p-3 border-t border-slate-100 text-[10px] text-slate-400 font-mono text-center">
+        <div className="px-1.5 py-2 border-t border-slate-100 text-[10px] text-slate-400 font-mono text-center truncate">
           Beju Caramelos v1.0
         </div>
       )}

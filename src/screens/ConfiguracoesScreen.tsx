@@ -100,7 +100,7 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
   onOpenCardapioDigital,
   activeUnitId
 }) => {
-  const [activeTab, setActiveTab] = useState<'perfil' | 'usuarios' | 'empresas' | 'metas' | 'whatsapp' | 'banco'>('perfil');
+  const [activeTab, setActiveTab] = useState<'perfil' | 'usuarios' | 'empresas' | 'metas' | 'whatsapp' | 'cardapio' | 'banco'>('perfil');
   const [usersViewMode, setUsersViewMode] = useState<'CARDS' | 'TABLE'>(() =>
     typeof window !== 'undefined' && window.innerWidth < 768 ? 'CARDS' : 'TABLE'
   );
@@ -376,7 +376,7 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
     }
   };
 
-  type ConfigTabId = 'perfil' | 'usuarios' | 'empresas' | 'metas' | 'whatsapp' | 'banco';
+  type ConfigTabId = 'perfil' | 'usuarios' | 'empresas' | 'metas' | 'whatsapp' | 'cardapio' | 'banco';
   const configTabs: { id: ConfigTabId; label: string; mobileLabel?: string; icon: React.ReactNode }[] = [
     { id: 'perfil', label: 'Perfil', icon: <User className="w-3.5 h-3.5 shrink-0" /> },
     ...(userProfile.role === 'ADMIN'
@@ -386,9 +386,13 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
     { id: 'metas', label: 'Metas', icon: <Target className="w-3.5 h-3.5 shrink-0" /> },
     {
       id: 'whatsapp',
-      label: 'WhatsApp & Cardápio',
-      mobileLabel: 'WhatsApp',
+      label: 'WhatsApp',
       icon: <MessageSquare className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+    },
+    {
+      id: 'cardapio',
+      label: 'Cardápio',
+      icon: <Sparkles className="w-3.5 h-3.5 text-brand-600 shrink-0" />
     },
     { id: 'banco', label: 'Dados', icon: <Database className="w-3.5 h-3.5 shrink-0" /> }
   ];
@@ -417,7 +421,7 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                   onClick={() => setActiveTab(tab.id)}
                   title={tab.label}
                   aria-label={tab.label}
-                  className={`flex items-center justify-center gap-1.5 h-8 px-2 md:px-3.5 text-[11px] md:text-xs font-semibold rounded-lg transition-all min-w-0 ${
+                  className={`flex items-center justify-center gap-1.5 h-8 px-2 md:px-2.5 lg:px-3 text-[11px] md:text-xs font-semibold rounded-lg transition-all min-w-0 ${
                     activeTab === tab.id
                       ? 'bg-white text-slate-900 shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
@@ -1357,8 +1361,8 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
           </div>
         )}
 
-        {/* SEÇÃO WHATSAPP & CARDÁPIO IA */}
-        {activeTab === 'whatsapp' && (
+        {/* SEÇÃO CARDÁPIO DIGITAL */}
+        {activeTab === 'cardapio' && (
           <div className="space-y-6">
             {/* Card 1: Cardápio Digital Público & Assistente IA */}
             <div className="bg-white border border-[#e2e8f0] rounded-xl p-6 shadow-xs space-y-4">
@@ -1769,7 +1773,12 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                 </div>
               </div>
             </div>
+          </div>
+        )}
 
+        {/* SEÇÃO WHATSAPP */}
+        {activeTab === 'whatsapp' && (
+          <div className="space-y-6">
             {/* Card 2: Cálculo de Taxa de Entrega por Distância e Loja Mais Próxima */}
             <div className="bg-white border border-[#e2e8f0] rounded-xl p-6 shadow-xs space-y-4">
               <div className="border-b border-slate-100 pb-3">

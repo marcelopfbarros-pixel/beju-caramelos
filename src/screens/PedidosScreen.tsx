@@ -68,7 +68,9 @@ import {
   dispatchWhatsAppMessage,
   getWhatsAppAutomationSettings,
   calculateNearestUnitAndDeliveryFee,
-  normalizePhoneForWhatsApp
+  normalizePhoneForWhatsApp,
+  resolveOrderUnit,
+  formatUnitAddress
 } from '../services/whatsappAutomationService';
 
 interface PedidosScreenProps {
@@ -371,7 +373,10 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
           : undefined,
       tipoEntrega: (editingOrder.tipoEntrega as DeliveryType) || 'DELIVERY',
       unidadeOrigemId: editingOrder.unidadeOrigemId || units[0].id,
-      unidadeRetiradaId: editingOrder.unidadeRetiradaId,
+      unidadeRetiradaId:
+        editingOrder.tipoEntrega === 'RETIRADA'
+          ? editingOrder.unidadeRetiradaId || editingOrder.unidadeOrigemId
+          : undefined,
       clienteNome: editingOrder.clienteNome || '',
       clienteTelefone: editingOrder.clienteTelefone || '',
       clienteEndereco: editingOrder.clienteEndereco,
@@ -513,11 +518,20 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
 
   const handleCopySummary = (order: Partial<Order>) => {
     const prodMap = new Map(products.map(p => [p.id, p]));
-    const unit = units.find(u => u.id === order.unidadeOrigemId) || units[0];
+    const originUnit = units.find(u => u.id === order.unidadeOrigemId) || units[0];
+    const pickupUnit = resolveOrderUnit(order, units) || originUnit;
+    const pickupAddress = formatUnitAddress(pickupUnit);
 
     const itensText = (order.itens || [])
       .map(i => `• ${i.quantidade}x ${prodMap.get(i.produtoId)?.descricao || 'Item'} (R$ ${formatCurrencyBR(i.subtotal)})`)
       .join('\n');
+
+    const effectiveSubtotal =
+      (order.itens || []).reduce((acc, i) => acc + i.subtotal, 0) || order.valorSubtotal || 0;
+    const effectiveTaxa = order.tipoEntrega === 'RETIRADA' ? 0 : order.taxaEntrega || 0;
+    const effectiveDesconto = order.desconto || 0;
+    const effectiveTotal = Math.max(0, effectiveSubtotal + effectiveTaxa - effectiveDesconto);
+    const normalizedOrder = { ...order, valorSubtotal: effectiveSubtotal, taxaEntrega: effectiveTaxa, desconto: effectiveDesconto, valorTotal: effectiveTotal };
 
     const paymentLabel = {
       pix: 'PIX',
@@ -526,31 +540,37 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
       dinheiro: 'Dinheiro'
     }[order.formaPagamento || 'pix'];
 
-    const payStatus = getEffectivePaymentStatus(order);
-    const remainingAmt = getOrderRemainingAmount(order);
+    const payStatus = getEffectivePaymentStatus(normalizedOrder);
+    const remainingAmt = getOrderRemainingAmount(normalizedOrder);
     const paymentStatusNote =
       payStatus === 'PAGO'
         ? ' • [PAGO]'
         : payStatus === 'SINAL'
-        ? ` • [Sinal pago: R$ ${formatCurrencyBR(getOrderPaidAmount(order))} | Restante: R$ ${formatCurrencyBR(remainingAmt)}]`
+        ? ` • [Sinal pago: R$ ${formatCurrencyBR(getOrderPaidAmount(normalizedOrder))} | Restante: R$ ${formatCurrencyBR(remainingAmt)}]`
         : '';
+
+    const modalidadeLine =
+      order.tipoEntrega === 'DELIVERY'
+        ? `*Modalidade:* Entrega (${order.enderecoEntrega || 'Endereço informado'}${order.detalheEntrega ? ` • ${order.detalheEntrega}` : ''})`
+        : `*Modalidade:* Retirada no Balcão (${pickupUnit?.nome || 'Loja'})${pickupAddress ? `\n*Endereço de Coleta:* ${pickupAddress}` : ''}`;
 
     const summary = `🍰 *Beju Caramelos*
 Olá, *${order.clienteNome || 'Cliente'}*! Segue o resumo do seu pedido:
 
 *Pedido:* ${order.numeroPedido}
 *Data/Horário:* ${order.dataHoraEntrega ? formatDeliveryTimeRange(order.dataHoraEntrega, order.dataHoraEntregaFim, { tipoEntrega: order.tipoEntrega, turnoEntrega: order.tipoEntrega === 'DELIVERY' ? order.turnoEntrega : undefined }) : 'A combinar'}
-*Modalidade:* ${order.tipoEntrega === 'DELIVERY' ? `Entrega (${order.enderecoEntrega || 'Endereço informado'})` : `Retirada no Balcão (${unit?.nome || 'Loja'})`}
+${modalidadeLine}
 
 *Itens Solicitados:*
 ${itensText}
 
-*Subtotal:* R$ ${formatCurrencyBR(order.valorSubtotal || 0)}
-*Taxa de Entrega:* R$ ${formatCurrencyBR(order.taxaEntrega || 0)}
-${(order.desconto || 0) > 0 ? `*Desconto:* -R$ ${formatCurrencyBR(order.desconto || 0)}\n` : ''}*TOTAL:* R$ ${formatCurrencyBR(order.valorTotal || 0)}
+*Subtotal:* R$ ${formatCurrencyBR(effectiveSubtotal)}
+${order.tipoEntrega === 'DELIVERY' || effectiveTaxa > 0 ? `*Taxa de Entrega:* R$ ${formatCurrencyBR(effectiveTaxa)}\n` : ''}${effectiveDesconto > 0 ? `*Desconto:* -R$ ${formatCurrencyBR(effectiveDesconto)}\n` : ''}*TOTAL:* R$ ${formatCurrencyBR(effectiveTotal)}
 
 *Pagamento:* ${paymentLabel}${paymentStatusNote}${order.trocoPara ? ` (Troco para R$ ${formatCurrencyBR(order.trocoPara)})` : ''}
-${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${unit?.chavePix || 'financeiro@bejucaramelos.com.br'}\n_Envie o comprovante por aqui para confirmação!_` : ''}`;
+${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${originUnit?.chavePix || pickupUnit?.chavePix || 'financeiro@bejucaramelos.com.br'}\n_Envie o comprovante por aqui para confirmação!_` : ''}${order.observacoes ? `\n*Obs:* ${order.observacoes}` : ''}`
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
 
     navigator.clipboard.writeText(summary);
     setCopyFeedback(true);
@@ -1463,6 +1483,7 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${unit?
                           setEditingOrder({
                             ...editingOrder,
                             tipoEntrega: 'DELIVERY',
+                            unidadeRetiradaId: undefined,
                             turnoEntrega: shift,
                             dataHoraEntrega: start,
                             dataHoraEntregaFim: end
@@ -1481,8 +1502,10 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${unit?
                           setEditingOrder({
                             ...editingOrder,
                             tipoEntrega: 'RETIRADA',
+                            unidadeRetiradaId: editingOrder.unidadeRetiradaId || editingOrder.unidadeOrigemId,
                             turnoEntrega: undefined,
-                            taxaEntrega: 0
+                            taxaEntrega: 0,
+                            valorTotal: Math.max(0, (editingOrder.valorSubtotal || 0) - (editingOrder.desconto || 0))
                           })
                         }
                         className="text-brand-600 focus:ring-brand-500"
