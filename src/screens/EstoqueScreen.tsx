@@ -415,7 +415,7 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
             onClick={() => ExcelService.exportStock(stock, products, units)}
             title="Exportar"
             aria-label="Exportar"
-            className="hidden md:flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-xs"
+            className="flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-xs"
           >
             <Download className="w-4 h-4 text-slate-500" />
           </button>
@@ -447,7 +447,7 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
             onClick={() => window.print()}
             title="Imprimir"
             aria-label="Imprimir"
-            className="hidden md:flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors shadow-xs"
+            className="flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors shadow-xs"
           >
             <Printer className="w-4 h-4" />
           </button>

@@ -5,8 +5,6 @@ import {
   X, 
   Mail, 
   Lock, 
-  User, 
-  ShieldCheck, 
   AlertCircle, 
   Loader2, 
   LogIn, 
@@ -32,16 +30,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   currentUser,
   users = [],
   onUpdateUserProfile,
-  onRegisterUser,
   supabaseUser,
   onSupabaseAuthChange,
   onLogout
 }) => {
-  const [isSignUp, setIsSignUp] = useState(false);
   const [isSwitchingUser, setIsSwitchingUser] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [nome, setNome] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -69,65 +64,51 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     setLoading(true);
     const normalizedEmail = email.trim().toLowerCase();
-    const matchedLocal = users.find(u => u.email.toLowerCase() === normalizedEmail);
 
     try {
-      if (!isSignUp && matchedLocal) {
-        if (matchedLocal.ativo === false) {
-          setErrorMsg('Este usuário está desativado. Contate um administrador.');
-          setLoading(false);
-          return;
+      if (SupabaseService.isConfigured()) {
+        const { authUser, profile } = await SupabaseService.signInOperator(normalizedEmail, password);
+        if (profile) {
+          onUpdateUserProfile(profile);
+        } else if (authUser) {
+          const matchedByEmail = users.find(u => u.email.toLowerCase() === normalizedEmail);
+          onUpdateUserProfile(
+            matchedByEmail
+              ? { ...matchedByEmail, autenticadoGoogle: false }
+              : {
+                  ...currentUser,
+                  id: authUser.id,
+                  email: authUser.email || normalizedEmail,
+                  nome:
+                    authUser.user_metadata?.full_name ||
+                    authUser.user_metadata?.name ||
+                    normalizedEmail.split('@')[0],
+                  avatarUrl: '/logo.jpg',
+                  role: 'ATENDIMENTO',
+                  unidadePadraoId: currentUser.unidadePadraoId,
+                  autenticadoGoogle: false,
+                  ativo: true,
+                }
+          );
         }
-        if (matchedLocal.senha) {
-          if (matchedLocal.senha !== password) {
-            setErrorMsg('Senha numérica de 8 dígitos incorreta.');
-            setLoading(false);
-            return;
-          }
-          onUpdateUserProfile({
-            ...matchedLocal,
-            autenticadoGoogle: false
-          });
-          onSupabaseAuthChange();
-          onClose();
-          setLoading(false);
-          return;
-        }
-      }
-
-      if (isSignUp) {
-        const newUser: UserProfile = {
-          id: `usr-${Date.now()}`,
-          nome: nome.trim() || normalizedEmail.split('@')[0],
-          email: normalizedEmail,
-          avatarUrl: currentUser.avatarUrl,
-          role: 'ATENDIMENTO',
-          unidadePadraoId: currentUser.unidadePadraoId,
-          autenticadoGoogle: false,
-          ativo: true,
-          unidadesPermitidas: currentUser.unidadesPermitidas || [],
-          senha: password
-        };
-        if (onRegisterUser) {
-          await onRegisterUser(newUser);
-        }
-        onUpdateUserProfile(newUser);
-        onSupabaseAuthChange();
-        setSuccessMsg('Operador cadastrado e conectado com sucesso!');
+        await onSupabaseAuthChange();
         onClose();
       } else {
-        const { user } = await SupabaseService.signInWithPassword(normalizedEmail, password);
-        if (user) {
-          onUpdateUserProfile({
-            ...currentUser,
-            email: user.email || normalizedEmail,
-            nome: user.user_metadata?.full_name || user.user_metadata?.name || normalizedEmail.split('@')[0],
-            avatarUrl: user.user_metadata?.avatar_url || user.user_metadata?.picture || currentUser.avatarUrl,
-            autenticadoGoogle: user.app_metadata?.provider === 'google'
-          });
-          onSupabaseAuthChange();
-          onClose();
+        const matchedLocal = users.find(u => u.email.toLowerCase() === normalizedEmail);
+        if (!matchedLocal || matchedLocal.senha !== password) {
+          setErrorMsg('E-mail ou senha numérica de 8 dígitos incorretos.');
+          return;
         }
+        if (matchedLocal.ativo === false) {
+          setErrorMsg('Este usuário está desativado. Contate um administrador.');
+          return;
+        }
+        onUpdateUserProfile({
+          ...matchedLocal,
+          autenticadoGoogle: false
+        });
+        await onSupabaseAuthChange();
+        onClose();
       }
     } catch (err: any) {
       console.error('Erro na autenticação:', err);
@@ -210,7 +191,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   type="button"
                   onClick={() => {
                     setIsSwitchingUser(true);
-                    setIsSignUp(false);
                     setEmail('');
                     setPassword('');
                     setErrorMsg(null);
@@ -246,7 +226,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   </button>
                 </div>
               )}
-              {!isSignUp && users.filter(u => u.ativo !== false).length > 0 && (
+              {users.filter(u => u.ativo !== false).length > 0 && (
                 <div>
                   <label className="text-[11px] font-semibold text-slate-600 block mb-1">
                     Selecionar operador cadastrado
@@ -285,23 +265,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
               {/* Email / Password Form */}
               <form onSubmit={handleEmailAuth} className="space-y-3">
-                {isSignUp && (
-                  <div>
-                    <label className="text-[11px] font-semibold text-slate-700 block mb-1">Nome Completo</label>
-                    <div className="relative">
-                      <User className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-3" />
-                      <input
-                        type="text"
-                        required
-                        value={nome}
-                        onChange={(e) => setNome(e.target.value)}
-                        placeholder="Ex: Marcelo Barros"
-                        className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:bg-white focus:outline-brand-500"
-                      />
-                    </div>
-                  </div>
-                )}
-
                 <div>
                   <label className="text-[11px] font-semibold text-slate-700 block mb-1">E-mail Corporativo</label>
                   <div className="relative">
@@ -344,20 +307,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   ) : (
                     <>
                       <LogIn className="w-4 h-4" />
-                      <span>{isSignUp ? 'Criar Conta no BD' : 'Acessar Sistema'}</span>
+                      <span>Acessar Sistema</span>
                     </>
                   )}
                 </button>
               </form>
 
               <div className="pt-2 flex items-center justify-between gap-2">
-                <button
-                  type="button"
-                  onClick={() => { setIsSignUp(!isSignUp); setErrorMsg(null); }}
-                  className="text-xs text-brand-700 hover:underline font-semibold"
-                >
-                  {isSignUp ? 'Já tem uma conta? Fazer login' : 'Novo operador? Criar cadastro'}
-                </button>
+                <span className="text-[11px] text-slate-500 font-medium">
+                  Não possui acesso? Solicite o cadastro ao administrador.
+                </span>
                 {onLogout && (
                   <button
                     type="button"

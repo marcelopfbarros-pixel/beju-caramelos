@@ -254,8 +254,7 @@ export class ExcelService {
       'Unidade Padrão ID': u.unidadePadraoId || '',
       'Unidades Permitidas JSON': JSON.stringify(u.unidadesPermitidas || []),
       'Ativo': u.ativo !== false ? 'SIM' : 'NÃO',
-      'Avatar URL': u.avatarUrl || '',
-      'Senha': u.senha || ''
+      'Avatar URL': u.avatarUrl || ''
     })));
     XLSX.utils.book_append_sheet(wb, wsUsers, 'Usuarios');
 

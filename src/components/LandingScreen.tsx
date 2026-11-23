@@ -3,12 +3,10 @@ import {
   Mail,
   Lock,
   LogIn,
-  UserPlus,
   Loader2,
   AlertCircle,
   CheckCircle2,
   Sparkles,
-  User as UserIcon,
 } from 'lucide-react';
 import { StoreUnit, UserProfile } from '../types';
 import { SupabaseService } from '../services/supabaseService';
@@ -29,12 +27,9 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({
   units,
   isSupabaseOnline,
   onUpdateUserProfile,
-  onRegisterUser,
   onSupabaseAuthChange,
   onOpenCardapioDigital,
 }) => {
-  const [isSignUp, setIsSignUp] = useState(false);
-  const [nome, setNome] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -55,81 +50,50 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({
 
     setLoading(true);
     const normalizedEmail = email.trim().toLowerCase();
-    const matchedLocal = users.find(u => u.email.toLowerCase() === normalizedEmail);
     const defaultUnitId = units.find(u => u.ativo)?.id || 'u-central';
 
     try {
-      if (!isSignUp && matchedLocal) {
+      if (SupabaseService.isConfigured()) {
+        const { authUser, profile } = await SupabaseService.signInOperator(normalizedEmail, password);
+        if (profile) {
+          onUpdateUserProfile(profile);
+        } else if (authUser) {
+          const existingByEmail = users.find(u => u.email.toLowerCase() === normalizedEmail);
+          onUpdateUserProfile(
+            existingByEmail
+              ? { ...existingByEmail, autenticadoGoogle: false }
+              : {
+                  id: authUser.id,
+                  nome:
+                    authUser.user_metadata?.full_name ||
+                    authUser.user_metadata?.name ||
+                    normalizedEmail.split('@')[0],
+                  email: authUser.email || normalizedEmail,
+                  avatarUrl: '/logo.jpg',
+                  role: 'ATENDIMENTO',
+                  unidadePadraoId: defaultUnitId,
+                  autenticadoGoogle: false,
+                  ativo: true,
+                  unidadesPermitidas: [],
+                }
+          );
+        }
+        await onSupabaseAuthChange();
+      } else {
+        const matchedLocal = users.find(u => u.email.toLowerCase() === normalizedEmail);
+        if (!matchedLocal || matchedLocal.senha !== password) {
+          setErrorMsg('E-mail ou senha numérica de 8 dígitos incorretos.');
+          return;
+        }
         if (matchedLocal.ativo === false) {
           setErrorMsg('Este usuário está desativado. Contate um administrador.');
-          setLoading(false);
           return;
         }
-        if (matchedLocal.senha) {
-          if (matchedLocal.senha !== password) {
-            setErrorMsg('Senha numérica de 8 dígitos incorreta.');
-            setLoading(false);
-            return;
-          }
-          onUpdateUserProfile({
-            ...matchedLocal,
-            autenticadoGoogle: false,
-          });
-          await onSupabaseAuthChange();
-          setLoading(false);
-          return;
-        }
-      }
-
-      if (isSignUp) {
-        const newUser: UserProfile = {
-          id: `usr-${Date.now()}`,
-          nome: nome.trim() || normalizedEmail.split('@')[0],
-          email: normalizedEmail,
-          avatarUrl: '/logo.jpg',
-          role: 'ATENDIMENTO',
-          unidadePadraoId: defaultUnitId,
+        onUpdateUserProfile({
+          ...matchedLocal,
           autenticadoGoogle: false,
-          ativo: true,
-          unidadesPermitidas: defaultUnitId ? [defaultUnitId] : [],
-          senha: password,
-        };
-        if (onRegisterUser) {
-          await onRegisterUser(newUser);
-        }
-        onUpdateUserProfile(newUser);
+        });
         await onSupabaseAuthChange();
-        setSuccessMsg('Operador cadastrado e conectado com sucesso!');
-      } else {
-        if (!SupabaseService.isConfigured()) {
-          setErrorMsg('E-mail ou senha numérica de 8 dígitos incorretos.');
-          setLoading(false);
-          return;
-        }
-        const { user } = await SupabaseService.signInWithPassword(normalizedEmail, password);
-        if (user) {
-          const existingByEmail = users.find(u => u.email.toLowerCase() === normalizedEmail);
-          onUpdateUserProfile({
-            id: existingByEmail?.id || user.id,
-            nome:
-              existingByEmail?.nome ||
-              user.user_metadata?.full_name ||
-              user.user_metadata?.name ||
-              normalizedEmail.split('@')[0],
-            email: user.email || normalizedEmail,
-            avatarUrl:
-              existingByEmail?.avatarUrl ||
-              user.user_metadata?.avatar_url ||
-              user.user_metadata?.picture ||
-              '/logo.jpg',
-            role: existingByEmail?.role || 'ATENDIMENTO',
-            unidadePadraoId: existingByEmail?.unidadePadraoId || defaultUnitId,
-            autenticadoGoogle: user.app_metadata?.provider === 'google',
-            ativo: existingByEmail?.ativo ?? true,
-            unidadesPermitidas: existingByEmail?.unidadesPermitidas || [],
-          });
-          await onSupabaseAuthChange();
-        }
       }
     } catch (err: any) {
       console.error('Erro na autenticação:', err);
@@ -202,7 +166,7 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({
             <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
               <div>
                 <h2 className="font-bold text-sm">
-                  {isSignUp ? 'Cadastrar Novo Operador' : 'LogIn'}
+                  LogIn
                 </h2>
                 <p className="text-[11px] text-slate-400">
                   Entre com seu e-mail e senha numérica de 8 dígitos
@@ -227,23 +191,6 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({
               )}
 
               <form onSubmit={handleEmailAuth} className="space-y-3">
-                {isSignUp && (
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Nome do Operador</label>
-                    <div className="relative">
-                      <UserIcon className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                      <input
-                        type="text"
-                        required
-                        value={nome}
-                        onChange={(e) => setNome(e.target.value)}
-                        placeholder="Ex: Maria Silva"
-                        className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-brand-500"
-                      />
-                    </div>
-                  </div>
-                )}
-
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-600 mb-1">E-mail</label>
                   <div className="relative">
@@ -284,28 +231,16 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({
                 >
                   {loading ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : isSignUp ? (
-                    <UserPlus className="w-4 h-4" />
                   ) : (
                     <LogIn className="w-4 h-4" />
                   )}
-                  <span>{isSignUp ? 'Cadastrar Operador' : 'Entrar no Sistema'}</span>
+                  <span>Entrar no Sistema</span>
                 </button>
               </form>
 
-              <div className="text-center pt-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsSignUp(!isSignUp);
-                    setErrorMsg(null);
-                    setSuccessMsg(null);
-                  }}
-                  className="text-xs text-brand-600 hover:underline font-medium cursor-pointer"
-                >
-                  {isSignUp ? 'Já tenho conta. Voltar para Login' : 'Primeiro acesso? Cadastrar novo operador'}
-                </button>
-              </div>
+              <p className="text-center pt-1 text-[11px] text-slate-500 font-medium">
+                Não possui acesso? Solicite o cadastro ao administrador.
+              </p>
             </div>
           </div>
         </div>

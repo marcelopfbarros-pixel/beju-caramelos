@@ -617,7 +617,7 @@ export class SupabaseService {
     if (!this.isConfigured()) return [];
     const { data, error } = await supabase!
       .from('usuarios_perfis')
-      .select('*')
+      .select('id, email, nome, avatar_url, role, unidade_padrao_id, ativo, unidades_permitidas')
       .order('nome');
 
     if (error) {
@@ -634,13 +634,56 @@ export class SupabaseService {
       unidadePadraoId: u.unidade_padrao_id || '',
       autenticadoGoogle: false,
       ativo: u.ativo !== false,
-      unidadesPermitidas: Array.isArray(u.unidades_permitidas) ? u.unidades_permitidas : [],
-      senha: u.senha_pin || undefined
+      unidadesPermitidas: Array.isArray(u.unidades_permitidas) ? u.unidades_permitidas : []
     }));
   }
 
   static async saveUser(user: UserProfile): Promise<UserProfile> {
     if (!this.isConfigured()) return user;
+
+    const pinTrimmed = user.senha?.trim();
+    const hasValidPin = Boolean(pinTrimmed && /^\d{8}$/.test(pinTrimmed));
+
+    // Prefer Edge Function when deployed (updates Auth + bcrypt credentials + profile atomically)
+    try {
+      const { data: fnData, error: fnErr } = await supabase!.functions.invoke('operator-auth', {
+        body: {
+          action: 'manage_user',
+          user: {
+            ...user,
+            senha: hasValidPin ? pinTrimmed : undefined
+          }
+        }
+      });
+
+      if (!fnErr && fnData?.ok && fnData?.user) {
+        const saved = fnData.user;
+        return {
+          id: saved.id,
+          email: saved.email,
+          nome: saved.nome,
+          avatarUrl: saved.avatar_url || '',
+          role: (saved.role || 'ATENDIMENTO') as UserProfile['role'],
+          unidadePadraoId: saved.unidade_padrao_id || '',
+          autenticadoGoogle: user.autenticadoGoogle,
+          ativo: saved.ativo !== false,
+          unidadesPermitidas: Array.isArray(saved.unidades_permitidas) ? saved.unidades_permitidas : []
+        };
+      }
+      if (fnData && fnData.ok === false && fnData.message) {
+        throw new Error(fnData.message);
+      }
+    } catch (fnCatchErr: any) {
+      const msg = String(fnCatchErr?.message || '');
+      if (
+        msg &&
+        !msg.includes('Failed to send') &&
+        !msg.includes('FunctionsFetchError') &&
+        !msg.includes('404')
+      ) {
+        throw fnCatchErr;
+      }
+    }
 
     const isClientGenerated = !user.id || user.id.startsWith('usr-');
     const isUuid = (v?: string) => !!v && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
@@ -654,9 +697,6 @@ export class SupabaseService {
       ativo: user.ativo !== false,
       unidades_permitidas: Array.isArray(user.unidadesPermitidas) ? user.unidadesPermitidas : []
     };
-    if (user.senha !== undefined) {
-      payload.senha_pin = user.senha || null;
-    }
     if (!isClientGenerated && isUuid(user.id)) {
       payload.id = user.id;
     }
@@ -664,10 +704,25 @@ export class SupabaseService {
     const { data, error } = await supabase!
       .from('usuarios_perfis')
       .upsert(payload, { onConflict: 'email' })
-      .select()
+      .select('id, email, nome, avatar_url, role, unidade_padrao_id, ativo, unidades_permitidas')
       .single();
 
     if (error) throw error;
+
+    if (hasValidPin) {
+      try {
+        const { error: pinErr } = await supabase!.rpc('atualizar_pin_operador', {
+          p_usuario_id: data.id,
+          p_novo_pin: pinTrimmed
+        });
+        if (pinErr) {
+          console.warn('Falha ao atualizar PIN via RPC:', pinErr);
+        }
+      } catch (pinCatch) {
+        console.warn('Falha ao atualizar PIN via RPC:', pinCatch);
+      }
+    }
+
     return {
       id: data.id,
       email: data.email,
@@ -677,13 +732,21 @@ export class SupabaseService {
       unidadePadraoId: data.unidade_padrao_id || '',
       autenticadoGoogle: user.autenticadoGoogle,
       ativo: data.ativo !== false,
-      unidadesPermitidas: Array.isArray(data.unidades_permitidas) ? data.unidades_permitidas : [],
-      senha: data.senha_pin || undefined
+      unidadesPermitidas: Array.isArray(data.unidades_permitidas) ? data.unidades_permitidas : []
     };
   }
 
   static async toggleUserActive(userId: string, ativo: boolean): Promise<void> {
     if (!this.isConfigured() || userId.startsWith('usr-')) return;
+    try {
+      const { data: fnData, error: fnErr } = await supabase!.functions.invoke('operator-auth', {
+        body: { action: 'toggle_active', userId, ativo }
+      });
+      if (!fnErr && fnData?.ok) return;
+    } catch {
+      // Fallback when operator-auth Edge Function is not yet deployed
+    }
+
     const { error } = await supabase!
       .from('usuarios_perfis')
       .update({ ativo })
@@ -904,26 +967,73 @@ export class SupabaseService {
   static async cleanMockData(): Promise<void> {
     if (!this.isConfigured()) throw new Error('Supabase não configurado');
 
-    // Ordem segura respeitando chaves estrangeiras; preserva produtos, categorias, usuarios_perfis e empresas_unidades
-    const tablesToClean = [
-      'itens_producao',
-      'itens_pedido',
-      'movimentacoes_estoque',
-      'estoque_unidades',
-      'ordens_producao',
-      'pedidos',
-      'clientes',
-    ] as const;
+    // Remove apenas registros identificados com "MOCK".
+    // Nunca altera empresas_unidades, produtos, categorias, usuarios_perfis nem registros reais.
+    const { data: mockPOs, error: mockPoQueryErr } = await supabase!
+      .from('ordens_producao')
+      .select('id')
+      .ilike('codigo_ordem', '%MOCK%');
+    if (mockPoQueryErr) throw new Error(`Erro ao consultar ordens_producao mock: ${mockPoQueryErr.message}`);
+    const mockPoIds = (mockPOs || []).map((r: any) => r.id);
 
-    for (const table of tablesToClean) {
+    const { data: mockOrders, error: mockOrdQueryErr } = await supabase!
+      .from('pedidos')
+      .select('id')
+      .ilike('numero_pedido', '%MOCK%');
+    if (mockOrdQueryErr) throw new Error(`Erro ao consultar pedidos mock: ${mockOrdQueryErr.message}`);
+    const mockOrderIds = (mockOrders || []).map((r: any) => r.id);
+
+    if (mockPoIds.length > 0) {
       const { error } = await supabase!
-        .from(table)
+        .from('itens_producao')
         .delete()
-        .neq('id', '00000000-0000-0000-0000-000000000000');
-      if (error) {
-        throw new Error(`Erro ao limpar ${table}: ${error.message}`);
-      }
+        .in('ordem_producao_id', mockPoIds);
+      if (error) throw new Error(`Erro ao limpar itens_producao mock: ${error.message}`);
     }
+
+    if (mockOrderIds.length > 0) {
+      const { error: poRefErr } = await supabase!
+        .from('itens_producao')
+        .delete()
+        .in('pedido_origem_id', mockOrderIds);
+      if (poRefErr) throw new Error(`Erro ao limpar referências de pedido em itens_producao mock: ${poRefErr.message}`);
+
+      const { error: itemOrdErr } = await supabase!
+        .from('itens_pedido')
+        .delete()
+        .in('pedido_id', mockOrderIds);
+      if (itemOrdErr) throw new Error(`Erro ao limpar itens_pedido mock: ${itemOrdErr.message}`);
+    }
+
+    const { error: itemObsErr } = await supabase!
+      .from('itens_pedido')
+      .delete()
+      .ilike('observacoes_item', '%MOCK%');
+    if (itemObsErr) throw new Error(`Erro ao limpar itens_pedido marcados com MOCK: ${itemObsErr.message}`);
+
+    const { error: movErr } = await supabase!
+      .from('movimentacoes_estoque')
+      .delete()
+      .ilike('motivo', '%MOCK%');
+    if (movErr) throw new Error(`Erro ao limpar movimentacoes_estoque mock: ${movErr.message}`);
+
+    const { error: poDelErr } = await supabase!
+      .from('ordens_producao')
+      .delete()
+      .ilike('codigo_ordem', '%MOCK%');
+    if (poDelErr) throw new Error(`Erro ao limpar ordens_producao mock: ${poDelErr.message}`);
+
+    const { error: ordDelErr } = await supabase!
+      .from('pedidos')
+      .delete()
+      .ilike('numero_pedido', '%MOCK%');
+    if (ordDelErr) throw new Error(`Erro ao limpar pedidos mock: ${ordDelErr.message}`);
+
+    const { error: custDelErr } = await supabase!
+      .from('clientes')
+      .delete()
+      .ilike('observacoes', '%MOCK%');
+    if (custDelErr) throw new Error(`Erro ao limpar clientes mock: ${custDelErr.message}`);
   }
 
   static async populateMockData(): Promise<{
@@ -952,82 +1062,15 @@ export class SupabaseService {
     const unitPool = lojaUnits.length > 0 ? lojaUnits : units;
     const orderUnitPool = units;
 
-    // 1. Categorias: reutiliza existentes ou popula se vazio
+    // 1. Categorias e 2. Produtos: apenas leitura (nunca insere mock em produtos, unidades ou usuários)
     const { data: existingCatRows } = await supabase!.from('categorias').select('*');
-    let insertedCats = existingCatRows || [];
-    if (insertedCats.length === 0) {
-      const categoryNames = [
-        'Bolos Artesanais',
-        'Tortas & Cheesecakes',
-        'Sobremesas Individuais',
-        'Doces Finos',
-        'Salgados & Quiches',
-        'Pães & Brioches',
-        'Sazonal & Presentes',
-        'Empório & Geleias',
-        'Bebidas & Cafés',
-        'Kits Festa',
-      ];
-      const { data: newCats, error: catErr } = await supabase!
-        .from('categorias')
-        .insert(categoryNames.map((nome, idx) => ({ nome, ordem: idx + 1, ativo: true })))
-        .select();
-      if (catErr || !newCats) throw new Error(`Erro ao popular categorias: ${catErr?.message}`);
-      insertedCats = newCats;
-    }
+    const insertedCats = existingCatRows || [];
 
-    // 2. Produtos: reutiliza existentes ou popula se vazio
-    const { data: existingProdRows } = await supabase!.from('produtos').select('*');
-    let insertedProds = existingProdRows || [];
+    const { data: existingProdRows, error: prodQueryErr } = await supabase!.from('produtos').select('*');
+    if (prodQueryErr) throw new Error(`Erro ao consultar produtos: ${prodQueryErr.message}`);
+    const insertedProds = existingProdRows || [];
     if (insertedProds.length === 0) {
-      const productTemplates: Array<[string, string, number, 'UN' | 'KG' | 'G' | 'CENTO' | 'CX', number, number]> = [
-        ['BOL-001', 'Bolo Red Velvet com Cream Cheese (1,5kg)', 168.00, 'UN', 0, 90],
-        ['BOL-002', 'Bolo Belga de Chocolate 70% Callebaut', 185.00, 'UN', 0, 95],
-        ['BOL-003', 'Bolo de Pistache com Framboesa', 210.00, 'UN', 0, 100],
-        ['BOL-004', 'Bolo de Cenoura com Brigadeiro Belga', 115.00, 'UN', 0, 60],
-        ['TRT-001', 'Torta Basca de Cream Cheese (San Sebastián)', 155.00, 'UN', 1, 75],
-        ['TRT-002', 'Torta Limão Siciliano com Merengue Suíço', 142.00, 'UN', 1, 65],
-        ['TRT-003', 'Banoffee Artesanal com Doce de Leite', 138.00, 'UN', 1, 55],
-        ['TRT-004', 'Cheesecake de Frutas Vermelhas', 162.00, 'UN', 1, 80],
-        ['SOB-001', 'Verrine de Tiramisù Clássico', 26.00, 'UN', 2, 20],
-        ['SOB-002', 'Mousse Trio de Chocolates Belgas', 28.00, 'UN', 2, 25],
-        ['SOB-003', 'Mil Folhas de Baunilha de Madagascar', 32.00, 'UN', 2, 35],
-        ['SOB-004', 'Éclair de Caramelo Salgado', 22.00, 'UN', 2, 30],
-        ['DOC-001', 'Caixa 12 Brigadeiros Gourmet Sortidos', 64.00, 'CX', 3, 40],
-        ['DOC-002', 'Cento de Brigadeiro Tradicional Belga', 190.00, 'CENTO', 3, 90],
-        ['DOC-003', 'Caixa 6 Macarons Parisienses', 58.00, 'CX', 3, 50],
-        ['DOC-004', 'Caixa Presenteável Bombons de Pistache (8un)', 72.00, 'CX', 3, 45],
-        ['SAL-001', 'Quiche Lorraine Artesanal (Inteira)', 118.00, 'UN', 4, 55],
-        ['SAL-002', 'Quiche de Alho-Poró e Queijo Brie', 124.00, 'UN', 4, 55],
-        ['SAL-003', 'Empadão Cremoso de Frango com Catupiry', 129.00, 'UN', 4, 65],
-        ['SAL-004', 'Cento de Mini Coxinhas Artesanais', 165.00, 'CENTO', 4, 80],
-        ['PAE-001', 'Brioche Francês Trançado (500g)', 34.00, 'UN', 5, 120],
-        ['PAE-002', 'Croissant de Manteiga Francesa', 18.00, 'UN', 5, 90],
-        ['PAE-003', 'Pão de Fermentação Natural Levain', 38.00, 'UN', 5, 180],
-        ['SAZ-001', 'Cesta Café da Manhã Especial JuJu', 245.00, 'UN', 6, 45],
-        ['SAZ-002', 'Caixa Degustação Especial da Chef', 135.00, 'CX', 6, 35],
-        ['EMP-001', 'Geleia Artesanal de Morango com Baunilha (220g)', 36.00, 'UN', 7, 40],
-        ['EMP-002', 'Creme de Avelã e Cacau da Casa (200g)', 44.00, 'UN', 7, 40],
-        ['BEB-001', 'Cold Brew Artesanal JuJu (300ml)', 16.00, 'UN', 8, 15],
-        ['BEB-002', 'Chocolate Quente Cremoso para Viagem', 19.00, 'UN', 8, 10],
-        ['KIT-001', 'Kit Festa P (1 Bolo + 50 Doces + 50 Salgados)', 340.00, 'UN', 9, 120],
-      ];
-      const { data: newProds, error: prodErr } = await supabase!
-        .from('produtos')
-        .insert(
-          productTemplates.map(([sku, desc, preco, um, catIdx, tempo]) => ({
-            codigo_sku: sku,
-            descricao: desc,
-            preco_unitario: preco,
-            unidade_medida: um,
-            categoria_id: insertedCats[catIdx % insertedCats.length].id,
-            tempo_producao_minutos: tempo,
-            ativo: true,
-          }))
-        )
-        .select();
-      if (prodErr || !newProds) throw new Error(`Erro ao popular produtos: ${prodErr?.message}`);
-      insertedProds = newProds;
+      throw new Error('Nenhum produto cadastrado em produtos. Cadastre ao menos um produto antes de popular dados mock.');
     }
 
     // 3. Clientes (45 registros <= 50)
@@ -1057,7 +1100,7 @@ export class SupabaseService {
         endereco,
         cep,
         detalhe_entrega: detalhe,
-        observacoes: i % 4 === 0 ? 'Cliente frequente - prefere entrega no período da tarde' : null,
+        observacoes: i % 4 === 0 ? '[MOCK] Cliente frequente - prefere entrega no período da tarde' : '[MOCK] Cliente gerado para testes',
       };
     });
 
@@ -1148,12 +1191,14 @@ export class SupabaseService {
       quantidade: number;
       preco_unitario: number;
       subtotal: number;
+      observacoes_item?: string;
     }> = [];
     insertedOrders.forEach((ord, idx) => {
       plannedItemsPerOrder[idx].forEach(it => {
         orderItemPayloads.push({
           pedido_id: ord.id,
           ...it,
+          observacoes_item: '[MOCK]',
         });
       });
     });
@@ -1161,7 +1206,7 @@ export class SupabaseService {
     const { error: itemsErr } = await supabase!.from('itens_pedido').insert(orderItemPayloads);
     if (itemsErr) throw new Error(`Erro ao popular itens_pedido: ${itemsErr.message}`);
 
-    // 6. Estoque por Unidade (até 48 registros <= 50, respeitando UNIQUE(unidade_id, produto_id))
+    // 6. Estoque por Unidade (preenche apenas combinações sem estoque existente, sem sobrescrever saldos reais)
     const stockPayloads: Array<{
       unidade_id: string;
       produto_id: string;
@@ -1181,7 +1226,9 @@ export class SupabaseService {
         });
       }
     }
-    const { error: stockErr } = await supabase!.from('estoque_unidades').insert(stockPayloads);
+    const { error: stockErr } = await supabase!
+      .from('estoque_unidades')
+      .upsert(stockPayloads, { onConflict: 'unidade_id,produto_id', ignoreDuplicates: true });
     if (stockErr) throw new Error(`Erro ao popular estoque_unidades: ${stockErr.message}`);
 
     // 7. Movimentações de Estoque (40 registros <= 50)
@@ -1200,14 +1247,14 @@ export class SupabaseService {
         quantidade: (i % 6) + 1,
         motivo:
           tipo === 'ENTRADA'
-            ? 'Reposição diária da produção'
+            ? '[MOCK] Reposição diária da produção'
             : tipo === 'TRANSFERENCIA'
-            ? 'Transferência entre unidades'
+            ? '[MOCK] Transferência entre unidades'
             : tipo === 'SAIDA_VENDA'
-            ? 'Baixa automática por venda'
+            ? '[MOCK] Baixa automática por venda'
             : tipo === 'PERDA'
-            ? 'Controle de validade vitrine'
-            : 'Ajuste de inventário semanal',
+            ? '[MOCK] Controle de validade vitrine'
+            : '[MOCK] Ajuste de inventário semanal',
       };
     });
     const { error: movErr } = await supabase!.from('movimentacoes_estoque').insert(movPayloads);
@@ -1274,6 +1321,105 @@ export class SupabaseService {
   }
 
   // ==========================================
+  // CONFIGURAÇÕES & CARDÁPIO PÚBLICO
+  // ==========================================
+  static async getAppConfig<T>(chave: string): Promise<T | null> {
+    if (!this.isConfigured()) return null;
+    const { data, error } = await supabase!
+      .from('app_configuracoes')
+      .select('valor')
+      .eq('chave', chave)
+      .maybeSingle();
+
+    if (error) {
+      console.warn(`Erro ao carregar configuração (${chave}):`, error);
+      return null;
+    }
+    return (data?.valor as T) ?? null;
+  }
+
+  static async saveAppConfig(chave: string, valor: unknown): Promise<void> {
+    if (!this.isConfigured()) return;
+    const { error } = await supabase!
+      .from('app_configuracoes')
+      .upsert(
+        {
+          chave,
+          valor,
+          updated_at: new Date().toISOString()
+        },
+        { onConflict: 'chave' }
+      );
+    if (error) throw error;
+  }
+
+  static async getPublicReservedStock(unidadeId?: string): Promise<Map<string, number>> {
+    const map = new Map<string, number>();
+    if (!this.isConfigured()) return map;
+    const { data, error } = await supabase!.rpc('get_public_reserved_stock', {
+      p_unidade_id: unidadeId || null
+    });
+    if (error) throw error;
+
+    for (const row of data || []) {
+      const uid = row.unidade_id;
+      const pid = row.produto_id;
+      const qty = Number(row.quantidade_reservada || 0);
+      if (uid && pid && qty > 0) {
+        map.set(`${uid}::${pid}`, qty);
+      }
+    }
+    return map;
+  }
+
+  static async submitPublicMenuOrder(order: Order, customer: Customer): Promise<Order> {
+    if (!this.isConfigured()) return order;
+
+    const toIsoTimestamp = (value?: string): string | null => {
+      if (!value) return null;
+      const d = new Date(value);
+      return Number.isNaN(d.getTime()) ? value : d.toISOString();
+    };
+
+    const { data, error } = await supabase!.rpc('criar_pedido_cardapio', {
+      p_unidade_origem_id: order.unidadeOrigemId,
+      p_tipo_entrega: order.tipoEntrega,
+      p_data_hora_entrega: toIsoTimestamp(order.dataHoraEntrega),
+      p_data_hora_entrega_fim: toIsoTimestamp(order.dataHoraEntregaFim),
+      p_turno_entrega: order.tipoEntrega === 'DELIVERY' ? (order.turnoEntrega || null) : null,
+      p_cliente_nome: customer.nome.trim(),
+      p_cliente_telefone: customer.telefone.trim(),
+      p_cliente_cep: customer.cep?.trim() || null,
+      p_endereco_entrega: (order.enderecoEntrega || customer.endereco || '').trim() || null,
+      p_detalhe_entrega: (order.detalheEntrega || customer.detalheEntrega || '').trim() || null,
+      p_unidade_retirada_id:
+        order.tipoEntrega === 'RETIRADA' ? (order.unidadeRetiradaId || order.unidadeOrigemId) : null,
+      p_taxa_entrega: order.tipoEntrega === 'DELIVERY' ? Number(order.taxaEntrega || 0) : 0,
+      p_forma_pagamento: order.formaPagamento || 'pix',
+      p_troco_para:
+        order.formaPagamento === 'dinheiro' && order.trocoPara ? Number(order.trocoPara) : null,
+      p_observacoes: order.observacoes?.trim() || null,
+      p_itens: (order.itens || []).map(item => ({
+        produtoId: item.produtoId,
+        quantidade: item.quantidade,
+        observacoes: item.observacoes || null
+      }))
+    });
+
+    if (error) throw error;
+
+    return {
+      ...order,
+      id: data.id,
+      numeroPedido: data.numero_pedido,
+      status: 'PENDENTE',
+      valorSubtotal: Number(data.valor_subtotal),
+      taxaEntrega: Number(data.taxa_entrega),
+      valorTotal: Number(data.valor_total)
+    };
+  }
+
+  // ==========================================
   // AUTENTICAÇÃO COM SUPABASE AUTH
   // ==========================================
   static async getCurrentUser() {
@@ -1281,6 +1427,105 @@ export class SupabaseService {
     const { data: { user }, error } = await supabase!.auth.getUser();
     if (error) return null;
     return user;
+  }
+
+  static async signInOperator(
+    email: string,
+    password: string
+  ): Promise<{ authUser: any; profile: UserProfile | null }> {
+    if (!this.isConfigured()) throw new Error('Supabase não configurado');
+    const normalizedEmail = email.trim().toLowerCase();
+
+    // 1. Standard Supabase Auth password sign-in
+    const { data: pwData, error: pwError } = await supabase!.auth.signInWithPassword({
+      email: normalizedEmail,
+      password
+    });
+    if (!pwError && pwData?.user) {
+      return { authUser: pwData.user, profile: null };
+    }
+
+    // 2. Deployed Edge Function path (provisions Auth + verifies bcrypt credential)
+    try {
+      const { data: fnData, error: fnErr } = await supabase!.functions.invoke('operator-auth', {
+        body: { action: 'login', email: normalizedEmail, password }
+      });
+
+      if (!fnErr && fnData?.ok) {
+        const signIn2 = await supabase!.auth.signInWithPassword({
+          email: normalizedEmail,
+          password
+        });
+        if (!signIn2.error && signIn2.data?.user) {
+          return { authUser: signIn2.data.user, profile: null };
+        }
+      }
+      if (fnData && fnData.ok === false) {
+        throw new Error(fnData.message || 'E-mail ou senha numérica de 8 dígitos incorretos.');
+      }
+    } catch (fnCatchErr: any) {
+      const msg = String(fnCatchErr?.message || '');
+      if (
+        msg &&
+        !msg.includes('Failed to send') &&
+        !msg.includes('FunctionsFetchError') &&
+        !msg.includes('404')
+      ) {
+        throw fnCatchErr;
+      }
+    }
+
+    // 3. Fallback Postgres server-side bcrypt RPC when operator-auth is not yet deployed
+    const { data: rows, error: rpcErr } = await supabase!.rpc('autenticar_operador', {
+      p_email: normalizedEmail,
+      p_pin: password
+    });
+
+    if (rpcErr || !Array.isArray(rows) || rows.length === 0) {
+      throw new Error('E-mail ou senha numérica de 8 dígitos incorretos.');
+    }
+
+    const row = rows[0] as any;
+    const profile: UserProfile = {
+      id: row.id,
+      email: row.email,
+      nome: row.nome,
+      avatarUrl: row.avatar_url || '/logo.jpg',
+      role: (row.role || 'ATENDIMENTO') as UserProfile['role'],
+      unidadePadraoId: row.unidade_padrao_id || '',
+      autenticadoGoogle: false,
+      ativo: row.ativo !== false,
+      unidadesPermitidas: Array.isArray(row.unidades_permitidas) ? row.unidades_permitidas : []
+    };
+
+    let signUpUser: any = null;
+    try {
+      const { data: signUpData } = await supabase!.auth.signUp({
+        email: normalizedEmail,
+        password,
+        options: {
+          data: { full_name: profile.nome }
+        }
+      });
+      signUpUser = signUpData?.session?.user || null;
+    } catch {
+      // Ignore if email confirmation is required or Auth user already exists
+    }
+
+    return { authUser: signUpUser, profile };
+  }
+
+  static async verifyCurrentOperatorPin(email: string, pin: string): Promise<boolean> {
+    if (!this.isConfigured()) return false;
+    const { data, error } = await supabase!.rpc('verificar_pin_operador', {
+      p_email: email.trim().toLowerCase(),
+      p_pin: pin.trim()
+    });
+    if (error) {
+      console.error('Erro ao verificar PIN do operador:', error);
+      return false;
+    }
+    return Boolean(data);
   }
 
   static async signInWithPassword(email: string, password: string) {

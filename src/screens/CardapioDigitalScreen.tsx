@@ -65,9 +65,10 @@ interface CardapioDigitalScreenProps {
   stock?: StockItem[];
   orders?: Order[];
   customers?: Customer[];
+  publicReservedStock?: Map<string, number>;
   introConfig?: CardapioIntroConfig;
   thankYouConfig?: CardapioThankYouConfig;
-  onSubmitOrder: (order: Order, customer: Customer) => Promise<void> | void;
+  onSubmitOrder: (order: Order, customer: Customer) => Promise<Order | void> | Order | void;
   onBackToAdmin?: () => void;
 }
 
@@ -84,6 +85,7 @@ export const CardapioDigitalScreen: React.FC<CardapioDigitalScreenProps> = ({
   stock = [],
   orders = [],
   customers = [],
+  publicReservedStock,
   introConfig = { imageUrl: '/logo.jpg', phrase: 'Beju Caramelos', durationSeconds: 5 },
   thankYouConfig = { imageUrl: '/logo.jpg', phrase: 'Muito obrigado!', durationSeconds: 3 },
   onSubmitOrder,
@@ -95,7 +97,10 @@ export const CardapioDigitalScreen: React.FC<CardapioDigitalScreenProps> = ({
     return units.some(u => u.id === raw && u.ativo) ? raw : null;
   }, [units]);
 
-  const reservedStockMap = useMemo(() => computeReservedStockMap(orders), [orders]);
+  const reservedStockMap = useMemo(
+    () => (orders.length > 0 ? computeReservedStockMap(orders) : publicReservedStock || new Map<string, number>()),
+    [orders, publicReservedStock]
+  );
 
   const storeUnits = useMemo(
     () => units.filter(u => u.ativo),
@@ -658,14 +663,18 @@ ${order.tipoEntrega === 'DELIVERY' ? `*Taxa de Entrega${distanceKm > 0 ? ` (~${d
       createdAt: new Date().toISOString()
     };
 
+    let savedOrder: Order | void;
     try {
-      await onSubmitOrder(newOrder, customerRecord);
+      savedOrder = await onSubmitOrder(newOrder, customerRecord);
+    } catch (err: any) {
+      alert(err?.message || 'Não foi possível finalizar o pedido. Tente novamente.');
+      return;
     } finally {
       setIsSubmitting(false);
     }
 
     setThankYouPhase('enter');
-    setConfirmedOrder(newOrder);
+    setConfirmedOrder(savedOrder || newOrder);
   };
 
   const thankYouOverlay =

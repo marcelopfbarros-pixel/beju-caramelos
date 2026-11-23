@@ -228,8 +228,7 @@ const INITIAL_USER: UserProfile = {
   role: 'ADMIN',
   unidadePadraoId: 'u-central',
   autenticadoGoogle: true,
-  ativo: true,
-  senha: '12345678'
+  ativo: true
 };
 
 export class AppStorage {
@@ -295,7 +294,8 @@ export class AppStorage {
   }
 
   static saveUserProfile(user: UserProfile): void {
-    this.save('user', user);
+    const { senha: _omitPin, ...safeUser } = user;
+    this.save('user', safeUser);
   }
 
   static getActiveUnitId(): string {
@@ -334,7 +334,8 @@ export class AppStorage {
   }
 
   static saveUsers(users: UserProfile[]): void {
-    this.save('users', users);
+    const safeUsers = users.map(({ senha: _omitPin, ...rest }) => rest);
+    this.save('users', safeUsers);
   }
 
   static getStockMovements(): StockMovement[] {

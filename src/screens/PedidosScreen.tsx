@@ -79,7 +79,7 @@ interface PedidosScreenProps {
   customers: Customer[];
   stock?: StockItem[];
   activeUnitId: string;
-  userPassword?: string;
+  onVerifyPin?: (pin: string) => Promise<boolean> | boolean;
   requestedStatusFilter?: { status: string; expandGroups?: boolean; nonce: number } | null;
   onSaveOrder: (order: Order) => void;
   onDeleteOrder?: (orderId: string) => void;
@@ -111,7 +111,7 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
   customers,
   stock = [],
   activeUnitId,
-  userPassword = '12345678',
+  onVerifyPin,
   requestedStatusFilter,
   onSaveOrder,
   onDeleteOrder,
@@ -124,6 +124,7 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
   const [sortBy, setSortBy] = useState<'ENTREGA_ASC' | 'ENTREGA_DESC' | 'VALOR_DESC' | 'CLIENTE_ASC'>('ENTREGA_ASC');
   const [groupBy, setGroupBy] = useState<'NENHUM' | 'MODALIDADE' | 'LOJA_ORIGEM'>('LOJA_ORIGEM');
   const { isGroupExpanded, toggleGroup, expandAll } = useExpandedGroups(groupBy);
+  const [verifyingStatusPin, setVerifyingStatusPin] = useState(false);
 
   useEffect(() => {
     if (requestedStatusFilter?.status) {
@@ -172,7 +173,7 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
   // New Order Form State in Logical Order
   const [editingOrder, setEditingOrder] = useState<Partial<Order>>({
     numeroPedido: `#PED-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
-    status: 'PENDENTE',
+    status: 'CONFIRMADO',
     dataPedido: new Date().toISOString(),
     dataHoraEntrega: getCurrentLocalDateTime(),
     dataHoraEntregaFim: addHoursToDateTime(getCurrentLocalDateTime(), 1),
@@ -358,7 +359,7 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
     const fullOrder: Order = {
       id: editingOrder.id || `ord-${Date.now()}`,
       numeroPedido: editingOrder.numeroPedido || `#PED-${Date.now()}`,
-      status: (editingOrder.status as OrderStatus) || 'PENDENTE',
+      status: (editingOrder.status as OrderStatus) || 'CONFIRMADO',
       dataPedido: editingOrder.dataPedido || new Date().toISOString(),
       dataHoraEntrega: editingOrder.dataHoraEntrega || new Date().toISOString(),
       dataHoraEntregaFim:
@@ -468,7 +469,7 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
 
     setEditingOrder({
       numeroPedido: `#PED-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
-      status: 'PENDENTE',
+      status: 'CONFIRMADO',
       dataPedido: new Date().toISOString(),
       dataHoraEntrega: parsed.dataHoraEntrega,
       dataHoraEntregaFim: parsed.dataHoraEntregaFim || addHoursToDateTime(parsed.dataHoraEntrega, 1),
@@ -661,7 +662,7 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${unit?
             onClick={() => ExcelService.exportOrders(orders, products, units)}
             title="Exportar"
             aria-label="Exportar"
-            className="hidden md:flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-xs"
+            className="flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-xs"
           >
             <Download className="w-4 h-4 text-slate-500" />
           </button>
@@ -692,11 +693,14 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${unit?
               setDiscountValue(0);
               setSelectedProdToAdd(products.find(p => p.ativo)?.id || '');
               setSelectedQtyToAdd(1);
+              const nowLocal = getCurrentLocalDateTime();
               setEditingOrder({
                 numeroPedido: `#PED-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
-                status: 'PENDENTE',
+                status: 'CONFIRMADO',
                 dataPedido: new Date().toISOString(),
-                dataHoraEntrega: getCurrentLocalDateTime(),
+                dataHoraEntrega: nowLocal,
+                dataHoraEntregaFim: addHoursToDateTime(nowLocal, 1),
+                turnoEntrega: inferDeliveryShiftFromDateTime(nowLocal),
                 tipoEntrega: 'DELIVERY',
                 unidadeOrigemId: activeUnitId !== 'all' ? activeUnitId : units[0]?.id || 'u-central',
                 clienteNome: '',
@@ -706,6 +710,7 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${unit?
                 taxaEntrega: getWhatsAppAutomationSettings().defaultDeliveryFee ?? 18.00,
                 desconto: 0.00,
                 formaPagamento: 'pix',
+                statusPagamento: 'PENDENTE',
                 trocoPara: undefined,
                 instrucoesPagamento: '',
                 observacoes: '',
@@ -725,7 +730,7 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${unit?
             onClick={() => window.print()}
             title="Imprimir"
             aria-label="Imprimir"
-            className="hidden md:flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors shadow-xs"
+            className="flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors shadow-xs"
           >
             <Printer className="w-4 h-4" />
           </button>
@@ -2234,16 +2239,25 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${unit?
       {pendingStatusChange && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-[60] p-4">
           <form
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault();
-              if (statusAuthPin.trim() !== userPassword) {
-                setStatusAuthError('Senha incorreta. Informe a senha do usuário para alterar um pedido já Entregue.');
-                return;
+              if (verifyingStatusPin) return;
+              setVerifyingStatusPin(true);
+              try {
+                const isValid = onVerifyPin ? await onVerifyPin(statusAuthPin.trim()) : false;
+                if (!isValid) {
+                  setStatusAuthError('Senha incorreta. Informe a senha do usuário para alterar um pedido já Entregue.');
+                  return;
+                }
+                setEditingOrder({ ...editingOrder, status: pendingStatusChange });
+                setPendingStatusChange(null);
+                setStatusAuthPin('');
+                setStatusAuthError('');
+              } catch {
+                setStatusAuthError('Não foi possível validar a senha agora. Tente novamente.');
+              } finally {
+                setVerifyingStatusPin(false);
               }
-              setEditingOrder({ ...editingOrder, status: pendingStatusChange });
-              setPendingStatusChange(null);
-              setStatusAuthPin('');
-              setStatusAuthError('');
             }}
             className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 border border-slate-200 space-y-4"
           >
@@ -2286,9 +2300,10 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${unit?
               </button>
               <button
                 type="submit"
-                className="px-4 py-1.5 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-lg"
+                disabled={verifyingStatusPin}
+                className="px-4 py-1.5 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 disabled:opacity-60 rounded-lg"
               >
-                Confirmar Alteração
+                {verifyingStatusPin ? 'Validando...' : 'Confirmar Alteração'}
               </button>
             </div>
           </form>

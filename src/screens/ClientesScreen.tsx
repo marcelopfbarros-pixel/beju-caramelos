@@ -28,7 +28,9 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
   onDeleteCustomer
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [viewMode, setViewMode] = useState<'TABLE' | 'CARDS'>('TABLE');
+  const [viewMode, setViewMode] = useState<'TABLE' | 'CARDS'>(() =>
+    typeof window !== 'undefined' && window.innerWidth < 768 ? 'CARDS' : 'TABLE'
+  );
   const [groupBy, setGroupBy] = useState<'PENDENCIA' | 'INICIAL' | 'NENHUM'>('PENDENCIA');
   const { isGroupExpanded, toggleGroup } = useExpandedGroups(groupBy);
   const [openOrdersFilter, setOpenOrdersFilter] = useState<'TODOS' | 'COM_ABERTOS' | 'SEM_ABERTOS'>('TODOS');

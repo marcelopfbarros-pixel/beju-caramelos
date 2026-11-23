@@ -628,11 +628,12 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                                 <button
                                   type="button"
                                   onClick={() => handlePrint(order, 'receipt')}
-                                  className="hidden md:flex h-9 items-center justify-center gap-1 px-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-semibold rounded-lg transition-colors cursor-pointer"
+                                  className="flex h-9 items-center justify-center gap-1 px-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-semibold rounded-lg transition-colors cursor-pointer"
                                   title="Imprimir Comprovante"
+                                  aria-label="Imprimir Comprovante"
                                 >
                                   <Printer className="w-3.5 h-3.5 shrink-0" />
-                                  <span className="truncate">Recibo</span>
+                                  <span className="hidden md:inline">Comprovante</span>
                                 </button>
 
                                 <button

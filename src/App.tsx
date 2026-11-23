@@ -75,6 +75,11 @@ export const App: React.FC = () => {
     } catch {
       // ignore storage quota errors
     }
+    if (SupabaseService.isConfigured()) {
+      void SupabaseService.saveAppConfig('revenue_goals', goals).catch(err =>
+        console.warn('Falha ao salvar metas de faturamento na nuvem:', err)
+      );
+    }
   }, []);
 
   const [cardapioIntroConfig, setCardapioIntroConfig] = useState<CardapioIntroConfig>(() => {
@@ -114,6 +119,11 @@ export const App: React.FC = () => {
       localStorage.setItem('juju_cardapio_intro_config', JSON.stringify(normalized));
     } catch (err) {
       console.error('Erro ao salvar configuração de abertura do cardápio:', err);
+    }
+    if (SupabaseService.isConfigured()) {
+      void SupabaseService.saveAppConfig('cardapio_intro_config', normalized).catch(err =>
+        console.warn('Falha ao salvar configuração de abertura do cardápio na nuvem:', err)
+      );
     }
   }, []);
 
@@ -155,6 +165,11 @@ export const App: React.FC = () => {
     } catch (err) {
       console.error('Erro ao salvar configuração de agradecimento do cardápio:', err);
     }
+    if (SupabaseService.isConfigured()) {
+      void SupabaseService.saveAppConfig('cardapio_thankyou_config', normalized).catch(err =>
+        console.warn('Falha ao salvar configuração de agradecimento do cardápio na nuvem:', err)
+      );
+    }
   }, []);
 
   const [activeUnitId, setActiveUnitId] = useState<string>(() => AppStorage.getActiveUnitId());
@@ -184,6 +199,7 @@ export const App: React.FC = () => {
   const [isSupabaseOnline, setIsSupabaseOnline] = useState<boolean>(SupabaseService.isConfigured());
   const [supabaseUser, setSupabaseUser] = useState<any>(null);
   const [isOperatorAuthenticated, setIsOperatorAuthenticated] = useState<boolean>(false);
+  const [publicReservedStock, setPublicReservedStock] = useState<Map<string, number>>(() => new Map());
   const [showJulianaButterfly, setShowJulianaButterfly] = useState<boolean>(false);
 
   const triggerButterflyIfJuliana = React.useCallback((nome?: string) => {
@@ -192,11 +208,79 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Load data from Supabase Cloud
-  const loadDataFromSupabase = useCallback(async () => {
+  // Load only non-PII public catalog + reserved stock + public menu configs
+  const loadPublicCatalogFromSupabase = useCallback(async () => {
+    if (!SupabaseService.isConfigured()) return;
+    try {
+      const [fetchedUnits, fetchedCats, fetchedProds, fetchedStock, fetchedReserved, dbIntro, dbThankYou] =
+        await Promise.all([
+          SupabaseService.getUnits(),
+          SupabaseService.getCategories(),
+          SupabaseService.getProducts(),
+          SupabaseService.getStock(),
+          SupabaseService.getPublicReservedStock(),
+          SupabaseService.getAppConfig<CardapioIntroConfig>('cardapio_intro_config'),
+          SupabaseService.getAppConfig<CardapioThankYouConfig>('cardapio_thankyou_config')
+        ]);
+
+      if (fetchedUnits.length > 0) setUnits(fetchedUnits);
+      setCategories(fetchedCats);
+      setProducts(fetchedProds);
+      setStock(fetchedStock);
+      setPublicReservedStock(fetchedReserved);
+
+      if (dbIntro) {
+        const normalizedIntro: CardapioIntroConfig = {
+          imageUrl: typeof dbIntro.imageUrl === 'string' ? dbIntro.imageUrl : '/logo.jpg',
+          phrase: typeof dbIntro.phrase === 'string' ? dbIntro.phrase : 'Beju Caramelos',
+          durationSeconds:
+            typeof dbIntro.durationSeconds === 'number' && dbIntro.durationSeconds > 0
+              ? dbIntro.durationSeconds
+              : 5
+        };
+        setCardapioIntroConfig(normalizedIntro);
+        try {
+          localStorage.setItem('juju_cardapio_intro_config', JSON.stringify(normalizedIntro));
+        } catch {
+          // ignore storage quota errors
+        }
+      }
+
+      if (dbThankYou) {
+        const normalizedThankYou: CardapioThankYouConfig = {
+          imageUrl: typeof dbThankYou.imageUrl === 'string' ? dbThankYou.imageUrl : '/logo.jpg',
+          phrase: typeof dbThankYou.phrase === 'string' ? dbThankYou.phrase : 'Muito obrigado!',
+          durationSeconds:
+            typeof dbThankYou.durationSeconds === 'number' && dbThankYou.durationSeconds > 0
+              ? dbThankYou.durationSeconds
+              : 3
+        };
+        setCardapioThankYouConfig(normalizedThankYou);
+        try {
+          localStorage.setItem('juju_cardapio_thankyou_config', JSON.stringify(normalizedThankYou));
+        } catch {
+          // ignore storage quota errors
+        }
+      }
+
+      setIsSupabaseOnline(true);
+    } catch (err) {
+      console.warn('Falha ao carregar catálogo público do Supabase, mantendo cache local:', err);
+      setIsSupabaseOnline(false);
+    }
+  }, []);
+
+  // Load operational data from Supabase Cloud (authenticated operators only)
+  const loadDataFromSupabase = useCallback(async (forceOperatorLoad = false) => {
     if (!SupabaseService.isConfigured()) return;
 
     try {
+      const authUser = await SupabaseService.getCurrentUser();
+      if (!authUser && !forceOperatorLoad) {
+        await loadPublicCatalogFromSupabase();
+        return;
+      }
+
       // 1. Fetch Units
       const fetchedUnits = await SupabaseService.getUnits();
       if (fetchedUnits.length > 0) {
@@ -240,12 +324,60 @@ export const App: React.FC = () => {
       const fetchedMovements = await SupabaseService.getStockMovements();
       setStockMovements(fetchedMovements);
 
+      // 10. Sync Shared App Configurations
+      const [dbGoals, dbIntro, dbThankYou] = await Promise.all([
+        SupabaseService.getAppConfig<MonthlyRevenueGoals>('revenue_goals'),
+        SupabaseService.getAppConfig<CardapioIntroConfig>('cardapio_intro_config'),
+        SupabaseService.getAppConfig<CardapioThankYouConfig>('cardapio_thankyou_config')
+      ]);
+
+      if (dbGoals && typeof dbGoals === 'object') {
+        setRevenueGoals(dbGoals);
+        try {
+          localStorage.setItem('juju_revenue_goals', JSON.stringify(dbGoals));
+        } catch {
+          // ignore storage quota errors
+        }
+      }
+      if (dbIntro) {
+        const normalizedIntro: CardapioIntroConfig = {
+          imageUrl: typeof dbIntro.imageUrl === 'string' ? dbIntro.imageUrl : '/logo.jpg',
+          phrase: typeof dbIntro.phrase === 'string' ? dbIntro.phrase : 'Beju Caramelos',
+          durationSeconds:
+            typeof dbIntro.durationSeconds === 'number' && dbIntro.durationSeconds > 0
+              ? dbIntro.durationSeconds
+              : 5
+        };
+        setCardapioIntroConfig(normalizedIntro);
+        try {
+          localStorage.setItem('juju_cardapio_intro_config', JSON.stringify(normalizedIntro));
+        } catch {
+          // ignore storage quota errors
+        }
+      }
+      if (dbThankYou) {
+        const normalizedThankYou: CardapioThankYouConfig = {
+          imageUrl: typeof dbThankYou.imageUrl === 'string' ? dbThankYou.imageUrl : '/logo.jpg',
+          phrase: typeof dbThankYou.phrase === 'string' ? dbThankYou.phrase : 'Muito obrigado!',
+          durationSeconds:
+            typeof dbThankYou.durationSeconds === 'number' && dbThankYou.durationSeconds > 0
+              ? dbThankYou.durationSeconds
+              : 3
+        };
+        setCardapioThankYouConfig(normalizedThankYou);
+        try {
+          localStorage.setItem('juju_cardapio_thankyou_config', JSON.stringify(normalizedThankYou));
+        } catch {
+          // ignore storage quota errors
+        }
+      }
+
       setIsSupabaseOnline(true);
     } catch (err) {
       console.warn('Falha ao sincronizar com Supabase Cloud, mantendo cache local:', err);
       setIsSupabaseOnline(false);
     }
-  }, []);
+  }, [loadPublicCatalogFromSupabase]);
 
   // Initial Load & Auth check
   useEffect(() => {
@@ -294,9 +426,9 @@ export const App: React.FC = () => {
 
   const savingOrderLockRef = useRef(false);
 
-  // Realtime subscription for Orders & Production
+  // Realtime subscription for Orders & Production (authenticated operators only)
   useEffect(() => {
-    if (!SupabaseService.isConfigured()) return;
+    if (!SupabaseService.isConfigured() || (!supabaseUser && !isOperatorAuthenticated)) return;
 
     const unsubOrders = SupabaseService.subscribeToOrders(() => {
       if (savingOrderLockRef.current) return;
@@ -320,7 +452,7 @@ export const App: React.FC = () => {
       unsubOrders();
       unsubProduction();
     };
-  }, []);
+  }, [supabaseUser, isOperatorAuthenticated]);
 
   // Persist state updates to LocalStorage as resilient cache
   useEffect(() => { AppStorage.saveUnits(units); }, [units]);
@@ -713,7 +845,7 @@ export const App: React.FC = () => {
     if (SupabaseService.isConfigured()) {
       const user = await SupabaseService.getCurrentUser();
       setSupabaseUser(user);
-      await loadDataFromSupabase();
+      await loadDataFromSupabase(true);
     }
   };
 
@@ -991,14 +1123,6 @@ export const App: React.FC = () => {
     [stock, allowedUnitIds]
   );
 
-  // Lojas no filtro da top bar: apenas lojas associadas a pelo menos um pedido/cliente (fallback para allowedUnits se nenhuma)
-  const headerFilterUnits = React.useMemo(() => {
-    const withOrders = allowedUnits.filter(u =>
-      orders.some(o => o.unidadeOrigemId === u.id || o.unidadeRetiradaId === u.id)
-    );
-    return withOrders.length > 0 ? withOrders : allowedUnits;
-  }, [allowedUnits, orders]);
-
   const scopedOrders = React.useMemo(
     () =>
       activeUnitId === 'all'
@@ -1234,11 +1358,23 @@ export const App: React.FC = () => {
           categories={categories}
           units={units}
           stock={stock}
-          orders={orders}
-          customers={customers}
+          orders={supabaseUser || isOperatorAuthenticated ? orders : []}
+          customers={supabaseUser || isOperatorAuthenticated ? customers : []}
+          publicReservedStock={publicReservedStock}
           introConfig={cardapioIntroConfig}
           thankYouConfig={cardapioThankYouConfig}
           onSubmitOrder={async (newOrder, customerRecord) => {
+            if (isSupabaseOnline && SupabaseService.isConfigured()) {
+              const confirmed = await SupabaseService.submitPublicMenuOrder(newOrder, customerRecord);
+              if (supabaseUser || isOperatorAuthenticated) {
+                void loadDataFromSupabase(true);
+              } else {
+                void SupabaseService.getPublicReservedStock()
+                  .then(setPublicReservedStock)
+                  .catch(() => {});
+              }
+              return confirmed;
+            }
             await handleSaveOrder(newOrder);
             const normPhone = customerRecord.telefone.replace(/\D/g, '');
             const existingCust = customers.find(
@@ -1249,6 +1385,7 @@ export const App: React.FC = () => {
             await handleSaveCustomer(
               existingCust ? { ...existingCust, ...customerRecord, id: existingCust.id } : customerRecord
             );
+            return newOrder;
           }}
           onBackToAdmin={
             isFromUrlOnly
@@ -1339,7 +1476,12 @@ export const App: React.FC = () => {
               customers={customers}
               stock={allowedStock}
               activeUnitId={activeUnitId}
-              userPassword={effectiveUserProfile.senha || '12345678'}
+              onVerifyPin={async (pin: string) => {
+                if (SupabaseService.isConfigured()) {
+                  return SupabaseService.verifyCurrentOperatorPin(effectiveUserProfile.email, pin);
+                }
+                return Boolean(effectiveUserProfile.senha && pin === effectiveUserProfile.senha);
+              }}
               requestedStatusFilter={pedidosStatusFilterRequest}
               onSaveOrder={handleSaveOrder}
               onDeleteOrder={handleDeleteOrder}
@@ -1577,7 +1719,7 @@ export const App: React.FC = () => {
 
       {/* Floating WhatsApp Status Notification Prompt */}
       {statusNotificationPrompt && (
-        <div className="fixed bottom-5 right-5 z-50 max-w-sm w-full bg-white border border-emerald-300 rounded-2xl shadow-2xl p-4 space-y-3 animate-in fade-in slide-in-from-bottom-4 print:hidden">
+        <div className="fixed bottom-4 left-3 right-3 sm:left-auto sm:right-5 sm:bottom-5 z-50 sm:max-w-sm w-auto sm:w-full bg-white border border-emerald-300 rounded-2xl shadow-2xl p-4 space-y-3 animate-in fade-in slide-in-from-bottom-4 print:hidden">
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-center gap-2">
               <div className="p-2 rounded-xl bg-emerald-100 text-emerald-700">

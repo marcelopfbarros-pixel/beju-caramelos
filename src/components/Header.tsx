@@ -178,7 +178,7 @@ export const Header: React.FC<HeaderProps> = ({
                   : `Ativar decoração sazonal: ${seasonal.label}`
               }
               aria-pressed={showSeasonalDecoration}
-              className={`hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] sm:text-xs font-semibold shadow-xs shrink-0 transition-all cursor-pointer ${
+              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] sm:text-xs font-semibold shadow-xs shrink-0 transition-all cursor-pointer ${
                 showSeasonalDecoration
                   ? `${seasonal.badgeClass}${isSpecialBlink ? ' animate-pulse ring-2 ring-offset-1 ring-current' : ''}`
                   : 'bg-slate-100 border-slate-200 text-slate-400 opacity-60 hover:opacity-100 hover:text-slate-600'
@@ -190,7 +190,7 @@ export const Header: React.FC<HeaderProps> = ({
               {showSeasonalDecoration && (
                 <>
                   <span className="hidden lg:inline">{seasonal.label}</span>
-                  <span aria-hidden="true">{seasonal.icons[1]}</span>
+                  <span aria-hidden="true" className="hidden sm:inline">{seasonal.icons[1]}</span>
                 </>
               )}
             </button>

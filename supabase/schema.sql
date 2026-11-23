@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS public.itens_producao (
     pedido_origem_id UUID REFERENCES public.pedidos(id) ON DELETE SET NULL
 );
 
--- 9. PERFIS DE USUÁRIOS (Google Auth & Controle de Acesso)
+-- 9. PERFIS DE USUÁRIOS (Controle de Acesso — credenciais hash em private.operador_credenciais)
 CREATE TABLE IF NOT EXISTS public.usuarios_perfis (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     email VARCHAR(120) UNIQUE NOT NULL,
@@ -138,7 +138,15 @@ CREATE TABLE IF NOT EXISTS public.usuarios_perfis (
     role VARCHAR(20) NOT NULL DEFAULT 'ATENDIMENTO' CHECK (role IN ('ADMIN', 'GERENTE', 'ATENDIMENTO', 'CONFEITEIRO')),
     unidade_padrao_id UUID REFERENCES public.empresas_unidades(id) ON DELETE SET NULL,
     ativo BOOLEAN NOT NULL DEFAULT TRUE,
+    unidades_permitidas JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 10. CONFIGURAÇÕES GERAIS DA APLICAÇÃO (Metas por Unidade, Cardápio Digital, etc.)
+CREATE TABLE IF NOT EXISTS public.app_configuracoes (
+    chave TEXT PRIMARY KEY,
+    valor JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- ====================================================================

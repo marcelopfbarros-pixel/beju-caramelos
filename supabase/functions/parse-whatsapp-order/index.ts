@@ -1,9 +1,28 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+const ALLOWED_EXACT_ORIGINS = new Set([
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'https://juju-delivery-app.netlify.app',
+  'http://juju-delivery-app.netlify.app',
+]);
+
+const NETLIFY_PREVIEW_REGEX = /^https:\/\/[a-z0-9-]+--juju-delivery-app\.netlify\.app$/i;
+
+function getCorsHeaders(req: Request): Record<string, string> {
+  const origin = req.headers.get('Origin') || '';
+  const allowedOrigin =
+    ALLOWED_EXACT_ORIGINS.has(origin) || NETLIFY_PREVIEW_REGEX.test(origin)
+      ? origin
+      : 'https://juju-delivery-app.netlify.app';
+
+  return {
+    'Access-Control-Allow-Origin': allowedOrigin,
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Vary': 'Origin',
+  };
+}
 
 interface CatalogItem {
   id: string;
@@ -20,6 +39,7 @@ const GEMINI_MODELS = [
 ];
 
 Deno.serve(async (req: Request) => {
+  const corsHeaders = getCorsHeaders(req);
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
@@ -46,10 +66,18 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const catalogText = ((catalog as CatalogItem[]) || [])
+    if (rawText.length > 10000) {
+      return new Response(
+        JSON.stringify({ success: false, message: 'Texto do WhatsApp excede o limite de 10.000 caracteres.' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const boundedCatalog = Array.isArray(catalog) ? (catalog as CatalogItem[]).slice(0, 500) : [];
+    const catalogText = boundedCatalog
       .map(
         p =>
-          `- ID: "${p.id}" | SKU: ${p.sku} | Nome: "${p.descricao}" | Preço: R$ ${p.precoUnitario.toFixed(
+          `- ID: "${p.id}" | SKU: ${p.sku} | Nome: "${p.descricao}" | Preço: R$ ${Number(p.precoUnitario || 0).toFixed(
             2
           )} | Unid: ${p.unidade}`
       )
@@ -164,18 +192,21 @@ REGRAS DE EXTRAÇÃO:
       }
     }
 
+    if (lastErrorText) {
+      console.error('Todos os modelos Gemini falharam:', lastErrorText);
+    }
     return new Response(
       JSON.stringify({
         success: false,
         code: 'GEMINI_API_ERROR',
-        message: lastErrorText || 'Nenhum modelo Gemini respondeu com sucesso.'
+        message: 'Serviço de IA temporariamente indisponível; utilize o parser local.'
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (err: any) {
     console.error('Erro na Edge Function parse-whatsapp-order:', err);
     return new Response(
-      JSON.stringify({ success: false, message: err.message || 'Erro interno' }),
+      JSON.stringify({ success: false, message: 'Erro interno ao processar mensagem.' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

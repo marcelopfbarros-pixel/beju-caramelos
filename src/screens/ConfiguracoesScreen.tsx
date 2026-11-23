@@ -346,7 +346,7 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
       const counts = await SupabaseService.populateMockData();
       if (onSyncSupabase) await onSyncSupabase();
       setMockMessage(
-        `Mock data populado! Categorias: ${counts.categorias}, Produtos: ${counts.produtos}, Clientes: ${counts.clientes}, Pedidos: ${counts.pedidos} (${counts.itensPedido} itens), Estoque: ${counts.estoque}, Movimentações: ${counts.movimentacoes}, Produção: ${counts.ordensProducao} (${counts.itensProducao} itens). Usuários e Unidades preservados.`
+        `Mock data populado (identificado com "MOCK")! Clientes: ${counts.clientes}, Pedidos: ${counts.pedidos} (${counts.itensPedido} itens), Movimentações: ${counts.movimentacoes}, Produção: ${counts.ordensProducao} (${counts.itensProducao} itens). Unidades, Produtos e Usuários preservados.`
       );
     } catch (err: any) {
       console.error('Erro ao popular mock data:', err);
@@ -367,7 +367,7 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
     try {
       await SupabaseService.cleanMockData();
       if (onSyncSupabase) await onSyncSupabase();
-      setMockMessage('Dados operacionais limpos com sucesso! As tabelas de Produtos, Categorias, Usuários e Unidades foram preservadas.');
+      setMockMessage('Registros identificados com "MOCK" limpos com sucesso! Dados reais e as tabelas de Unidades, Produtos e Usuários foram preservados.');
     } catch (err: any) {
       console.error('Erro ao limpar mock data:', err);
       setMockMessage(`Erro ao limpar mock data: ${err.message || 'Verifique as permissões do banco'}`);
@@ -1266,7 +1266,7 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                 )}
               </div>
               <p className="text-[11px] text-slate-600 leading-relaxed">
-                Popule o banco de dados com registros fictícios realistas (até 50 registros por tabela) para testes ou limpe os dados operacionais. As tabelas de <strong>Produtos</strong>, <strong>Categorias</strong>, <strong>Usuários</strong> e <strong>Unidades</strong> são preservadas pela limpeza.
+                Popule o banco de dados com registros fictícios identificados com <strong>MOCK</strong> (até 50 registros por tabela) para testes ou remova apenas os registros marcados com <strong>MOCK</strong>. As tabelas de <strong>Unidades</strong>, <strong>Produtos</strong>, <strong>Usuários</strong> e registros reais nunca são alterados ou removidos.
               </p>
               <div className="flex flex-wrap items-center gap-3">
                 <button

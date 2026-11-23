@@ -94,13 +94,20 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
     e.target.value = '';
   };
 
+  const activeCategories = useMemo(
+    () => categories.filter(c => c.ativo),
+    [categories]
+  );
+
+  const defaultCategoryId = activeCategories[0]?.id || categories[0]?.id || '';
+
   const [editingProduct, setEditingProduct] = useState<Partial<Product>>({
     sku: `SKU-${Math.floor(100 + Math.random() * 900)}`,
     descricao: '',
     fotoUrl: '/logo.jpg',
     precoUnitario: 0,
     unidade: 'UN',
-    categoriaId: categories[0]?.id || 'cat-1',
+    categoriaId: defaultCategoryId,
     tempoProducaoMinutos: 30,
     ativo: true
   });
@@ -167,6 +174,16 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
       return;
     }
 
+    const validSelectedCategory = editingProduct.categoriaId &&
+      categories.some(c => c.id === editingProduct.categoriaId)
+      ? editingProduct.categoriaId
+      : defaultCategoryId;
+
+    if (!validSelectedCategory) {
+      alert('Cadastre ou ative ao menos uma categoria antes de salvar o produto.');
+      return;
+    }
+
     const fullProduct: Product = {
       id: editingProduct.id || `p-${Date.now()}`,
       sku: editingProduct.sku || `SKU-${Date.now()}`,
@@ -174,7 +191,7 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
       fotoUrl: editingProduct.fotoUrl || '/logo.jpg',
       precoUnitario: Number(editingProduct.precoUnitario),
       unidade: (editingProduct.unidade as ProductUnit) || 'UN',
-      categoriaId: editingProduct.categoriaId || categories[0].id,
+      categoriaId: validSelectedCategory,
       tempoProducaoMinutos: Number(editingProduct.tempoProducaoMinutos || 30),
       ativo: editingProduct.ativo !== undefined ? editingProduct.ativo : true
     };
@@ -282,7 +299,7 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
                     fotoUrl: '/logo.jpg',
                     precoUnitario: 0,
                     unidade: 'UN',
-                    categoriaId: categories[0]?.id || 'cat-1',
+                    categoriaId: defaultCategoryId,
                     tempoProducaoMinutos: 30,
                     ativo: true
                   });
@@ -657,11 +674,25 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
                 <div className="min-w-0">
                   <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1 truncate">Categoria</label>
                   <select
-                    value={editingProduct.categoriaId}
+                    value={
+                      editingProduct.categoriaId &&
+                      (activeCategories.some(c => c.id === editingProduct.categoriaId) ||
+                        (editingProduct.id && categories.some(c => c.id === editingProduct.categoriaId)))
+                        ? editingProduct.categoriaId
+                        : defaultCategoryId
+                    }
                     onChange={(e) => setEditingProduct({ ...editingProduct, categoriaId: e.target.value })}
                     className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2"
                   >
-                    {categories.filter(c => c.ativo).map(c => (
+                    {editingProduct.id &&
+                      editingProduct.categoriaId &&
+                      !activeCategories.some(c => c.id === editingProduct.categoriaId) &&
+                      categories
+                        .filter(c => c.id === editingProduct.categoriaId)
+                        .map(c => (
+                          <option key={c.id} value={c.id}>{c.nome} (Inativa)</option>
+                        ))}
+                    {activeCategories.map(c => (
                       <option key={c.id} value={c.id}>{c.nome}</option>
                     ))}
                   </select>

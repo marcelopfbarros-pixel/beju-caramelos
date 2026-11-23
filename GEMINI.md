@@ -3,7 +3,7 @@
 ## 1. Layout Mobile e Responsividade
 - **Estrutura de telas**: No mobile (`< md`), organize os controles superiores em blocos/cards empilhados: Título -> Botões de ação -> Filtro (`HybridFilterSort`) -> Busca (em bloco abaixo do filtro) -> Lista/Conteúdo.
 - **Info badge único**: Cada card de título de tela deve exibir no máximo **1 info badge** em estilo azul-claro (`bg-blue-100 text-blue-800`).
-- **Botões no mobile**: Todos os botões de ação no mobile devem exibir **apenas o ícone** (oculte o texto com `hidden md:inline` e forneça `title` e `aria-label`). Botões específicos por ícone: `"Transferir"` na tela de Estoque usa fundo branco, ícone preto (`ArrowLeftRight`) e tooltip `"Transferir estoque entre unidades"`; `"Importar"` na tela de Pedidos usa o ícone do WhatsApp.
+- **Botões no mobile**: Todos os botões de ação no mobile devem exibir **apenas o ícone** (oculte o texto com `hidden md:inline` e forneça `title` e `aria-label`). Botões específicos por ícone: `"Transferir"` na tela de Estoque usa fundo branco, ícone preto (`ArrowLeftRight`) e tooltip `"Transferir estoque entre unidades"`; `"Histórico"` na tela de Estoque exibe **apenas o ícone** (sem texto, inclusive no desktop) com `title` e `aria-label`; `"Importar"` na tela de Pedidos usa o ícone do WhatsApp.
 - **Prevenção de overflow horizontal**: Nenhum card ou barra de filtro deve ultrapassar a largura da tela mobile. Use `w-full max-w-full min-w-0 overflow-hidden` nos cards e `overflow-x-auto max-w-full` nos wrappers de `<table>`.
 - **Visualização Cards / Tabela**: Listagens administrativas (incluindo a aba `Usuários` em `ConfiguracoesScreen.tsx`) devem oferecer alternância `Cards` / `Tabela`, iniciando em `CARDS` no mobile (`window.innerWidth < 768`).
 - **Abas em Configurações**: Exiba as abas em grid `grid-cols-3 md:inline-flex` no mobile.
@@ -27,10 +27,15 @@
 
 ## 6. Deploy, Git e Persistência Supabase
 - **Deploy apenas sob comando explícito**: Nunca execute deploy automático para o Netlify após alterações de código; mantenha as alterações locais e aguarde confirmação explícita do usuário para commitar, fazer push ou publicar.
-- **Método de deploy no Netlify**: Utilize o MCP `netlify_netlify` (`netlify-deploy-services-updater`, `operation: "deploy-site"`, `siteId: "3f9a983f-a6aa-43c0-97f7-afe3201c7a51"`) em vez de `npx netlify deploy --prod` (que exige `NETLIFY_AUTH_TOKEN`).
+- **Método de deploy no Netlify**: Utilize o MCP `netlify_netlify` (`netlify-deploy-services-updater`, `operation: "deploy-site"`, `siteId: "3f9a983f-a6aa-43c0-97f7-afe3201c7a51"`) em vez de `npx netlify deploy --prod` (que exige `NETLIFY_AUTH_TOKEN`), e **execute o comando `npx -y @netlify/mcp@latest --site-id ... --proxy-path ...` retornado** no diretório raiz do workspace para efetivar o deploy.
+- **Constraint `movimentacoes_estoque.quantidade > 0`**: Nunca persista movimentações com `quantidade <= 0` (ex.: zerar estoque via `AJUSTE` com `0`). Em edições manuais, calcule `delta = Math.abs(novo - antigo)` e registre `ENTRADA` ou `SAIDA` somente quando `delta > 0`, mantendo guarda em `saveStockMovement`.
 - **Batch `.upsert()` no Supabase**: Em operações em lote com `onConflict` composto (como `estoque_unidades` com `onConflict: 'unidade_id,produto_id'`), **omita** o campo `id` do payload para evitar preenchimento de `NULL` pelo PostgREST, e recarregue os registros após salvar para substituir IDs temporários (`st-*`) pelos UUIDs reais do banco.
 
 ## 7. Agrupamentos, Autenticação e Paridade Mobile
 - **Agrupamentos em tabelas e cards**: Todos os agrupamentos devem ser expansíveis/retráteis (iniciando **retraídos** por padrão via `useExpandedGroups`), usar cabeçalho verde-claro (`bg-emerald-50`) e ordenar os grupos em ordem alfabética crescente (`localeCompare(..., 'pt-BR')`) ou cronológica crescente (data e turno `MANHA` → `TARDE` → `NOITE`).
 - **Autenticação (sem Google OAuth)**: A autenticação utiliza exclusivamente e-mail e senha numérica de 8 dígitos (não reintroduzir botões ou fluxos de Google OAuth). Ao encerrar sessão, limpe `supabaseUser`, `isOperatorAuthenticated` e o `email` do perfil para retornar à `LandingScreen` sem chamar `handleRefreshAuth`.
 - **Paridade Desktop/Mobile no `RightBar`**: Mantenha `TutorialOverlay` montado no nível de `App.tsx` (nunca apenas dentro do drawer mobile do `RightBar`) e passe as mesmas props de dados (incluindo `categories`) para ambas as instâncias de `RightBar`.
+
+## 8. Regras de Negócio e Impressão
+- **Pagamento parcial (`Sinal`)**: O botão/opção `"Sinal"` deve permitir informar qualquer valor positivo até o limite de `100%` de `valorTotal` (nunca restringir a um percentual fixo como 50%).
+- **Impressão isolada**: Listagens imprimíveis (como Pagamentos Pendentes por Unidade no `RightBar.tsx`) devem renderizar o HTML em um `<iframe>` oculto isolado para acionar `contentWindow.print()`, preservando o layout da aplicação no desktop e no mobile.
