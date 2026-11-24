@@ -4,12 +4,19 @@ import { Sidebar, ScreenId } from './components/Sidebar';
 import { LandingScreen } from './components/LandingScreen';
 import { TutorialOverlay } from './components/TutorialOverlay';
 import { ButterflyFlight } from './components/ButterflyFlight';
-import { canAccessScreen, getDefaultScreenForRole } from './utils/permissions';
+import { canAccessScreen, canViewFinancials, getDefaultScreenForRole } from './utils/permissions';
+import { isOrderPendingFinancialAction } from './utils/financialReconciliation';
+import {
+  isLowStockItem,
+  pruneZeroedAutoStock,
+  stockReservationKey,
+} from './utils/stockAvailability';
 
 const RightBar = lazy(() => import('./components/RightBar').then(m => ({ default: m.RightBar })));
 const PedidosScreen = lazy(() => import('./screens/PedidosScreen').then(m => ({ default: m.PedidosScreen })));
 const ProdutosScreen = lazy(() => import('./screens/ProdutosScreen').then(m => ({ default: m.ProdutosScreen })));
 const EntregasScreen = lazy(() => import('./screens/EntregasScreen').then(m => ({ default: m.EntregasScreen })));
+const FinanceiroScreen = lazy(() => import('./screens/FinanceiroScreen').then(m => ({ default: m.FinanceiroScreen })));
 const ProducaoScreen = lazy(() => import('./screens/ProducaoScreen').then(m => ({ default: m.ProducaoScreen })));
 const EstoqueScreen = lazy(() => import('./screens/EstoqueScreen').then(m => ({ default: m.EstoqueScreen })));
 const LojasScreen = lazy(() => import('./screens/LojasScreen').then(m => ({ default: m.LojasScreen })));
@@ -22,7 +29,8 @@ import { supabase } from './services/supabaseClient';
 import {
   getWhatsAppAutomationSettings,
   formatStatusNotificationMessage,
-  dispatchWhatsAppMessage
+  dispatchWhatsAppMessage,
+  normalizePhoneForWhatsApp
 } from './services/whatsappAutomationService';
 import {
   MessageSquare,
@@ -44,7 +52,10 @@ import {
   Customer,
   MonthlyRevenueGoals,
   CardapioIntroConfig,
-  CardapioThankYouConfig
+  CardapioThankYouConfig,
+  FinancialPaymentChannel,
+  OrderFinancialRecord,
+  PaymentStatus
 } from './types';
 
 export const App: React.FC = () => {
@@ -58,6 +69,12 @@ export const App: React.FC = () => {
   const [productionOrders, setProductionOrders] = useState<ProductionOrder[]>(() => AppStorage.getProductionOrders());
   const [customers, setCustomers] = useState<Customer[]>(() => AppStorage.getCustomers());
   const [users, setUsers] = useState<UserProfile[]>(() => AppStorage.getUsers());
+  const [financialChannels, setFinancialChannels] = useState<FinancialPaymentChannel[]>(() =>
+    AppStorage.getFinancialPaymentChannels()
+  );
+  const [financialRecords, setFinancialRecords] = useState<OrderFinancialRecord[]>(() =>
+    AppStorage.getOrderFinancialRecords()
+  );
   const [userProfile, setUserProfile] = useState<UserProfile>(() => AppStorage.getUserProfile());
   const [revenueGoals, setRevenueGoals] = useState<MonthlyRevenueGoals>(() => {
     try {
@@ -324,6 +341,29 @@ export const App: React.FC = () => {
       const fetchedMovements = await SupabaseService.getStockMovements();
       setStockMovements(fetchedMovements);
 
+      // 9b. Fetch Financeiro (Meios de Pagamento & Conciliação/NF) apenas para ADMIN e GERENTE
+      const storedProfile = AppStorage.getUserProfile();
+      const activeOperatorEmail = (authUser?.email || storedProfile.email || '').toLowerCase();
+      const matchedFetchedUser = fetchedUsers.find(
+        u => u.email.toLowerCase() === activeOperatorEmail
+      );
+      const resolvedOperatorRole = matchedFetchedUser?.role || storedProfile.role;
+
+      if (canViewFinancials(resolvedOperatorRole)) {
+        try {
+          const [fetchedChannels, fetchedFinRecords] = await Promise.all([
+            SupabaseService.getFinancialPaymentChannels(),
+            SupabaseService.getOrderFinancialRecords()
+          ]);
+          if (fetchedChannels.length > 0) {
+            setFinancialChannels(fetchedChannels);
+          }
+          setFinancialRecords(fetchedFinRecords);
+        } catch (finErr) {
+          console.warn('Falha ao carregar dados financeiros do Supabase:', finErr);
+        }
+      }
+
       // 10. Sync Shared App Configurations
       const [dbGoals, dbIntro, dbThankYou] = await Promise.all([
         SupabaseService.getAppConfig<MonthlyRevenueGoals>('revenue_goals'),
@@ -462,6 +502,8 @@ export const App: React.FC = () => {
   useEffect(() => { AppStorage.saveStock(stock); }, [stock]);
   useEffect(() => { AppStorage.saveProductionOrders(productionOrders); }, [productionOrders]);
   useEffect(() => { AppStorage.saveCustomers(customers); }, [customers]);
+  useEffect(() => { AppStorage.saveFinancialPaymentChannels(financialChannels); }, [financialChannels]);
+  useEffect(() => { AppStorage.saveOrderFinancialRecords(financialRecords); }, [financialRecords]);
   useEffect(() => { AppStorage.saveUserProfile(userProfile); }, [userProfile]);
   useEffect(() => { AppStorage.setActiveUnitId(activeUnitId); }, [activeUnitId]);
 
@@ -499,6 +541,9 @@ export const App: React.FC = () => {
         i === idx ? { ...s, quantidadeAtual: nextQty, dataAtualizacao: nowIso } : s
       );
     }
+    if (delta <= 0) {
+      return baseStock;
+    }
     return [
       ...baseStock,
       {
@@ -506,10 +551,47 @@ export const App: React.FC = () => {
         unidadeId,
         produtoId,
         quantidadeAtual: Math.max(0, Number(delta.toFixed(3))),
-        quantidadeMinima: 5,
+        quantidadeMinima: 0,
         dataAtualizacao: nowIso
       }
     ];
+  };
+
+  const applyAndPersistStockDelta = async (
+    baseStock: StockItem[],
+    touchedKeys: ReadonlySet<string>,
+    movements: StockMovement[],
+    errorLabel: string
+  ) => {
+    const { nextStock, removedItems } = pruneZeroedAutoStock(baseStock, touchedKeys);
+    setStock(nextStock);
+    AppStorage.saveStock(nextStock);
+    if (movements.length > 0) {
+      setStockMovements(prev => {
+        const next = [...movements, ...prev];
+        AppStorage.saveStockMovements(next);
+        return next;
+      });
+    }
+
+    if (isSupabaseOnline) {
+      try {
+        if (nextStock.length > 0) {
+          await SupabaseService.saveStock(nextStock);
+        }
+        for (const removed of removedItems) {
+          await SupabaseService.deleteStockByUnitProduct(removed.unidadeId, removed.produtoId);
+        }
+        for (const mov of movements) {
+          await SupabaseService.saveStockMovement(mov);
+        }
+        const freshStock = await SupabaseService.getStock();
+        setStock(freshStock);
+        AppStorage.saveStock(freshStock);
+      } catch (err) {
+        console.error(`${errorLabel}:`, err);
+      }
+    }
   };
 
   const syncOrderDeliveryStock = async (
@@ -524,11 +606,13 @@ export const App: React.FC = () => {
 
     const deltaSign = isNowDelivered ? -1 : 1;
     let updatedStock = [...stock];
+    const touchedKeys = new Set<string>();
     const newMovements: StockMovement[] = [];
     const nowIso = new Date().toISOString();
 
     order.itens.forEach(item => {
       if (item.quantidade <= 0) return;
+      touchedKeys.add(stockReservationKey(order.unidadeOrigemId, item.produtoId));
       updatedStock = adjustStockBatch(
         updatedStock,
         order.unidadeOrigemId,
@@ -551,24 +635,12 @@ export const App: React.FC = () => {
 
     if (newMovements.length === 0) return;
 
-    setStock(updatedStock);
-    AppStorage.saveStock(updatedStock);
-    setStockMovements(prev => {
-      const next = [...newMovements, ...prev];
-      AppStorage.saveStockMovements(next);
-      return next;
-    });
-
-    if (isSupabaseOnline) {
-      try {
-        await SupabaseService.saveStock(updatedStock);
-        for (const mov of newMovements) {
-          await SupabaseService.saveStockMovement(mov);
-        }
-      } catch (err) {
-        console.error('Erro ao baixar/estornar estoque do pedido:', err);
-      }
-    }
+    await applyAndPersistStockDelta(
+      updatedStock,
+      touchedKeys,
+      newMovements,
+      'Erro ao baixar/estornar estoque do pedido'
+    );
   };
 
   const handleSaveOrder = async (newOrder: Order) => {
@@ -781,6 +853,8 @@ export const App: React.FC = () => {
     customers?: Customer[];
     productionOrders?: ProductionOrder[];
     users?: UserProfile[];
+    financialRecords?: OrderFinancialRecord[];
+    financialChannels?: FinancialPaymentChannel[];
   }) => {
     if (data.units && data.units.length > 0) setUnits(data.units);
     if (data.categories && data.categories.length > 0) setCategories(data.categories);
@@ -790,6 +864,94 @@ export const App: React.FC = () => {
     if (data.customers && data.customers.length > 0) setCustomers(data.customers);
     if (data.productionOrders && data.productionOrders.length > 0) setProductionOrders(data.productionOrders);
     if (data.users && data.users.length > 0) setUsers(data.users);
+    if (data.financialChannels && data.financialChannels.length > 0) setFinancialChannels(data.financialChannels);
+    if (data.financialRecords && data.financialRecords.length > 0) setFinancialRecords(data.financialRecords);
+  };
+
+  // Handlers for Financeiro (Conciliação Bancária, NF & Meios de Pagamento)
+  const handleSaveFinancialRecord = async (
+    record: OrderFinancialRecord,
+    orderPaymentSync?: { statusPagamento: PaymentStatus; valorPago: number }
+  ) => {
+    setFinancialRecords(prev => {
+      const exists = prev.some(r => r.pedidoId === record.pedidoId);
+      if (exists) {
+        return prev.map(r => (r.pedidoId === record.pedidoId ? record : r));
+      }
+      return [record, ...prev];
+    });
+
+    if (orderPaymentSync) {
+      const targetOrder = orders.find(o => o.id === record.pedidoId);
+      if (targetOrder) {
+        await handleSaveOrder({
+          ...targetOrder,
+          statusPagamento: orderPaymentSync.statusPagamento,
+          valorPago: orderPaymentSync.valorPago
+        });
+      }
+    }
+
+    if (isSupabaseOnline) {
+      try {
+        const saved = await SupabaseService.saveOrderFinancialRecord(record);
+        setFinancialRecords(prev =>
+          prev.map(r => (r.pedidoId === saved.pedidoId ? saved : r))
+        );
+      } catch (err) {
+        console.error('Erro ao salvar registro financeiro no Supabase:', err);
+      }
+    }
+  };
+
+  const handleSaveFinancialChannel = async (
+    channel: FinancialPaymentChannel
+  ): Promise<FinancialPaymentChannel> => {
+    setFinancialChannels(prev => {
+      const exists = prev.some(
+        c =>
+          c.id === channel.id ||
+          c.nome.toLowerCase() === channel.nome.trim().toLowerCase()
+      );
+      if (exists) {
+        return prev.map(c =>
+          c.id === channel.id ||
+          c.nome.toLowerCase() === channel.nome.trim().toLowerCase()
+            ? channel
+            : c
+        );
+      }
+      return [...prev, channel];
+    });
+
+    if (isSupabaseOnline) {
+      try {
+        const saved = await SupabaseService.saveFinancialPaymentChannel(channel);
+        setFinancialChannels(prev =>
+          prev.map(c =>
+            c.id === channel.id ||
+            c.nome.toLowerCase() === saved.nome.toLowerCase()
+              ? saved
+              : c
+          )
+        );
+        return saved;
+      } catch (err) {
+        console.error('Erro ao salvar meio de pagamento no Supabase:', err);
+      }
+    }
+    return channel;
+  };
+
+  const handleDeleteFinancialChannel = async (channelId: string) => {
+    setFinancialChannels(prev => prev.filter(c => c.id !== channelId));
+    if (isSupabaseOnline) {
+      try {
+        await SupabaseService.deleteFinancialPaymentChannel(channelId);
+      } catch (err) {
+        console.error('Erro ao excluir meio de pagamento no Supabase:', err);
+      }
+    }
   };
 
   const handleSaveUserProfile = async (profile: UserProfile) => {
@@ -855,6 +1017,7 @@ export const App: React.FC = () => {
     const centralUnitId = units.find(u => u.tipo === 'CENTRAL')?.id || po.unidadeId;
     const isManual = po.codigoOrdem.startsWith('OP-MANUAL-');
     const targetMovements: StockMovement[] = [];
+    const touchedKeys = new Set<string>();
     let updatedStock = [...stock];
     let movedAny = false;
     const nowIso = new Date().toISOString();
@@ -912,6 +1075,7 @@ export const App: React.FC = () => {
 
       if (becameConcluded && nextQty > 0 && centralUnitId) {
         movedAny = true;
+        touchedKeys.add(stockReservationKey(centralUnitId, item.produtoId));
         updatedStock = adjustStockBatch(updatedStock, centralUnitId, item.produtoId, nextQty);
         targetMovements.push({
           id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -931,6 +1095,7 @@ export const App: React.FC = () => {
             const transferQty = Math.min(remainingToTransfer, destQty);
             remainingToTransfer -= transferQty;
             const destUnitName = units.find(u => u.id === unitId)?.nome || unitId;
+            touchedKeys.add(stockReservationKey(unitId, item.produtoId));
             updatedStock = adjustStockBatch(updatedStock, centralUnitId, item.produtoId, -transferQty);
             updatedStock = adjustStockBatch(updatedStock, unitId, item.produtoId, transferQty);
             targetMovements.push({
@@ -957,12 +1122,14 @@ export const App: React.FC = () => {
         });
       } else if (revertedFromConcluded && prevQty > 0 && centralUnitId) {
         movedAny = true;
+        touchedKeys.add(stockReservationKey(centralUnitId, item.produtoId));
         const destinations = getOrderDestinationsForItem(item.produtoId, prevQty, item.unidadeDestinoId);
         let remainingToRevert = prevQty;
         destinations.forEach(({ unitId, qty: destQty }) => {
           if (unitId && unitId !== centralUnitId && remainingToRevert > 0) {
             const revertQty = Math.min(remainingToRevert, destQty);
             remainingToRevert -= revertQty;
+            touchedKeys.add(stockReservationKey(unitId, item.produtoId));
             updatedStock = adjustStockBatch(updatedStock, unitId, item.produtoId, -revertQty);
             updatedStock = adjustStockBatch(updatedStock, centralUnitId, item.produtoId, revertQty);
             targetMovements.push({
@@ -990,6 +1157,7 @@ export const App: React.FC = () => {
         });
       } else if (deltaWhileConcluded > 0 && centralUnitId) {
         movedAny = true;
+        touchedKeys.add(stockReservationKey(centralUnitId, item.produtoId));
         updatedStock = adjustStockBatch(updatedStock, centralUnitId, item.produtoId, deltaWhileConcluded);
         targetMovements.push({
           id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -1010,24 +1178,12 @@ export const App: React.FC = () => {
     };
 
     if (movedAny) {
-      setStock(updatedStock);
-      AppStorage.saveStock(updatedStock);
-      setStockMovements(prev => {
-        const next = [...targetMovements, ...prev];
-        AppStorage.saveStockMovements(next);
-        return next;
-      });
-
-      if (isSupabaseOnline) {
-        try {
-          await SupabaseService.saveStock(updatedStock);
-          for (const mov of targetMovements) {
-            await SupabaseService.saveStockMovement(mov);
-          }
-        } catch (err) {
-          console.error('Erro ao registrar movimentação automática de estoque:', err);
-        }
-      }
+      await applyAndPersistStockDelta(
+        updatedStock,
+        touchedKeys,
+        targetMovements,
+        'Erro ao registrar movimentação automática de estoque'
+      );
     }
 
     setProductionOrders(prev => {
@@ -1193,8 +1349,78 @@ export const App: React.FC = () => {
   const [pedidosStatusFilterRequest, setPedidosStatusFilterRequest] = useState<{
     status: string;
     expandGroups?: boolean;
+    searchTerm?: string;
+    editOrderId?: string;
     nonce: number;
   } | null>(null);
+
+  const handleConsumePedidosFilter = useCallback(() => {
+    setPedidosStatusFilterRequest(null);
+  }, []);
+
+  const handleNavigateToPedidosFilter = useCallback(
+    (filter: { status: string; expandGroups?: boolean; searchTerm?: string }) => {
+      setPedidosStatusFilterRequest({
+        status: filter.status,
+        expandGroups: filter.expandGroups,
+        searchTerm: filter.searchTerm ?? '',
+        nonce: Date.now()
+      });
+      setCurrentScreen('pedidos');
+    },
+    []
+  );
+
+  const handleOpenOrderInPedidos = useCallback(
+    (order: Order, openEditModal = false) => {
+      const matchesCurrentUnit =
+        activeUnitId === 'all' ||
+        order.unidadeOrigemId === activeUnitId ||
+        order.unidadeRetiradaId === activeUnitId;
+      if (!matchesCurrentUnit && allowedUnits.length > 1) {
+        setActiveUnitId('all');
+      }
+      setSelectedOrder(order);
+      setPedidosStatusFilterRequest({
+        status: 'TODOS',
+        expandGroups: true,
+        searchTerm: order.numeroPedido,
+        editOrderId: openEditModal ? order.id : undefined,
+        nonce: Date.now()
+      });
+      setCurrentScreen('pedidos');
+    },
+    [activeUnitId, allowedUnits.length]
+  );
+
+  const handleOpenCustomerOrdersInPedidos = useCallback(
+    (customer: Customer) => {
+      if (activeUnitId !== 'all' && allowedUnits.length > 1) {
+        const normTel = normalizePhoneForWhatsApp(customer.telefone || '');
+        const normName = (customer.nome || '').trim().toLowerCase();
+        const hasOrderOutsideActiveUnit = allowedOrders.some(o => {
+          const oTel = normalizePhoneForWhatsApp(o.clienteTelefone || '');
+          const oName = (o.clienteNome || '').trim().toLowerCase();
+          const isCustomerMatch =
+            (normTel && oTel && normTel === oTel) ||
+            (normName && oName === normName);
+          if (!isCustomerMatch) return false;
+          return o.unidadeOrigemId !== activeUnitId && o.unidadeRetiradaId !== activeUnitId;
+        });
+        if (hasOrderOutsideActiveUnit) {
+          setActiveUnitId('all');
+        }
+      }
+      setPedidosStatusFilterRequest({
+        status: 'TODOS',
+        expandGroups: true,
+        searchTerm: customer.nome || customer.telefone,
+        nonce: Date.now()
+      });
+      setCurrentScreen('pedidos');
+    },
+    [activeUnitId, allowedUnits.length, allowedOrders]
+  );
 
   useEffect(() => {
     const isInWebApp =
@@ -1270,7 +1496,7 @@ export const App: React.FC = () => {
   }, [scopedOrders, productionOrders, activeUnitId]);
 
   const lowStockCount = React.useMemo(
-    () => scopedStock.filter(s => s.quantidadeAtual <= s.quantidadeMinima).length,
+    () => scopedStock.filter(isLowStockItem).length,
     [scopedStock]
   );
 
@@ -1287,6 +1513,19 @@ export const App: React.FC = () => {
   const pendingCustomersCount = React.useMemo(
     () => customers.length,
     [customers]
+  );
+
+  const financialRecordsByOrderId = React.useMemo(
+    () => new Map(financialRecords.map(r => [r.pedidoId, r])),
+    [financialRecords]
+  );
+
+  const pendingFinancialCount = React.useMemo(
+    () =>
+      scopedOrders.filter(o =>
+        isOrderPendingFinancialAction(o, financialRecordsByOrderId.get(o.id))
+      ).length,
+    [scopedOrders, financialRecordsByOrderId]
   );
 
   useEffect(() => {
@@ -1460,6 +1699,7 @@ export const App: React.FC = () => {
           itemsToProduceCount={itemsToProduceCount}
           lowStockCount={lowStockCount}
           pendingDeliveriesCount={pendingDeliveriesCount}
+          pendingFinancialCount={pendingFinancialCount}
           pendingCustomersCount={pendingCustomersCount}
           selectedDeliveriesCount={selectedDeliveryIds.length}
         />
@@ -1483,6 +1723,7 @@ export const App: React.FC = () => {
                 return Boolean(effectiveUserProfile.senha && pin === effectiveUserProfile.senha);
               }}
               requestedStatusFilter={pedidosStatusFilterRequest}
+              onConsumeStatusFilterRequest={handleConsumePedidosFilter}
               onSaveOrder={handleSaveOrder}
               onDeleteOrder={handleDeleteOrder}
               selectedOrderId={selectedOrder?.id}
@@ -1570,12 +1811,31 @@ export const App: React.FC = () => {
             />
           )}
 
+          {currentScreen === 'financeiro' && canViewFinancials(effectiveUserProfile.role) && (
+            <FinanceiroScreen
+              orders={allowedOrders}
+              units={allowedUnits}
+              activeUnitId={activeUnitId}
+              financialChannels={financialChannels}
+              financialRecords={financialRecords}
+              userProfile={effectiveUserProfile}
+              onSaveFinancialRecord={handleSaveFinancialRecord}
+              onSaveFinancialChannel={handleSaveFinancialChannel}
+              onDeleteFinancialChannel={handleDeleteFinancialChannel}
+              onOpenOrderInPedidos={handleOpenOrderInPedidos}
+            />
+          )}
+
           {currentScreen === 'clientes' && (
             <ClientesScreen
               customers={customers}
               orders={orders}
+              products={products}
+              units={units}
               onSaveCustomer={handleSaveCustomer}
               onDeleteCustomer={handleDeleteCustomer}
+              onOpenOrderInPedidos={handleOpenOrderInPedidos}
+              onOpenCustomerOrdersInPedidos={handleOpenCustomerOrdersInPedidos}
             />
           )}
 
@@ -1639,6 +1899,8 @@ export const App: React.FC = () => {
               customers={customers}
               productionOrders={productionOrders}
               users={users}
+              financialRecords={financialRecords}
+              financialChannels={financialChannels}
               onSaveUserProfile={handleSaveUserProfile}
               onSaveUser={handleSaveUser}
               onToggleUserActive={handleToggleUserActive}
@@ -1666,6 +1928,8 @@ export const App: React.FC = () => {
               onSaveCustomer={handleSaveCustomer}
               stock={stock}
               activeUnitId={activeUnitId}
+              financialRecords={financialRecords}
+              financialChannels={financialChannels}
               selectedOrder={selectedOrder}
               onSelectOrder={setSelectedOrder}
               onSaveOrder={handleSaveOrder}
@@ -1676,6 +1940,7 @@ export const App: React.FC = () => {
               userRole={effectiveUserProfile.role}
               currentScreen={currentScreen}
               onNavigate={setCurrentScreen}
+              onNavigateToPedidosFilter={handleNavigateToPedidosFilter}
               isMobileScreen={true}
               focusRoteiroSignal={focusRoteiroSignal}
               onOpenTutorial={() => setIsTutorialOpen(true)}
@@ -1695,6 +1960,8 @@ export const App: React.FC = () => {
             onSaveCustomer={handleSaveCustomer}
             stock={stock}
             activeUnitId={activeUnitId}
+            financialRecords={financialRecords}
+            financialChannels={financialChannels}
             selectedOrder={selectedOrder}
             onSelectOrder={setSelectedOrder}
             onSaveOrder={handleSaveOrder}
@@ -1705,6 +1972,7 @@ export const App: React.FC = () => {
             userRole={effectiveUserProfile.role}
             currentScreen={currentScreen}
             onNavigate={setCurrentScreen}
+            onNavigateToPedidosFilter={handleNavigateToPedidosFilter}
             focusRoteiroSignal={focusRoteiroSignal}
             onOpenTutorial={() => setIsTutorialOpen(true)}
           />

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { UserProfile, StoreUnit, Category, Product, Order, StockItem, Customer, ProductionOrder, MonthlyRevenueGoals, CardapioIntroConfig, CardapioThankYouConfig } from '../types';
+import { UserProfile, StoreUnit, Category, Product, Order, StockItem, Customer, ProductionOrder, MonthlyRevenueGoals, CardapioIntroConfig, CardapioThankYouConfig, OrderFinancialRecord, FinancialPaymentChannel } from '../types';
 import { getMonthGoalForUnit, getMonthYearKey, getUnitMonthGoalKey, getYearGoalForUnit } from '../utils/revenueGoals';
 import { 
   User, 
@@ -49,6 +49,8 @@ interface ConfiguracoesScreenProps {
   customers: Customer[];
   productionOrders: ProductionOrder[];
   users: UserProfile[];
+  financialRecords?: OrderFinancialRecord[];
+  financialChannels?: FinancialPaymentChannel[];
   onSaveUserProfile: (profile: UserProfile) => void;
   onSaveUser: (user: UserProfile) => void;
   onToggleUserActive: (userId: string, ativo: boolean) => void;
@@ -61,6 +63,8 @@ interface ConfiguracoesScreenProps {
     customers?: Customer[];
     productionOrders?: ProductionOrder[];
     users?: UserProfile[];
+    financialRecords?: OrderFinancialRecord[];
+    financialChannels?: FinancialPaymentChannel[];
   }) => void;
   isSupabaseOnline: boolean;
   onSyncSupabase?: () => Promise<void> | void;
@@ -84,6 +88,8 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
   customers,
   productionOrders,
   users,
+  financialRecords = [],
+  financialChannels = [],
   onSaveUserProfile,
   onSaveUser,
   onToggleUserActive,
@@ -293,7 +299,7 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
     setExportingBackup(true);
     try {
       if (isSupabaseOnline) {
-        const [dbUnits, dbCats, dbProds, dbOrders, dbStock, dbCustomers, dbProdOrders, dbUsers] = await Promise.all([
+        const [dbUnits, dbCats, dbProds, dbOrders, dbStock, dbCustomers, dbProdOrders, dbUsers, dbFinRecs, dbFinChs] = await Promise.all([
           SupabaseService.getUnits().catch(() => units),
           SupabaseService.getCategories().catch(() => categories),
           SupabaseService.getProducts().catch(() => products),
@@ -301,7 +307,9 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
           SupabaseService.getStock().catch(() => stock),
           SupabaseService.getCustomers().catch(() => customers),
           SupabaseService.getProductionOrders().catch(() => productionOrders),
-          SupabaseService.getUsers().catch(() => users)
+          SupabaseService.getUsers().catch(() => users),
+          SupabaseService.getOrderFinancialRecords().catch(() => financialRecords),
+          SupabaseService.getFinancialPaymentChannels().catch(() => financialChannels)
         ]);
         ExcelService.exportFullBackup(
           dbUnits.length ? dbUnits : units,
@@ -311,10 +319,12 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
           dbStock.length ? dbStock : stock,
           dbCustomers.length ? dbCustomers : customers,
           dbProdOrders.length ? dbProdOrders : productionOrders,
-          dbUsers.length ? dbUsers : users
+          dbUsers.length ? dbUsers : users,
+          dbFinRecs.length ? dbFinRecs : financialRecords,
+          dbFinChs.length ? dbFinChs : financialChannels
         );
       } else {
-        ExcelService.exportFullBackup(units, categories, products, orders, stock, customers, productionOrders, users);
+        ExcelService.exportFullBackup(units, categories, products, orders, stock, customers, productionOrders, users, financialRecords, financialChannels);
       }
     } finally {
       setExportingBackup(false);

@@ -1,7 +1,8 @@
 import * as XLSX from 'xlsx';
-import { Order, Product, Category, StoreUnit, StockItem, Customer, ProductionOrder, UserProfile } from '../types';
+import { Order, Product, Category, StoreUnit, StockItem, Customer, ProductionOrder, UserProfile, OrderFinancialRecord, FinancialPaymentChannel } from '../types';
 import { formatDeliveryTimeRange } from '../utils/deliveryTimeRange';
 import { formatCurrencyBR } from '../components/CurrencyInput';
+import { isLowStockItem } from '../utils/stockAvailability';
 
 export class ExcelService {
   /**
@@ -117,7 +118,7 @@ export class ExcelService {
         'Quantidade Atual': s.quantidadeAtual,
         'Unidade de Medida': prod?.unidade || 'UN',
         'Quantidade Mínima': s.quantidadeMinima,
-        'Status do Estoque': s.quantidadeAtual <= s.quantidadeMinima ? 'ALERTA MÍNIMO' : 'NORMAL',
+        'Status do Estoque': isLowStockItem(s) ? 'ALERTA MÍNIMO' : 'NORMAL',
         'Última Atualização': new Date(s.dataAtualizacao).toLocaleString('pt-BR')
       };
     });
@@ -139,7 +140,9 @@ export class ExcelService {
     stock: StockItem[],
     customers: Customer[] = [],
     productionOrders: ProductionOrder[] = [],
-    users: UserProfile[] = []
+    users: UserProfile[] = [],
+    financialRecords: OrderFinancialRecord[] = [],
+    financialChannels: FinancialPaymentChannel[] = []
   ): void {
     const wb = XLSX.utils.book_new();
 
@@ -258,6 +261,36 @@ export class ExcelService {
     })));
     XLSX.utils.book_append_sheet(wb, wsUsers, 'Usuarios');
 
+    // 9. Aba Meios de Pagamento Financeiro
+    const wsFinChannels = XLSX.utils.json_to_sheet(financialChannels.map(ch => ({
+      'ID': ch.id,
+      'Nome': ch.nome,
+      'Categoria': ch.categoria,
+      'Exige NF Padrão': ch.exigeNfPadrao ? 'SIM' : 'NÃO',
+      'Ativo': ch.ativo ? 'SIM' : 'NÃO',
+      'Ordem': ch.ordem
+    })));
+    XLSX.utils.book_append_sheet(wb, wsFinChannels, 'Meios_Pagamento_Financeiro');
+
+    // 10. Aba Financeiro Pedidos (Conciliação & NF)
+    const wsFinRecords = XLSX.utils.json_to_sheet(financialRecords.map(rec => ({
+      'ID': rec.id,
+      'Pedido ID': rec.pedidoId,
+      'Status Conciliação': rec.conciliacaoStatus,
+      'Meio Pagamento ID': rec.meioPagamentoId || '',
+      'Meio Pagamento': rec.meioPagamentoNome || '',
+      'Data Pagamento': rec.dataPagamento || '',
+      'Data Extrato': rec.dataExtrato || '',
+      'Valor Conciliado': rec.valorConciliado,
+      'Lançamentos JSON': JSON.stringify(rec.lancamentos || []),
+      'Ref. Extrato': rec.referenciaExtrato || '',
+      'Status NF': rec.nfStatus,
+      'Data Emissão NF': rec.nfDataEmissao || '',
+      'Obs. NF': rec.nfObservacoes || '',
+      'Observações': rec.observacoes || ''
+    })));
+    XLSX.utils.book_append_sheet(wb, wsFinRecords, 'Financeiro_Pedidos');
+
     XLSX.writeFile(wb, `Beju_Caramelos_Backup_Completo_${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
@@ -273,6 +306,8 @@ export class ExcelService {
     customers?: Customer[];
     productionOrders?: ProductionOrder[];
     users?: UserProfile[];
+    financialChannels?: FinancialPaymentChannel[];
+    financialRecords?: OrderFinancialRecord[];
   }> {
     const buffer = await file.arrayBuffer();
     const wb = XLSX.read(buffer, { type: 'array' });
@@ -417,6 +452,42 @@ export class ExcelService {
           avatarUrl: String(r['Avatar URL'] || ''),
           senha: String(r['Senha'] || '') || undefined,
           autenticadoGoogle: false
+        };
+      });
+    }
+
+    if (wb.SheetNames.includes('Meios_Pagamento_Financeiro')) {
+      const raw = XLSX.utils.sheet_to_json(wb.Sheets['Meios_Pagamento_Financeiro']) as any[];
+      result.financialChannels = raw.map(r => ({
+        id: String(r['ID'] || `fin-ch-${Date.now()}`),
+        nome: String(r['Nome'] || ''),
+        categoria: (r['Categoria'] || 'OUTROS') as any,
+        exigeNfPadrao: String(r['Exige NF Padrão'] || 'SIM').toUpperCase() === 'SIM',
+        ativo: String(r['Ativo'] || 'SIM').toUpperCase() === 'SIM',
+        ordem: Number(r['Ordem'] || 0)
+      }));
+    }
+
+    if (wb.SheetNames.includes('Financeiro_Pedidos')) {
+      const raw = XLSX.utils.sheet_to_json(wb.Sheets['Financeiro_Pedidos']) as any[];
+      result.financialRecords = raw.map(r => {
+        let lancamentos = [];
+        try { lancamentos = JSON.parse(r['Lançamentos JSON'] || '[]'); } catch { lancamentos = []; }
+        return {
+          id: String(r['ID'] || `fin-${Date.now()}`),
+          pedidoId: String(r['Pedido ID'] || ''),
+          conciliacaoStatus: (r['Status Conciliação'] || 'PENDENTE') as any,
+          meioPagamentoId: r['Meio Pagamento ID'] ? String(r['Meio Pagamento ID']) : undefined,
+          meioPagamentoNome: r['Meio Pagamento'] ? String(r['Meio Pagamento']) : undefined,
+          dataPagamento: r['Data Pagamento'] ? String(r['Data Pagamento']) : undefined,
+          dataExtrato: r['Data Extrato'] ? String(r['Data Extrato']) : undefined,
+          valorConciliado: Number(r['Valor Conciliado'] || 0),
+          lancamentos,
+          referenciaExtrato: r['Ref. Extrato'] ? String(r['Ref. Extrato']) : undefined,
+          nfStatus: (r['Status NF'] || 'PENDENTE') as any,
+          nfDataEmissao: r['Data Emissão NF'] ? String(r['Data Emissão NF']) : undefined,
+          nfObservacoes: r['Obs. NF'] ? String(r['Obs. NF']) : undefined,
+          observacoes: r['Observações'] ? String(r['Observações']) : undefined
         };
       });
     }

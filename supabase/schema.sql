@@ -149,6 +149,53 @@ CREATE TABLE IF NOT EXISTS public.app_configuracoes (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- 11. MEIOS DE PAGAMENTO DO FINANCEIRO (Conciliação Bancária & Controle de NF)
+CREATE TABLE IF NOT EXISTS public.meios_pagamento_financeiro (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    nome TEXT UNIQUE NOT NULL,
+    categoria TEXT NOT NULL DEFAULT 'OUTROS'
+        CHECK (categoria IN ('PIX', 'CARTAO', 'DINHEIRO', 'BOLETO', 'BONIFICADO', 'OUTROS')),
+    exige_nf_padrao BOOLEAN NOT NULL DEFAULT TRUE,
+    ativo BOOLEAN NOT NULL DEFAULT TRUE,
+    ordem INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 12. CONCILIAÇÃO BANCÁRIA E CONTROLE DE NOTA FISCAL POR PEDIDO
+CREATE TABLE IF NOT EXISTS public.financeiro_pedidos (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    pedido_id UUID NOT NULL UNIQUE REFERENCES public.pedidos(id) ON DELETE CASCADE,
+    conciliacao_status TEXT NOT NULL DEFAULT 'PENDENTE'
+        CHECK (conciliacao_status IN ('PENDENTE', 'PARCIAL', 'CONCILIADO')),
+    meio_pagamento_id UUID REFERENCES public.meios_pagamento_financeiro(id) ON DELETE SET NULL,
+    meio_pagamento_nome TEXT,
+    data_pagamento DATE,
+    data_extrato DATE,
+    valor_conciliado NUMERIC(10,2) NOT NULL DEFAULT 0.00 CHECK (valor_conciliado >= 0),
+    lancamentos JSONB NOT NULL DEFAULT '[]'::jsonb,
+    referencia_extrato TEXT,
+    nf_status TEXT NOT NULL DEFAULT 'PENDENTE'
+        CHECK (nf_status IN ('PENDENTE', 'EMITIDA', 'DISPENSADA')),
+    nf_data_emissao DATE,
+    nf_observacoes TEXT,
+    observacoes TEXT,
+    atualizado_por TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS financeiro_pedidos_meio_pagamento_id_idx
+  ON public.financeiro_pedidos (meio_pagamento_id);
+CREATE INDEX IF NOT EXISTS financeiro_pedidos_data_extrato_idx
+  ON public.financeiro_pedidos (data_extrato);
+CREATE INDEX IF NOT EXISTS financeiro_pedidos_conciliacao_pendente_idx
+  ON public.financeiro_pedidos (conciliacao_status)
+  WHERE conciliacao_status <> 'CONCILIADO';
+CREATE INDEX IF NOT EXISTS financeiro_pedidos_nf_pendente_idx
+  ON public.financeiro_pedidos (nf_status)
+  WHERE nf_status = 'PENDENTE';
+
 -- ====================================================================
 -- TRIGGERS DE INTEGRIDADE E TOTALIZAÇÃO AUTOMÁTICA
 -- ====================================================================
@@ -206,4 +253,14 @@ INSERT INTO public.categorias (nome, ordem) VALUES
 ('Sazonal', 3),
 ('Salgados', 4),
 ('Empório', 5)
+ON CONFLICT (nome) DO NOTHING;
+
+-- Inserir Meios de Pagamento Financeiros Padrão
+INSERT INTO public.meios_pagamento_financeiro (nome, categoria, exige_nf_padrao, ordem) VALUES
+('PixC6', 'PIX', TRUE, 1),
+('C6pay', 'CARTAO', TRUE, 2),
+('Sumup', 'CARTAO', TRUE, 3),
+('Dinheiro', 'DINHEIRO', TRUE, 4),
+('Bonificado', 'BONIFICADO', FALSE, 5),
+('Boleto', 'BOLETO', TRUE, 6)
 ON CONFLICT (nome) DO NOTHING;

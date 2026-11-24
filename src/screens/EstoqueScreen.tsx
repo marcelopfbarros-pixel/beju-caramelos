@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { StockItem, StockMovement, StockMovementType, Product, StoreUnit, Order } from '../types';
-import { computeReservedStockMap, stockReservationKey } from '../utils/stockAvailability';
+import { computeReservedStockMap, isLowStockItem, stockReservationKey } from '../utils/stockAvailability';
 import { 
   ArrowLeftRight, 
   AlertTriangle, 
@@ -88,7 +88,7 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
     return stock
       .filter(s => {
         if (activeUnitId !== 'all' && s.unidadeId !== activeUnitId) return false;
-        const isLow = s.quantidadeAtual <= s.quantidadeMinima;
+        const isLow = isLowStockItem(s);
         if (statusFilter === 'CRITICO' && !isLow) return false;
         if (statusFilter === 'OK' && isLow) return false;
         if (q) {
@@ -125,7 +125,7 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
         const unit = unitMap.get(item.unidadeId);
         key = unit ? `${unit.tipo === 'CENTRAL' ? '🏭 ' : '🏪 '}${unit.nome}` : item.unidadeId;
       } else {
-        key = item.quantidadeAtual <= item.quantidadeMinima ? 'Reposição Necessária' : 'Abastecido';
+        key = isLowStockItem(item) ? 'Reposição Necessária' : 'Abastecido';
       }
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(item);
@@ -173,7 +173,7 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
         unidadeId: transferDestination,
         produtoId: transferProduct,
         quantidadeAtual: transferQty,
-        quantidadeMinima: 5,
+        quantidadeMinima: 0,
         dataAtualizacao: new Date().toISOString()
       });
     }
@@ -529,7 +529,7 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
                   {group.items.map(item => {
                     const prod = prodMap.get(item.produtoId);
                     const unit = unitMap.get(item.unidadeId);
-                    const isLow = item.quantidadeAtual <= item.quantidadeMinima;
+                    const isLow = isLowStockItem(item);
                     const reservado = reservedMap.get(stockReservationKey(item.unidadeId, item.produtoId)) || 0;
                     const disponivel = Math.max(0, item.quantidadeAtual - reservado);
                     const isEditingCard = isStockModalOpen && editingStockId === item.id;
@@ -593,7 +593,7 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
                                 </div>
                                 <div>
                                   <span className="text-[10px] uppercase font-mono text-slate-400 block">Disponível</span>
-                                  <span className={`font-mono font-bold text-xs ${disponivel <= item.quantidadeMinima ? 'text-rose-700' : 'text-slate-800'}`}>
+                                  <span className={`font-mono font-bold text-xs ${item.quantidadeMinima > 0 && disponivel <= item.quantidadeMinima ? 'text-rose-700' : 'text-slate-800'}`}>
                                     {disponivel} {prod?.unidade || 'UN'}
                                   </span>
                                 </div>
@@ -695,7 +695,7 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
                   {expanded && group.items.map(item => {
                     const prod = prodMap.get(item.produtoId);
                     const unit = unitMap.get(item.unidadeId);
-                    const isLow = item.quantidadeAtual <= item.quantidadeMinima;
+                    const isLow = isLowStockItem(item);
                     const reservado = reservedMap.get(stockReservationKey(item.unidadeId, item.produtoId)) || 0;
                     const disponivel = Math.max(0, item.quantidadeAtual - reservado);
                     const isEditingRow = isStockModalOpen && editingStockId === item.id;
@@ -755,7 +755,7 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
                             <div className="mt-1 text-[10px] font-mono text-slate-600">
                               <span className="text-amber-700 font-semibold">Res: {reservado}</span>
                               <span className="mx-1 text-slate-300">•</span>
-                              <span className={disponivel <= item.quantidadeMinima ? 'text-rose-700 font-bold' : 'text-slate-800 font-bold'}>
+                              <span className={item.quantidadeMinima > 0 && disponivel <= item.quantidadeMinima ? 'text-rose-700 font-bold' : 'text-slate-800 font-bold'}>
                                 Disp: {disponivel}
                               </span>
                             </div>

@@ -2,7 +2,18 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { Order, Product, Category, StoreUnit, StockItem, MonthlyRevenueGoals, ProductionShift } from '../types';
+import {
+  Order,
+  Product,
+  Category,
+  StoreUnit,
+  StockItem,
+  MonthlyRevenueGoals,
+  ProductionShift,
+  OrderFinancialRecord,
+  FinancialPaymentChannel,
+  OrderFinancialPaymentEntry,
+} from '../types';
 import { getMonthGoalForUnit, getYearGoalForUnit } from '../utils/revenueGoals';
 import { formatDeliveryTimeRange } from '../utils/deliveryTimeRange';
 import { canEditRevenueGoals, canViewFinancials, UserRole } from '../utils/permissions';
@@ -10,7 +21,10 @@ import { ScreenId } from './Sidebar';
 import { ProgramacaoProducaoModal, toLocalDateKey } from './ProgramacaoProducaoModal';
 import { TutorialOverlay } from './TutorialOverlay';
 import { CurrencyInput, formatCurrencyBR } from './CurrencyInput';
+import { IndicadoresCharts } from './IndicadoresCharts';
 import { isReplenishmentOrder } from '../utils/orderStatusStyles';
+import { normalizeTextKey } from '../utils/orderRegion';
+import { isLowStockItem } from '../utils/stockAvailability';
 import {
   PAYMENT_STATUS_BADGE_CLASSES,
   PAYMENT_STATUS_LABELS,
@@ -20,7 +34,9 @@ import {
 } from '../utils/paymentStatus';
 import { 
   TrendingUp, 
-  Clock, 
+  CheckCircle2,
+  CalendarClock,
+  Users,
   Truck, 
   AlertTriangle, 
   Copy, 
@@ -35,7 +51,23 @@ import {
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Customer } from '../types';
-import { MapPin, Navigation, Share2, FileDown, ExternalLink, X, ChevronDown, ChevronUp, Wrench, Search, Loader2, UserCheck, Send, ChefHat, HelpCircle, Store, ShoppingBag, Wallet, Printer } from 'lucide-react';
+import { MapPin, Navigation, Share2, FileDown, ExternalLink, X, ChevronDown, ChevronUp, Wrench, Search, Loader2, UserCheck, Send, ChefHat, HelpCircle, Store, ShoppingBag, Wallet, Printer, Landmark } from 'lucide-react';
+import {
+  DEFAULT_FINANCIAL_PAYMENT_CHANNELS,
+  computeConciliatedTotals,
+  getEffectiveInvoiceStatus,
+  getEffectiveReconciliationStatus,
+  isEntryBonificado,
+  isEntryCash,
+  isOrderEligibleForFinancial,
+  toLocalDateInput,
+} from '../utils/financialReconciliation';
+import {
+  FaturamentoGroupedSummary,
+  FaturamentoReportRow,
+  groupAndSortFaturamentoRows,
+  resolveOrderBillingUnitId,
+} from '../utils/faturamentoReportData';
 import {
   formatCep,
   lookupByCep,
@@ -51,6 +83,7 @@ import {
 import {
   formatStatusNotificationMessage,
   dispatchWhatsAppMessage,
+  normalizePhoneForWhatsApp,
   resolveOrderUnit,
   formatUnitAddress
 } from '../services/whatsappAutomationService';
@@ -64,6 +97,8 @@ interface RightBarProps {
   onSaveCustomer?: (customer: Customer) => void;
   stock?: StockItem[];
   activeUnitId?: string;
+  financialRecords?: OrderFinancialRecord[];
+  financialChannels?: FinancialPaymentChannel[];
   selectedOrder?: Order;
   onSelectOrder?: (order: Order) => void;
   onSaveOrder?: (order: Order) => void;
@@ -74,6 +109,7 @@ interface RightBarProps {
   userRole?: UserRole;
   currentScreen?: ScreenId;
   onNavigate?: (screen: ScreenId) => void;
+  onNavigateToPedidosFilter?: (filter: { status: string; expandGroups?: boolean; searchTerm?: string }) => void;
   isMobileDrawer?: boolean;
   isMobileScreen?: boolean;
   onCloseMobileDrawer?: () => void;
@@ -90,6 +126,8 @@ export const RightBar: React.FC<RightBarProps> = ({
   onSaveCustomer,
   stock = [],
   activeUnitId = 'all',
+  financialRecords = [],
+  financialChannels = DEFAULT_FINANCIAL_PAYMENT_CHANNELS,
   selectedOrder,
   onSelectOrder,
   onSaveOrder,
@@ -100,6 +138,7 @@ export const RightBar: React.FC<RightBarProps> = ({
   userRole = 'ADMIN',
   currentScreen = 'pedidos',
   onNavigate,
+  onNavigateToPedidosFilter,
   isMobileDrawer = false,
   isMobileScreen = false,
   onCloseMobileDrawer,
@@ -114,9 +153,14 @@ export const RightBar: React.FC<RightBarProps> = ({
   const [activeTab, setActiveTab] = useState<'INDICADORES' | 'FERRAMENTAS'>(() =>
     focusRoteiroSignal > 0 ? 'FERRAMENTAS' : 'INDICADORES'
   );
-  const [expandedTool, setExpandedTool] = useState<'WHATSAPP' | 'PAGAMENTOS_PENDENTES' | 'ROTEIRIZADOR' | 'BUSCA_CEP' | 'PLANEJAMENTO_PRODUCAO' | 'CARDAPIO_CLIENTES' | 'TUTORIAL' | null>(() =>
+  const [expandedTool, setExpandedTool] = useState<'WHATSAPP' | 'PAGAMENTOS_PENDENTES' | 'CONCILIACAO' | 'ROTEIRIZADOR' | 'BUSCA_CEP' | 'PLANEJAMENTO_PRODUCAO' | 'CARDAPIO_CLIENTES' | 'TUTORIAL' | null>(() =>
     focusRoteiroSignal > 0 ? 'ROTEIRIZADOR' : null
   );
+  const [expandedIndicator, setExpandedIndicator] = useState<
+    'METAS' | 'KPIS' | 'REGIAO' | 'PRODUTO' | null
+  >('METAS');
+  const toggleIndicator = (id: 'METAS' | 'KPIS' | 'REGIAO' | 'PRODUTO') =>
+    setExpandedIndicator(prev => (prev === id ? null : id));
   const [paymentFilter, setPaymentFilter] = useState<'TODOS' | 'PENDENTE' | 'SINAL'>('TODOS');
   const [editingDepositOrderId, setEditingDepositOrderId] = useState<string | null>(null);
   const [depositDraftValue, setDepositDraftValue] = useState<number>(0);
@@ -150,10 +194,168 @@ export const RightBar: React.FC<RightBarProps> = ({
       );
 
   const validOrders = scopedOrders.filter(o => o.status !== 'CANCELADO');
+  const customerValidOrders = validOrders.filter(o => !isReplenishmentOrder(o));
   const totalRevenue = validOrders.reduce((acc, o) => acc + o.valorTotal, 0);
   const avgTicket = validOrders.length > 0 ? totalRevenue / validOrders.length : 0;
-  const pendingOrders = scopedOrders.filter(o => o.status === 'PENDENTE').length;
+  const confirmedOrders = scopedOrders.filter(o => o.status === 'CONFIRMADO').length;
   const activeOrders = scopedOrders.filter(o => o.status !== 'ENTREGUE' && o.status !== 'CANCELADO').length;
+
+  const pendingPaymentOrders = customerValidOrders.filter(
+    o => getEffectivePaymentStatus(o) !== 'PAGO'
+  );
+  const pendingPaymentOrdersCount = pendingPaymentOrders.length;
+  const totalReceivable = pendingPaymentOrders.reduce(
+    (sum, o) => sum + getOrderRemainingAmount(o),
+    0
+  );
+
+  const conciliationPreview: FaturamentoGroupedSummary = useMemo(() => {
+    const channels =
+      financialChannels.length > 0 ? financialChannels : DEFAULT_FINANCIAL_PAYMENT_CHANNELS;
+    const recordsByOrderId = new Map(financialRecords.map(r => [r.pedidoId, r]));
+    const unitMap = new Map(units.map(u => [u.id, u]));
+    const rows: FaturamentoReportRow[] = [];
+
+    for (const order of orders) {
+      if (!isOrderEligibleForFinancial(order)) continue;
+
+      const preferredId = resolveOrderBillingUnitId(order);
+      const resolvedUnit = unitMap.get(preferredId) || unitMap.get(order.unidadeOrigemId);
+      const unidadeId = resolvedUnit?.id || preferredId;
+      const unidadeNome = resolvedUnit?.nome || 'Unidade Não Identificada';
+
+      if (activeUnitId !== 'all' && unidadeId !== activeUnitId) {
+        continue;
+      }
+
+      const record = recordsByOrderId.get(order.id);
+      let entries: OrderFinancialPaymentEntry[] = [];
+      if (record && record.lancamentos && record.lancamentos.length > 0) {
+        entries = record.lancamentos;
+      } else if (
+        record &&
+        (record.meioPagamentoNome ||
+          record.dataPagamento ||
+          record.dataExtrato ||
+          record.valorConciliado > 0)
+      ) {
+        entries = [
+          {
+            id: `ent-${order.id}-legacy`,
+            dataPagamento: record.dataPagamento || '',
+            dataExtrato: record.dataExtrato || '',
+            meioPagamentoId: record.meioPagamentoId,
+            meioPagamentoNome: record.meioPagamentoNome || '',
+            valor: record.valorConciliado || 0,
+            referenciaExtrato: record.referenciaExtrato || '',
+          },
+        ];
+      }
+
+      const draftTotals = computeConciliatedTotals(order, entries, channels);
+      const entriesTotal = Number(
+        entries.reduce((sum, e) => sum + Math.max(0, Number(e.valor) || 0), 0).toFixed(2)
+      );
+      const saldoDevedor = draftTotals.hasBonificado
+        ? 0
+        : Math.max(0, Number((order.valorTotal - entriesTotal).toFixed(2)));
+      const recStatus = getEffectiveReconciliationStatus(order, record);
+      const nfStatus = getEffectiveInvoiceStatus(record);
+
+      const rawDates = entries
+        .map(ent => {
+          const isCash = isEntryCash(ent, channels);
+          return toLocalDateInput(ent.dataExtrato || (isCash ? ent.dataPagamento : '') || '');
+        })
+        .filter(Boolean);
+      if (rawDates.length === 0 && record?.dataExtrato) {
+        const fallbackIso = toLocalDateInput(record.dataExtrato);
+        if (fallbackIso) rawDates.push(fallbackIso);
+      }
+      const uniqueSortedDates = Array.from(new Set(rawDates)).sort((a, b) => a.localeCompare(b));
+      const dataExtratoIso =
+        uniqueSortedDates.length > 0 ? uniqueSortedDates[uniqueSortedDates.length - 1] : '';
+
+      const activeChannelNames = Array.from(
+        new Set(
+          entries
+            .filter(
+              ent =>
+                (Number(ent.valor) || 0) > 0 ||
+                Boolean((ent.dataExtrato || '').trim()) ||
+                Boolean((ent.dataPagamento || '').trim()) ||
+                isEntryBonificado(ent, channels)
+            )
+            .map(ent => (ent.meioPagamentoNome || '').trim())
+            .filter(Boolean)
+        )
+      );
+
+      rows.push({
+        unidadeId,
+        unidadeNome,
+        dataExtratoIso,
+        dataExtratoLabel: '—',
+        numeroPedido: order.numeroPedido,
+        formaPagamentoPedido: order.formaPagamento || '',
+        dataPedidoIso: toLocalDateInput(order.dataPedido || ''),
+        clienteNome: order.clienteNome,
+        valor: Number(order.valorTotal || 0),
+        valorRecebido: entriesTotal,
+        saldoAReceber: saldoDevedor,
+        formaPagamentoFinanceiro:
+          activeChannelNames.length > 0
+            ? activeChannelNames.join(' + ')
+            : (record?.meioPagamentoNome || '').trim() || '—',
+        conciliado: recStatus === 'CONCILIADO',
+        nfStatus,
+        nfStatusLabel:
+          nfStatus === 'EMITIDA'
+            ? 'Emitida'
+            : nfStatus === 'DISPENSADA'
+            ? 'Dispensada'
+            : 'A emitir',
+      });
+    }
+
+    return groupAndSortFaturamentoRows(rows);
+  }, [orders, units, activeUnitId, financialRecords, financialChannels]);
+
+  const todayKey = toLocalDateKey(new Date().toISOString());
+  const ordersToday = validOrders.filter(
+    o => toLocalDateKey(o.dataHoraEntrega) === todayKey
+  );
+  const ordersTodayCount = ordersToday.length;
+  const todayDeliveryCount = ordersToday.filter(o => o.tipoEntrega === 'DELIVERY').length;
+  const todayPickupCount = ordersToday.filter(o => o.tipoEntrega === 'RETIRADA').length;
+
+  const inProductionOrders = scopedOrders.filter(o => o.status === 'EM_PRODUCAO').length;
+  const readyOrders = scopedOrders.filter(o => o.status === 'PRONTO').length;
+  const itemsToProduceCount = scopedOrders
+    .filter(o => o.status === 'CONFIRMADO' || o.status === 'EM_PRODUCAO')
+    .reduce(
+      (sum, o) =>
+        sum + (o.itens || []).reduce((s, it) => s + (Number(it.quantidade) || 0), 0),
+      0
+    );
+
+  const { uniqueOrderCustomers, repeatCustomers, repeatRate } = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const order of customerValidOrders) {
+      const normPhone = normalizePhoneForWhatsApp(order.clienteTelefone || '');
+      const normName = normalizeTextKey(order.clienteNome || '');
+      const key = normPhone
+        ? `tel:${normPhone}`
+        : normName
+        ? `name:${normName}`
+        : `ord:${order.id}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    const unique = counts.size;
+    const repeat = Array.from(counts.values()).filter(c => c >= 2).length;
+    const rate = unique > 0 ? Math.round((repeat / unique) * 100) : 0;
+    return { uniqueOrderCustomers: unique, repeatCustomers: repeat, repeatRate: rate };
+  }, [customerValidOrders]);
 
   const pendingDeliveries = scopedOrders.filter(
     o => o.tipoEntrega === 'DELIVERY' && o.status !== 'ENTREGUE' && o.status !== 'CANCELADO'
@@ -163,7 +365,7 @@ export const RightBar: React.FC<RightBarProps> = ({
 
   const scopedLowStockCount = stock.length > 0
     ? stock.filter(
-        s => (activeUnitId === 'all' || s.unidadeId === activeUnitId) && s.quantidadeAtual <= s.quantidadeMinima
+        s => (activeUnitId === 'all' || s.unidadeId === activeUnitId) && isLowStockItem(s)
       ).length
     : lowStockCount;
 
@@ -440,243 +642,415 @@ Obrigado por escolher a Beju Caramelos! ✨`
 
         {/* ABA 1: INDICADORES */}
         {activeTab === 'INDICADORES' && (
-          <div>
-            <div className="grid grid-cols-2 gap-2">
-            {/* KPI 1: Faturamento (ADMIN e GERENTE) */}
+          <div className="space-y-3">
+            {/* 1. Card de Metas no TOPO (ADMIN e GERENTE) */}
             {canViewFinancials(userRole) && (
-            <button
-              type="button"
-              onClick={() => onNavigate?.('pedidos')}
-              className="text-left bg-[#f8f9ff] hover:bg-indigo-50/70 border border-slate-200/90 rounded-lg p-2 transition-colors cursor-pointer"
-              title="Ver pedidos"
-            >
-              <span className="text-[9px] font-medium text-slate-500 uppercase block leading-tight">Faturamento</span>
-              <div className="text-xs font-bold font-mono text-slate-900 mt-0.5 leading-tight">
-                R$ {totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </div>
-              <span className="text-[9px] text-emerald-600 font-semibold mt-0.5 block leading-tight">
-                {validOrders.length} ped. • TM R$ {Math.round(avgTicket).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
-              </span>
-            </button>
-            )}
-
-            {/* KPI 2: Pedidos Pendentes */}
-            <button
-              type="button"
-              onClick={() => onNavigate?.('pedidos')}
-              className="text-left bg-amber-50/60 hover:bg-amber-100/70 border border-amber-200/80 rounded-lg p-2 transition-colors cursor-pointer"
-              title="Ir para Gestão de Pedidos"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-[9px] font-medium text-amber-800 uppercase leading-tight">Pendentes</span>
-                <Clock className="w-2.5 h-2.5 text-amber-600" />
-              </div>
-              <div className="text-xs font-bold font-mono text-amber-900 mt-0.5 leading-tight">
-                {pendingOrders}
-              </div>
-              <span className="text-[9px] text-amber-700 font-medium block leading-tight mt-0.5">
-                {activeOrders} em aberto
-              </span>
-            </button>
-
-            {/* KPI 3: Entregas Agendadas */}
-            <button
-              type="button"
-              onClick={() => onNavigate?.('entregas')}
-              className="text-left bg-blue-50/60 hover:bg-blue-100/70 border border-blue-200/80 rounded-lg p-2 transition-colors cursor-pointer"
-              title="Ir para Entregas & Expedição"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-[9px] font-medium text-blue-800 uppercase leading-tight">Entregas</span>
-                <Truck className="w-2.5 h-2.5 text-blue-600" />
-              </div>
-              <div className="text-xs font-bold font-mono text-blue-900 mt-0.5 leading-tight">
-                {deliveriesToday}
-              </div>
-              <span className="text-[9px] text-blue-700 font-medium block leading-tight mt-0.5">
-                {inRouteCount > 0 ? `${inRouteCount} em rota` : 'Na fila'}
-              </span>
-            </button>
-
-            {/* KPI 4: Alerta de Estoque Mínimo */}
-            <button
-              type="button"
-              onClick={() => onNavigate?.('estoque')}
-              className={`text-left border rounded-lg p-2 transition-colors cursor-pointer ${
-                scopedLowStockCount > 0
-                  ? 'bg-rose-50/70 hover:bg-rose-100/70 border-rose-200/80'
-                  : 'bg-emerald-50/60 hover:bg-emerald-100/70 border-emerald-200/80'
-              }`}
-              title="Ir para Controle de Estoque"
-            >
-              <div className="flex items-center justify-between">
-                <span className={`text-[9px] font-medium uppercase leading-tight ${
-                  scopedLowStockCount > 0 ? 'text-rose-800' : 'text-emerald-800'
-                }`}>Estoque Mín.</span>
-                <AlertTriangle className={`w-2.5 h-2.5 ${scopedLowStockCount > 0 ? 'text-rose-600' : 'text-emerald-600'}`} />
-              </div>
-              <div className={`text-xs font-bold font-mono mt-0.5 leading-tight ${
-                scopedLowStockCount > 0 ? 'text-rose-900' : 'text-emerald-900'
-              }`}>
-                {scopedLowStockCount}
-              </div>
-              <span className={`text-[9px] font-medium block leading-tight mt-0.5 ${
-                scopedLowStockCount > 0 ? 'text-rose-700' : 'text-emerald-700'
-              }`}>
-                {scopedLowStockCount > 0 ? 'Crítico' : 'Normal'}
-              </span>
-            </button>
-          </div>
-
-          {/* Intelligent Revenue Goal Tracking Card (ADMIN e GERENTE) */}
-          {canViewFinancials(userRole) && (
-          <div className="mt-3 rounded-xl border border-slate-200 bg-gradient-to-br from-[#f8f9ff] to-white p-3.5 shadow-2xs space-y-2.5">
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <Target className="w-3.5 h-3.5 text-brand-600 shrink-0" />
-                  <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-700 truncate">
-                    Meta {goalAnalytics.periodLabel}
-                  </span>
-                </div>
-                <p className="text-[10px] font-semibold text-brand-700 truncate pl-5">
-                  {activeUnitId === 'all'
-                    ? 'Todas as Unidades (Consolidado)'
-                    : activeUnits.find(u => u.id === activeUnitId)?.nome || 'Unidade'}
-                </p>
-              </div>
-
-              <div className="inline-flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+              <div className="rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50 to-sky-50/80 shadow-2xs overflow-hidden">
                 <button
                   type="button"
-                  onClick={() => setGoalScope('MENSAL')}
-                  className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition-all ${
-                    goalScope === 'MENSAL' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
-                  }`}
+                  onClick={() => toggleIndicator('METAS')}
+                  aria-expanded={expandedIndicator === 'METAS'}
+                  className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left hover:bg-blue-100/50 transition-colors cursor-pointer"
                 >
-                  Mensal
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setGoalScope('ANUAL')}
-                  className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition-all ${
-                    goalScope === 'ANUAL' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  Anual
-                </button>
-              </div>
-            </div>
-
-            {goalAnalytics.goal <= 0 ? (
-              <div className="py-2 text-center space-y-2">
-                <p className="text-[11px] text-slate-500">
-                  Nenhuma meta definida para {goalAnalytics.periodLabel}.
-                </p>
-                {canEditRevenueGoals(userRole) && (
-                  <button
-                    type="button"
-                    onClick={() => onNavigate?.('configuracoes')}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-[11px] font-bold transition-colors"
-                  >
-                    <Settings className="w-3 h-3" />
-                    <span>Cadastrar Meta</span>
-                  </button>
-                )}
-              </div>
-            ) : (
-              <>
-                <div className="flex items-baseline justify-between gap-2">
-                  <div>
-                    <div className="text-sm font-mono font-bold text-slate-900">
-                      R$ {goalAnalytics.realized.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <Target className="w-3.5 h-3.5 text-brand-600 shrink-0" />
+                      <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-700 truncate">
+                        Meta {goalAnalytics.periodLabel}
+                      </span>
                     </div>
-                    <div className="text-[10px] font-mono text-slate-500">
-                      de R$ {goalAnalytics.goal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    <p className="text-[10px] font-semibold text-brand-700 truncate pl-5">
+                      {activeUnitId === 'all'
+                        ? 'Todas as Unidades (Consolidado)'
+                        : activeUnits.find(u => u.id === activeUnitId)?.nome || 'Unidade'}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {expandedIndicator !== 'METAS' && goalAnalytics.goal > 0 && (
+                      <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-full bg-white/90 text-slate-700 border border-blue-200">
+                        {goalAnalytics.actualPct.toFixed(0)}%
+                      </span>
+                    )}
+                    {expandedIndicator === 'METAS' ? (
+                      <ChevronUp className="w-4 h-4 text-slate-500 shrink-0" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4 text-slate-500 shrink-0" />
+                    )}
+                  </div>
+                </button>
+
+                {expandedIndicator === 'METAS' && (
+                  <div className="px-3.5 pb-3.5 pt-2.5 border-t border-blue-200/70 space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">
+                        Escopo
+                      </span>
+                      <div className="inline-flex bg-white/80 p-0.5 rounded-lg border border-blue-200/80 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setGoalScope('MENSAL')}
+                          className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition-all cursor-pointer ${
+                            goalScope === 'MENSAL' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+                          }`}
+                        >
+                          Mensal
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setGoalScope('ANUAL')}
+                          className={`px-2 py-0.5 text-[10px] font-bold rounded-md transition-all cursor-pointer ${
+                            goalScope === 'ANUAL' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+                          }`}
+                        >
+                          Anual
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                  <span
-                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${
-                      goalAnalytics.statusTone === 'emerald'
-                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                        : goalAnalytics.statusTone === 'blue'
-                        ? 'bg-blue-50 text-blue-700 border-blue-200'
-                        : goalAnalytics.statusTone === 'amber'
-                        ? 'bg-amber-50 text-amber-700 border-amber-200'
-                        : 'bg-rose-50 text-rose-700 border-rose-200'
-                    }`}
-                  >
-                    {goalAnalytics.statusLabel}
-                  </span>
-                </div>
 
-                {/* Progress Bar with Expected Pace Marker */}
-                <div className="space-y-1">
-                  <div className="relative h-2.5 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200/70">
-                    <div
-                      className={`h-full rounded-full transition-all duration-300 ${
-                        goalAnalytics.statusTone === 'emerald'
-                          ? 'bg-emerald-500'
-                          : goalAnalytics.statusTone === 'blue'
-                          ? 'bg-brand-600'
-                          : goalAnalytics.statusTone === 'amber'
-                          ? 'bg-amber-500'
-                          : 'bg-rose-500'
-                      }`}
-                      style={{ width: `${Math.min(100, goalAnalytics.actualPct)}%` }}
-                    />
-                    {/* Expected Pace Marker */}
-                    <div
-                      className="absolute top-0 bottom-0 w-0.5 bg-slate-900/70"
-                      style={{ left: `${Math.min(99, goalAnalytics.expectedPct)}%` }}
-                      title={`Ritmo esperado hoje: ${goalAnalytics.expectedPct.toFixed(0)}%`}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between text-[10px] font-mono text-slate-500">
-                    <span>
-                      Real: <strong className="text-slate-800">{goalAnalytics.actualPct.toFixed(1)}%</strong>
-                    </span>
-                    <span>
-                      Esperado hoje: <strong className="text-slate-700">{goalAnalytics.expectedPct.toFixed(0)}%</strong>
-                    </span>
-                  </div>
-                </div>
-
-                {/* Smart Forecast & Daily Required */}
-                <div className="grid grid-cols-2 gap-2 pt-1.5 border-t border-slate-100 text-[10px]">
-                  <div className="bg-slate-50 rounded-lg p-2 border border-slate-200/60">
-                    <span className="text-slate-500 block font-medium">Projeção</span>
-                    <span className={`font-mono font-bold ${
-                      goalAnalytics.projectedTotal >= goalAnalytics.goal ? 'text-emerald-700' : 'text-amber-700'
-                    }`}>
-                      R$ {goalAnalytics.projectedTotal.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
-                    </span>
-                  </div>
-                  <div className="bg-slate-50 rounded-lg p-2 border border-slate-200/60">
-                    {goalAnalytics.remainingGap <= 0 ? (
-                      <>
-                        <span className="text-emerald-700 block font-medium">Superávit</span>
-                        <span className="font-mono font-bold text-emerald-700">
-                          +R$ {(goalAnalytics.realized - goalAnalytics.goal).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}
-                        </span>
-                      </>
+                    {goalAnalytics.goal <= 0 ? (
+                      <div className="py-2 text-center space-y-2">
+                        <p className="text-[11px] text-slate-500">
+                          Nenhuma meta definida para {goalAnalytics.periodLabel}.
+                        </p>
+                        {canEditRevenueGoals(userRole) && (
+                          <button
+                            type="button"
+                            onClick={() => onNavigate?.('configuracoes')}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-[11px] font-bold transition-colors cursor-pointer"
+                          >
+                            <Settings className="w-3 h-3" />
+                            <span>Cadastrar Meta</span>
+                          </button>
+                        )}
+                      </div>
                     ) : (
                       <>
-                        <span className="text-slate-500 block font-medium">
-                          Necessário/dia ({goalAnalytics.remainingDays}d)
-                        </span>
-                        <span className="font-mono font-bold text-slate-900">
-                          R$ {goalAnalytics.requiredDaily.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}/dia
-                        </span>
+                        <div className="flex items-baseline justify-between gap-2">
+                          <div>
+                            <div className="text-sm font-mono font-bold text-slate-900">
+                              R$ {formatCurrencyBR(goalAnalytics.realized)}
+                            </div>
+                            <div className="text-[10px] font-mono text-slate-500">
+                              de R$ {formatCurrencyBR(goalAnalytics.goal)}
+                            </div>
+                          </div>
+                          <span
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${
+                              goalAnalytics.statusTone === 'emerald'
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : goalAnalytics.statusTone === 'blue'
+                                ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                : goalAnalytics.statusTone === 'amber'
+                                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                : 'bg-rose-50 text-rose-700 border-rose-200'
+                            }`}
+                          >
+                            {goalAnalytics.statusLabel}
+                          </span>
+                        </div>
+
+                        {/* Progress Bar with Expected Pace Marker */}
+                        <div className="space-y-1">
+                          <div className="relative h-2.5 w-full bg-white/80 rounded-full overflow-hidden border border-blue-200/80">
+                            <div
+                              className={`h-full rounded-full transition-all duration-300 ${
+                                goalAnalytics.statusTone === 'emerald'
+                                  ? 'bg-emerald-500'
+                                  : goalAnalytics.statusTone === 'blue'
+                                  ? 'bg-brand-600'
+                                  : goalAnalytics.statusTone === 'amber'
+                                  ? 'bg-amber-500'
+                                  : 'bg-rose-500'
+                              }`}
+                              style={{ width: `${Math.min(100, goalAnalytics.actualPct)}%` }}
+                            />
+                            {/* Expected Pace Marker */}
+                            <div
+                              className="absolute top-0 bottom-0 w-0.5 bg-slate-900/70"
+                              style={{ left: `${Math.min(99, goalAnalytics.expectedPct)}%` }}
+                              title={`Ritmo esperado hoje: ${goalAnalytics.expectedPct.toFixed(0)}%`}
+                            />
+                          </div>
+                          <div className="flex items-center justify-between text-[10px] font-mono text-slate-500">
+                            <span>
+                              Real: <strong className="text-slate-800">{goalAnalytics.actualPct.toFixed(1)}%</strong>
+                            </span>
+                            <span>
+                              Esperado hoje: <strong className="text-slate-700">{goalAnalytics.expectedPct.toFixed(0)}%</strong>
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Smart Forecast & Daily Required */}
+                        <div className="grid grid-cols-2 gap-2 pt-1.5 border-t border-blue-200/70 text-[10px]">
+                          <div className="bg-white/80 rounded-lg p-2 border border-blue-200/70">
+                            <span className="text-slate-500 block font-medium">Projeção</span>
+                            <span className={`font-mono font-bold ${
+                              goalAnalytics.projectedTotal >= goalAnalytics.goal ? 'text-emerald-700' : 'text-amber-700'
+                            }`}>
+                              R$ {formatCurrencyBR(goalAnalytics.projectedTotal)}
+                            </span>
+                          </div>
+                          <div className="bg-white/80 rounded-lg p-2 border border-blue-200/70">
+                            {goalAnalytics.remainingGap <= 0 ? (
+                              <>
+                                <span className="text-emerald-700 block font-medium">Superávit</span>
+                                <span className="font-mono font-bold text-emerald-700">
+                                  +R$ {formatCurrencyBR(goalAnalytics.realized - goalAnalytics.goal)}
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <span className="text-slate-500 block font-medium">
+                                  Necessário/dia ({goalAnalytics.remainingDays}d)
+                                </span>
+                                <span className="font-mono font-bold text-slate-900">
+                                  R$ {formatCurrencyBR(goalAnalytics.requiredDaily)}/dia
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </div>
                       </>
                     )}
                   </div>
-                </div>
-              </>
+                )}
+              </div>
             )}
+
+            {/* 2. Grid de KPIs */}
+            <div className="rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-green-50/80 shadow-2xs overflow-hidden">
+              <button
+                type="button"
+                onClick={() => toggleIndicator('KPIS')}
+                aria-expanded={expandedIndicator === 'KPIS'}
+                className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left hover:bg-emerald-100/50 transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <TrendingUp className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-700 truncate">
+                    Resumo Operacional
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {expandedIndicator !== 'KPIS' && (
+                    <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded-full bg-white/90 text-emerald-800 border border-emerald-200">
+                      {activeOrders} ativos
+                    </span>
+                  )}
+                  {expandedIndicator === 'KPIS' ? (
+                    <ChevronUp className="w-4 h-4 text-slate-500 shrink-0" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-slate-500 shrink-0" />
+                  )}
+                </div>
+              </button>
+
+              {expandedIndicator === 'KPIS' && (
+                <div className="p-2.5 border-t border-emerald-200/70">
+                  <div className="grid grid-cols-2 gap-2">
+              {/* KPI 1: Faturamento (ADMIN e GERENTE) */}
+              {canViewFinancials(userRole) && (
+                <button
+                  type="button"
+                  onClick={() => onNavigate?.('pedidos')}
+                  className="text-left bg-[#f8f9ff] hover:bg-indigo-50/70 border border-slate-200/90 rounded-lg p-2 transition-colors cursor-pointer"
+                  title="Ver pedidos"
+                >
+                  <span className="text-[9px] font-medium text-slate-500 uppercase block leading-tight">Faturamento</span>
+                  <div className="text-xs font-bold font-mono text-slate-900 mt-0.5 leading-tight">
+                    R$ {formatCurrencyBR(totalRevenue)}
+                  </div>
+                  <span className="text-[9px] text-emerald-600 font-semibold mt-0.5 block leading-tight">
+                    {validOrders.length} ped. • TM R$ {formatCurrencyBR(avgTicket)}
+                  </span>
+                </button>
+              )}
+
+              {/* KPI 2: A Receber (ADMIN e GERENTE) */}
+              {canViewFinancials(userRole) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('FERRAMENTAS');
+                    setExpandedTool('PAGAMENTOS_PENDENTES');
+                  }}
+                  className={`text-left border rounded-lg p-2 transition-colors cursor-pointer ${
+                    totalReceivable > 0
+                      ? 'bg-amber-50/60 hover:bg-amber-100/70 border-amber-200/80'
+                      : 'bg-emerald-50/60 hover:bg-emerald-100/70 border-emerald-200/80'
+                  }`}
+                  title="Ver pagamentos pendentes"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className={`text-[9px] font-medium uppercase leading-tight ${
+                      totalReceivable > 0 ? 'text-amber-800' : 'text-emerald-800'
+                    }`}>
+                      A Receber
+                    </span>
+                    <Wallet className={`w-2.5 h-2.5 ${totalReceivable > 0 ? 'text-amber-600' : 'text-emerald-600'}`} />
+                  </div>
+                  <div className={`text-xs font-bold font-mono mt-0.5 leading-tight ${
+                    totalReceivable > 0 ? 'text-amber-900' : 'text-emerald-900'
+                  }`}>
+                    R$ {formatCurrencyBR(totalReceivable)}
+                  </div>
+                  <span className={`text-[9px] font-medium block leading-tight mt-0.5 ${
+                    totalReceivable > 0 ? 'text-amber-700' : 'text-emerald-700'
+                  }`}>
+                    {pendingPaymentOrdersCount > 0 ? `${pendingPaymentOrdersCount} ped. pendentes` : 'Tudo quitado'}
+                  </span>
+                </button>
+              )}
+
+              {/* KPI 3: Pedidos Confirmados */}
+              <button
+                type="button"
+                onClick={() =>
+                  onNavigateToPedidosFilter
+                    ? onNavigateToPedidosFilter({ status: 'CONFIRMADO', expandGroups: true })
+                    : onNavigate?.('pedidos')
+                }
+                className="text-left bg-emerald-50/70 hover:bg-emerald-100/70 border border-emerald-200/80 rounded-lg p-2 transition-colors cursor-pointer"
+                title="Ver pedidos confirmados"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] font-medium text-emerald-800 uppercase leading-tight">Confirmados</span>
+                  <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                </div>
+                <div className="text-xs font-bold font-mono text-emerald-900 mt-0.5 leading-tight">
+                  {confirmedOrders}
+                </div>
+                <span className="text-[9px] text-emerald-700 font-medium block leading-tight mt-0.5">
+                  {activeOrders} em aberto
+                </span>
+              </button>
+
+              {/* KPI 4: Pedidos para Hoje */}
+              <button
+                type="button"
+                onClick={() => onNavigate?.('pedidos')}
+                className="text-left bg-sky-50/70 hover:bg-sky-100/70 border border-sky-200/80 rounded-lg p-2 transition-colors cursor-pointer"
+                title="Ir para Gestão de Pedidos"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] font-medium text-sky-800 uppercase leading-tight">Hoje</span>
+                  <CalendarClock className="w-2.5 h-2.5 text-sky-600" />
+                </div>
+                <div className="text-xs font-bold font-mono text-sky-900 mt-0.5 leading-tight">
+                  {ordersTodayCount}
+                </div>
+                <span className="text-[9px] text-sky-700 font-medium block leading-tight mt-0.5">
+                  {ordersTodayCount > 0 ? `${todayDeliveryCount} del. • ${todayPickupCount} ret.` : 'Sem agendados'}
+                </span>
+              </button>
+
+              {/* KPI 5: Em Produção */}
+              <button
+                type="button"
+                onClick={() => onNavigate?.('producao')}
+                className="text-left bg-purple-50/70 hover:bg-purple-100/70 border border-purple-200/80 rounded-lg p-2 transition-colors cursor-pointer"
+                title="Ir para Produção"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] font-medium text-purple-800 uppercase leading-tight">Em Produção</span>
+                  <ChefHat className="w-2.5 h-2.5 text-purple-600" />
+                </div>
+                <div className="text-xs font-bold font-mono text-purple-900 mt-0.5 leading-tight">
+                  {inProductionOrders}
+                </div>
+                <span className="text-[9px] text-purple-700 font-medium block leading-tight mt-0.5">
+                  {readyOrders > 0
+                    ? `${readyOrders} pronto(s)`
+                    : `${Number.isInteger(itemsToProduceCount) ? itemsToProduceCount : itemsToProduceCount.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} itens na fila`}
+                </span>
+              </button>
+
+              {/* KPI 6: Entregas Agendadas */}
+              <button
+                type="button"
+                onClick={() => onNavigate?.('entregas')}
+                className="text-left bg-blue-50/60 hover:bg-blue-100/70 border border-blue-200/80 rounded-lg p-2 transition-colors cursor-pointer"
+                title="Ir para Entregas & Expedição"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] font-medium text-blue-800 uppercase leading-tight">Entregas</span>
+                  <Truck className="w-2.5 h-2.5 text-blue-600" />
+                </div>
+                <div className="text-xs font-bold font-mono text-blue-900 mt-0.5 leading-tight">
+                  {deliveriesToday}
+                </div>
+                <span className="text-[9px] text-blue-700 font-medium block leading-tight mt-0.5">
+                  {inRouteCount > 0 ? `${inRouteCount} em rota` : 'Na fila'}
+                </span>
+              </button>
+
+              {/* KPI 7: Alerta de Estoque Mínimo */}
+              <button
+                type="button"
+                onClick={() => onNavigate?.('estoque')}
+                className={`text-left border rounded-lg p-2 transition-colors cursor-pointer ${
+                  scopedLowStockCount > 0
+                    ? 'bg-rose-50/70 hover:bg-rose-100/70 border-rose-200/80'
+                    : 'bg-emerald-50/60 hover:bg-emerald-100/70 border-emerald-200/80'
+                }`}
+                title="Ir para Controle de Estoque"
+              >
+                <div className="flex items-center justify-between">
+                  <span className={`text-[9px] font-medium uppercase leading-tight ${
+                    scopedLowStockCount > 0 ? 'text-rose-800' : 'text-emerald-800'
+                  }`}>Estoque Mín.</span>
+                  <AlertTriangle className={`w-2.5 h-2.5 ${scopedLowStockCount > 0 ? 'text-rose-600' : 'text-emerald-600'}`} />
+                </div>
+                <div className={`text-xs font-bold font-mono mt-0.5 leading-tight ${
+                  scopedLowStockCount > 0 ? 'text-rose-900' : 'text-emerald-900'
+                }`}>
+                  {scopedLowStockCount}
+                </div>
+                <span className={`text-[9px] font-medium block leading-tight mt-0.5 ${
+                  scopedLowStockCount > 0 ? 'text-rose-700' : 'text-emerald-700'
+                }`}>
+                  {scopedLowStockCount > 0 ? 'Crítico' : 'Normal'}
+                </span>
+              </button>
+
+              {/* KPI 8: Recorrência de Clientes */}
+              <button
+                type="button"
+                onClick={() => onNavigate?.('clientes')}
+                className="text-left bg-teal-50/70 hover:bg-teal-100/70 border border-teal-200/80 rounded-lg p-2 transition-colors cursor-pointer"
+                title="Ir para Clientes"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] font-medium text-teal-800 uppercase leading-tight">Recorrência</span>
+                  <Users className="w-2.5 h-2.5 text-teal-600" />
+                </div>
+                <div className="text-xs font-bold font-mono text-teal-900 mt-0.5 leading-tight">
+                  {repeatRate}%
+                </div>
+                <span className="text-[9px] text-teal-700 font-medium block leading-tight mt-0.5">
+                  {repeatCustomers} de {uniqueOrderCustomers} cli.
+                </span>
+              </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 3. Gráficos por Região e por Produto */}
+            <IndicadoresCharts
+              orders={customerValidOrders}
+              products={products}
+              customers={customers}
+              units={units}
+              canViewFinancials={canViewFinancials(userRole)}
+              isRegionExpanded={expandedIndicator === 'REGIAO'}
+              onToggleRegion={() => toggleIndicator('REGIAO')}
+              isProductExpanded={expandedIndicator === 'PRODUTO'}
+              onToggleProduct={() => toggleIndicator('PRODUTO')}
+            />
           </div>
-          )}
-        </div>
         )}
 
         {/* ABA 2: FERRAMENTAS (Accordion - only one expanded at a time, default WHATSAPP) */}
@@ -1203,6 +1577,182 @@ Obrigado por escolher a Beju Caramelos! ✨`
                 </div>
               );
             })()}
+
+            {/* Card 2b: Conciliação (Prévia por Unidade) */}
+            {canViewFinancials(userRole) && (
+              <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setExpandedTool(prev => (prev === 'CONCILIACAO' ? null : 'CONCILIACAO'))
+                  }
+                  className="w-full px-3.5 py-2.5 flex items-center justify-between text-left hover:bg-slate-50 transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Landmark className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span className="text-xs font-bold text-slate-900 truncate">Conciliação</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      {conciliationPreview.totalOrders} ped.
+                    </span>
+                    {expandedTool === 'CONCILIACAO' ? (
+                      <ChevronUp className="w-4 h-4 text-slate-400" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4 text-slate-400" />
+                    )}
+                  </div>
+                </button>
+
+                {expandedTool === 'CONCILIACAO' && (
+                  <div className="p-3 border-t border-slate-100 space-y-2.5 text-xs">
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <div className="bg-slate-50 border border-slate-200 rounded-lg p-2">
+                        <span className="block text-[9px] font-mono uppercase text-slate-500">
+                          Valor
+                        </span>
+                        <span className="text-[11px] font-mono font-bold text-slate-900">
+                          R$ {formatCurrencyBR(conciliationPreview.grandTotalValor)}
+                        </span>
+                      </div>
+                      <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-2">
+                        <span className="block text-[9px] font-mono uppercase text-emerald-800">
+                          Recebido
+                        </span>
+                        <span className="text-[11px] font-mono font-bold text-emerald-700">
+                          R$ {formatCurrencyBR(conciliationPreview.grandTotalRecebido)}
+                        </span>
+                      </div>
+                      <div
+                        className={`col-span-2 border rounded-lg p-2 flex items-center justify-between ${
+                          conciliationPreview.grandTotalSaldo > 0.009
+                            ? 'bg-rose-50 border-rose-200'
+                            : 'bg-emerald-50 border-emerald-200'
+                        }`}
+                      >
+                        <span
+                          className={`text-[9px] font-mono uppercase font-bold ${
+                            conciliationPreview.grandTotalSaldo > 0.009
+                              ? 'text-rose-800'
+                              : 'text-emerald-800'
+                          }`}
+                        >
+                          Saldo a Receber
+                        </span>
+                        <span
+                          className={`text-[11px] font-mono font-bold ${
+                            conciliationPreview.grandTotalSaldo > 0.009
+                              ? 'text-rose-700'
+                              : 'text-emerald-700'
+                          }`}
+                        >
+                          R$ {formatCurrencyBR(conciliationPreview.grandTotalSaldo)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {conciliationPreview.groups.length === 0 ? (
+                      <div className="py-4 text-center text-[11px] text-slate-400">
+                        Nenhum pedido elegível para conciliação.
+                      </div>
+                    ) : (
+                      <div className="border border-slate-200 rounded-lg overflow-x-auto max-w-full max-h-64 overflow-y-auto">
+                        <table className="w-full text-left border-collapse text-[10px]">
+                          <thead className="sticky top-0 bg-emerald-50 border-b border-emerald-200 text-[9px] font-mono uppercase text-emerald-900">
+                            <tr>
+                              <th className="py-1 px-1.5 font-bold">Unidade</th>
+                              <th className="py-1 px-1 text-center font-bold">Ped.</th>
+                              <th className="py-1 px-1 text-right font-bold">Valor</th>
+                              <th className="py-1 px-1 text-right font-bold">Receb.</th>
+                              <th className="py-1 px-1.5 text-right font-bold">Saldo</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {conciliationPreview.groups.map(group => (
+                              <React.Fragment key={`${group.unidadeId}-${group.unidadeNome}`}>
+                                <tr className="bg-emerald-50/40">
+                                  <td className="py-1 px-1.5 font-bold text-slate-900 max-w-[82px] truncate" title={group.unidadeNome}>
+                                    {group.unidadeNome}
+                                  </td>
+                                  <td className="py-1 px-1 text-center font-mono font-bold text-slate-700">
+                                    {group.rows.length}
+                                  </td>
+                                  <td className="py-1 px-1 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
+                                    {formatCurrencyBR(group.totalValor)}
+                                  </td>
+                                  <td className="py-1 px-1 text-right font-mono font-bold text-emerald-700 whitespace-nowrap">
+                                    {formatCurrencyBR(group.totalRecebido)}
+                                  </td>
+                                  <td
+                                    className={`py-1 px-1.5 text-right font-mono font-bold whitespace-nowrap ${
+                                      group.totalSaldo > 0.009
+                                        ? 'text-rose-600'
+                                        : 'text-emerald-700'
+                                    }`}
+                                  >
+                                    {formatCurrencyBR(group.totalSaldo)}
+                                  </td>
+                                </tr>
+                                {group.subgroups.map(sg => (
+                                  <tr
+                                    key={`${group.unidadeId}-${group.unidadeNome}-${sg.key}`}
+                                    className="bg-white"
+                                  >
+                                    <td className="py-0.5 pl-3 pr-1 text-[9px] font-semibold whitespace-nowrap">
+                                      <span
+                                        className={
+                                          sg.key === 'CONCILIADO'
+                                            ? 'text-emerald-700'
+                                            : 'text-amber-700'
+                                        }
+                                      >
+                                        ↳ {sg.label}
+                                      </span>
+                                    </td>
+                                    <td className="py-0.5 px-1 text-center font-mono text-[9px] text-slate-600">
+                                      {sg.rows.length}
+                                    </td>
+                                    <td className="py-0.5 px-1 text-right font-mono text-[9px] text-slate-700 whitespace-nowrap">
+                                      {formatCurrencyBR(sg.totalValor)}
+                                    </td>
+                                    <td className="py-0.5 px-1 text-right font-mono text-[9px] text-emerald-700 whitespace-nowrap">
+                                      {formatCurrencyBR(sg.totalRecebido)}
+                                    </td>
+                                    <td
+                                      className={`py-0.5 px-1.5 text-right font-mono text-[9px] font-semibold whitespace-nowrap ${
+                                        sg.totalSaldo > 0.009
+                                          ? 'text-rose-600'
+                                          : 'text-emerald-700'
+                                      }`}
+                                    >
+                                      {formatCurrencyBR(sg.totalSaldo)}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </React.Fragment>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {onNavigate && currentScreen !== 'financeiro' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onNavigate('financeiro');
+                          onCloseMobileDrawer?.();
+                        }}
+                        className="w-full py-1.5 px-3 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                      >
+                        <Landmark className="w-3.5 h-3.5" />
+                        <span>Abrir tela Financeiro</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Card 2: Roteirizador Google Maps & PDF */}
             <RoutePlannerTool

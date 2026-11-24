@@ -11,6 +11,10 @@ interface HybridFilterSortProps {
   dateValue?: string;
   onDateChange?: (value: string) => void;
   dateOptions?: SelectOption[];
+  secondDateLabel?: string;
+  secondDateValue?: string;
+  onSecondDateChange?: (value: string) => void;
+  secondDateOptions?: SelectOption[];
   filterLabel?: string;
   filterValue: string;
   onFilterChange: (value: string) => void;
@@ -29,6 +33,10 @@ export const HybridFilterSort: React.FC<HybridFilterSortProps> = ({
   dateValue,
   onDateChange,
   dateOptions,
+  secondDateLabel = 'Data 2:',
+  secondDateValue,
+  onSecondDateChange,
+  secondDateOptions,
   filterLabel = 'Filtro:',
   filterValue,
   onFilterChange,
@@ -50,6 +58,16 @@ export const HybridFilterSort: React.FC<HybridFilterSortProps> = ({
           value: dateValue,
           onChange: onDateChange,
           options: dateOptions
+        }]
+      : []),
+    ...(secondDateOptions && onSecondDateChange && secondDateValue !== undefined
+      ? [{
+          key: 'secondDate',
+          title: secondDateLabel,
+          icon: <Calendar className="w-3.5 h-3.5 text-emerald-600 shrink-0" />,
+          value: secondDateValue,
+          onChange: onSecondDateChange,
+          options: secondDateOptions
         }]
       : []),
     {

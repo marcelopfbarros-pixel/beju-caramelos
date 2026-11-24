@@ -12,7 +12,13 @@ import {
   ProductionOrder,
   ProductionShift,
   ProductionStatus,
-  Customer
+  Customer,
+  FinancialPaymentCategory,
+  FinancialPaymentChannel,
+  InvoiceStatus,
+  OrderFinancialPaymentEntry,
+  OrderFinancialRecord,
+  ReconciliationStatus
 } from '../types';
 import { decodePaymentInstructions, encodePaymentInstructions } from '../utils/paymentStatus';
 
@@ -468,6 +474,16 @@ export class SupabaseService {
       .from('estoque_unidades')
       .delete()
       .eq('id', stockId);
+    if (error) throw error;
+  }
+
+  static async deleteStockByUnitProduct(unidadeId: string, produtoId: string): Promise<void> {
+    if (!this.isConfigured()) return;
+    const { error } = await supabase!
+      .from('estoque_unidades')
+      .delete()
+      .eq('unidade_id', unidadeId)
+      .eq('produto_id', produtoId);
     if (error) throw error;
   }
 
@@ -1416,6 +1432,178 @@ export class SupabaseService {
       valorSubtotal: Number(data.valor_subtotal),
       taxaEntrega: Number(data.taxa_entrega),
       valorTotal: Number(data.valor_total)
+    };
+  }
+
+  // ==========================================
+  // FINANCEIRO: MEIOS DE PAGAMENTO & CONCILIAÇÃO / NF
+  // ==========================================
+  static async getFinancialPaymentChannels(): Promise<FinancialPaymentChannel[]> {
+    if (!this.isConfigured()) return [];
+    const { data, error } = await supabase!
+      .from('meios_pagamento_financeiro')
+      .select('*')
+      .order('ordem', { ascending: true })
+      .order('nome', { ascending: true });
+
+    if (error) {
+      console.error('Erro ao buscar meios de pagamento financeiro:', error);
+      throw error;
+    }
+
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      nome: row.nome,
+      categoria: (row.categoria || 'OUTROS') as FinancialPaymentCategory,
+      exigeNfPadrao: row.exige_nf_padrao !== false,
+      ativo: row.ativo !== false,
+      ordem: Number(row.ordem ?? 0)
+    }));
+  }
+
+  static async saveFinancialPaymentChannel(
+    channel: FinancialPaymentChannel
+  ): Promise<FinancialPaymentChannel> {
+    if (!this.isConfigured()) return channel;
+    const isUuid = (v?: string) =>
+      Boolean(v && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v));
+
+    const payload = {
+      nome: channel.nome.trim(),
+      categoria: channel.categoria || 'OUTROS',
+      exige_nf_padrao: channel.exigeNfPadrao !== false,
+      ativo: channel.ativo !== false,
+      ordem: Number(channel.ordem ?? 0),
+      updated_at: new Date().toISOString()
+    };
+
+    const { data, error } = isUuid(channel.id)
+      ? await supabase!
+          .from('meios_pagamento_financeiro')
+          .update(payload)
+          .eq('id', channel.id)
+          .select()
+          .single()
+      : await supabase!
+          .from('meios_pagamento_financeiro')
+          .upsert(payload, { onConflict: 'nome' })
+          .select()
+          .single();
+
+    if (error) throw error;
+
+    return {
+      id: data.id,
+      nome: data.nome,
+      categoria: (data.categoria || 'OUTROS') as FinancialPaymentCategory,
+      exigeNfPadrao: data.exige_nf_padrao !== false,
+      ativo: data.ativo !== false,
+      ordem: Number(data.ordem ?? 0)
+    };
+  }
+
+  static async deleteFinancialPaymentChannel(channelId: string): Promise<void> {
+    if (!this.isConfigured()) return;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(channelId);
+    if (!isUuid) return;
+
+    const { error } = await supabase!
+      .from('meios_pagamento_financeiro')
+      .delete()
+      .eq('id', channelId);
+    if (error) throw error;
+  }
+
+  static async getOrderFinancialRecords(): Promise<OrderFinancialRecord[]> {
+    if (!this.isConfigured()) return [];
+    const { data, error } = await supabase!
+      .from('financeiro_pedidos')
+      .select('*')
+      .order('updated_at', { ascending: false });
+
+    if (error) {
+      console.error('Erro ao buscar registros financeiros dos pedidos:', error);
+      throw error;
+    }
+
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      pedidoId: row.pedido_id,
+      conciliacaoStatus: (row.conciliacao_status || 'PENDENTE') as ReconciliationStatus,
+      meioPagamentoId: row.meio_pagamento_id || undefined,
+      meioPagamentoNome: row.meio_pagamento_nome || undefined,
+      dataPagamento: row.data_pagamento || undefined,
+      dataExtrato: row.data_extrato || undefined,
+      valorConciliado: Number(row.valor_conciliado ?? 0),
+      lancamentos: Array.isArray(row.lancamentos)
+        ? (row.lancamentos as OrderFinancialPaymentEntry[])
+        : [],
+      referenciaExtrato: row.referencia_extrato || undefined,
+      nfStatus: (row.nf_status || 'PENDENTE') as InvoiceStatus,
+      nfDataEmissao: row.nf_data_emissao || undefined,
+      nfObservacoes: row.nf_observacoes || undefined,
+      observacoes: row.observacoes || undefined,
+      atualizadoPor: row.atualizado_por || undefined,
+      updatedAt: row.updated_at || undefined
+    }));
+  }
+
+  static async saveOrderFinancialRecord(
+    record: OrderFinancialRecord
+  ): Promise<OrderFinancialRecord> {
+    if (!this.isConfigured()) return record;
+    const isUuid = (v?: string) =>
+      Boolean(v && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v));
+
+    if (!isUuid(record.pedidoId)) {
+      return record;
+    }
+
+    const payload = {
+      pedido_id: record.pedidoId,
+      conciliacao_status: record.conciliacaoStatus || 'PENDENTE',
+      meio_pagamento_id: isUuid(record.meioPagamentoId) ? record.meioPagamentoId : null,
+      meio_pagamento_nome: record.meioPagamentoNome?.trim() || null,
+      data_pagamento: record.dataPagamento || null,
+      data_extrato: record.dataExtrato || null,
+      valor_conciliado: Number((record.valorConciliado || 0).toFixed(2)),
+      lancamentos: Array.isArray(record.lancamentos) ? record.lancamentos : [],
+      referencia_extrato: record.referenciaExtrato?.trim() || null,
+      nf_status: record.nfStatus || 'PENDENTE',
+      nf_data_emissao: record.nfDataEmissao || null,
+      nf_observacoes: record.nfObservacoes?.trim() || null,
+      observacoes: record.observacoes?.trim() || null,
+      atualizado_por: record.atualizadoPor?.trim() || null,
+      updated_at: new Date().toISOString()
+    };
+
+    const { data, error } = await supabase!
+      .from('financeiro_pedidos')
+      .upsert(payload, { onConflict: 'pedido_id' })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    return {
+      id: data.id,
+      pedidoId: data.pedido_id,
+      conciliacaoStatus: (data.conciliacao_status || 'PENDENTE') as ReconciliationStatus,
+      meioPagamentoId: data.meio_pagamento_id || undefined,
+      meioPagamentoNome: data.meio_pagamento_nome || undefined,
+      dataPagamento: data.data_pagamento || undefined,
+      dataExtrato: data.data_extrato || undefined,
+      valorConciliado: Number(data.valor_conciliado ?? 0),
+      lancamentos: Array.isArray(data.lancamentos)
+        ? (data.lancamentos as OrderFinancialPaymentEntry[])
+        : [],
+      referenciaExtrato: data.referencia_extrato || undefined,
+      nfStatus: (data.nf_status || 'PENDENTE') as InvoiceStatus,
+      nfDataEmissao: data.nf_data_emissao || undefined,
+      nfObservacoes: data.nf_observacoes || undefined,
+      observacoes: data.observacoes || undefined,
+      atualizadoPor: data.atualizado_por || undefined,
+      updatedAt: data.updated_at || undefined
     };
   }
 

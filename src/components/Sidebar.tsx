@@ -10,13 +10,14 @@ import {
   Users,
   ChevronLeft,
   ChevronRight,
-  Wrench
+  Wrench,
+  Receipt
 } from 'lucide-react';
 
 import { UserProfile } from '../types';
 import { canAccessScreen } from '../utils/permissions';
 
-export type ScreenId = 'pedidos' | 'producao' | 'estoque' | 'entregas' | 'clientes' | 'produtos' | 'lojas' | 'configuracoes' | 'painel';
+export type ScreenId = 'pedidos' | 'producao' | 'estoque' | 'entregas' | 'financeiro' | 'clientes' | 'produtos' | 'lojas' | 'configuracoes' | 'painel';
 
 interface SidebarProps {
   currentScreen: ScreenId;
@@ -26,6 +27,7 @@ interface SidebarProps {
   itemsToProduceCount: number;
   lowStockCount: number;
   pendingDeliveriesCount: number;
+  pendingFinancialCount?: number;
   pendingCustomersCount: number;
   selectedDeliveriesCount?: number;
 }
@@ -38,6 +40,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   itemsToProduceCount,
   lowStockCount,
   pendingDeliveriesCount,
+  pendingFinancialCount = 0,
   pendingCustomersCount,
   selectedDeliveriesCount = 0
 }) => {
@@ -95,6 +98,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'produtos' as ScreenId,
       label: 'Produtos',
       icon: CakeSlice
+    },
+    {
+      id: 'financeiro' as ScreenId,
+      label: 'Financeiro',
+      icon: Receipt,
+      badge: pendingFinancialCount,
+      badgeColor: pendingFinancialCount > 0 ? 'bg-rose-100 text-rose-800 border-rose-200' : 'bg-slate-100 text-slate-600 border-slate-200'
     },
     {
       id: 'lojas' as ScreenId,

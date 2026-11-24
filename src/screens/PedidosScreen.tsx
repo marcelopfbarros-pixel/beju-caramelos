@@ -81,7 +81,14 @@ interface PedidosScreenProps {
   stock?: StockItem[];
   activeUnitId: string;
   onVerifyPin?: (pin: string) => Promise<boolean> | boolean;
-  requestedStatusFilter?: { status: string; expandGroups?: boolean; nonce: number } | null;
+  requestedStatusFilter?: {
+    status: string;
+    expandGroups?: boolean;
+    searchTerm?: string;
+    editOrderId?: string;
+    nonce: number;
+  } | null;
+  onConsumeStatusFilterRequest?: () => void;
   onSaveOrder: (order: Order) => void;
   onDeleteOrder?: (orderId: string) => void;
   selectedOrderId?: string;
@@ -114,31 +121,18 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
   activeUnitId,
   onVerifyPin,
   requestedStatusFilter,
+  onConsumeStatusFilterRequest,
   onSaveOrder,
   onDeleteOrder,
   onSelectOrder,
   onSaveCustomer
 }) => {
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchTerm, setSearchTerm] = useState(() => requestedStatusFilter?.searchTerm || '');
   const [statusFilter, setStatusFilter] = useState<string>(() => requestedStatusFilter?.status || 'TODOS');
   const [sortBy, setSortBy] = useState<'ENTREGA_ASC' | 'ENTREGA_DESC' | 'VALOR_DESC' | 'CLIENTE_ASC'>('ENTREGA_ASC');
   const [groupBy, setGroupBy] = useState<'NENHUM' | 'MODALIDADE' | 'LOJA_ORIGEM'>('LOJA_ORIGEM');
   const { isGroupExpanded, toggleGroup, expandAll } = useExpandedGroups(groupBy);
   const [verifyingStatusPin, setVerifyingStatusPin] = useState(false);
-
-  useEffect(() => {
-    if (requestedStatusFilter?.status) {
-      setStatusFilter(requestedStatusFilter.status);
-    }
-    if (requestedStatusFilter?.expandGroups) {
-      expandAll();
-    }
-  }, [
-    requestedStatusFilter?.nonce,
-    requestedStatusFilter?.status,
-    requestedStatusFilter?.expandGroups,
-    expandAll
-  ]);
   const [viewMode, setViewMode] = useState<'TABLE' | 'CARDS'>(() =>
     typeof window !== 'undefined' && window.innerWidth < 768 ? 'CARDS' : 'TABLE'
   );
@@ -435,6 +429,37 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
     });
     setIsModalOpen(true);
   };
+
+  useEffect(() => {
+    if (!requestedStatusFilter) return;
+    if (requestedStatusFilter.status) {
+      setStatusFilter(requestedStatusFilter.status);
+    }
+    if (requestedStatusFilter.searchTerm !== undefined) {
+      setSearchTerm(requestedStatusFilter.searchTerm);
+    }
+    if (requestedStatusFilter.expandGroups) {
+      expandAll();
+    }
+    if (requestedStatusFilter.editOrderId) {
+      const targetOrder = orders.find(o => o.id === requestedStatusFilter.editOrderId);
+      if (targetOrder) {
+        onSelectOrder(targetOrder);
+        handleOpenEditOrder(targetOrder);
+      }
+    }
+    onConsumeStatusFilterRequest?.();
+  }, [
+    requestedStatusFilter?.nonce,
+    requestedStatusFilter?.status,
+    requestedStatusFilter?.searchTerm,
+    requestedStatusFilter?.expandGroups,
+    requestedStatusFilter?.editOrderId,
+    orders,
+    expandAll,
+    onSelectOrder,
+    onConsumeStatusFilterRequest
+  ]);
 
   const recalculateNearestStoreAndFee = async (
     addr: string,

@@ -25,6 +25,7 @@ const SCREEN_NAMES: Record<ScreenId, string> = {
   producao: 'Produção',
   estoque: 'Estoque',
   entregas: 'Entregas',
+  financeiro: 'Financeiro',
   clientes: 'Clientes',
   produtos: 'Produtos',
   lojas: 'Unidades',
@@ -119,6 +120,23 @@ const SCREEN_TUTORIALS: Record<ScreenId, TutorialStep[]> = {
       title: 'Imprimir Etiquetas e Confirmar Entrega',
       description: 'Imprima comprovantes/etiquetas ou avance o status para Em Rota / Entregue com confirmação.',
       findTarget: () => findInMainByText('button', 'Etiqueta') || findInMainByText('button', 'Entrega') || findVisible('main'),
+    },
+  ],
+  financeiro: [
+    {
+      title: 'Resumo de Pendências',
+      description: 'Clique nos cards do topo para filtrar pedidos pendentes de conciliação no extrato ou prontos para emissão de Nota Fiscal.',
+      findTarget: () => findInMainByText('button', 'Prontos p/ Emitir NF') || findVisible('main'),
+    },
+    {
+      title: 'Conciliar Extrato e Emitir NF',
+      description: 'Clique em qualquer pedido para registrar a data do pagamento, data no extrato, meio de pagamento e emissão da NF.',
+      findTarget: () => findVisible('main table') || findVisible('main'),
+    },
+    {
+      title: 'Meios de Pagamento Configuráveis',
+      description: 'Use "Meios de Pagamento" para gerenciar PixC6, C6pay, Sumup, Dinheiro, Bonificado, Boleto ou criar novos meios.',
+      findTarget: () => findInMainByText('button', 'Meios de Pagamento') || findVisible('main'),
     },
   ],
   clientes: [

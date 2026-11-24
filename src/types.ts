@@ -171,3 +171,53 @@ export interface CardapioThankYouConfig {
   phrase: string;
   durationSeconds: number;
 }
+
+export type FinancialPaymentCategory =
+  | 'PIX'
+  | 'CARTAO'
+  | 'DINHEIRO'
+  | 'BOLETO'
+  | 'BONIFICADO'
+  | 'OUTROS';
+
+export interface FinancialPaymentChannel {
+  id: string;
+  nome: string;
+  categoria: FinancialPaymentCategory;
+  exigeNfPadrao: boolean;
+  ativo: boolean;
+  ordem: number;
+}
+
+export type ReconciliationStatus = 'PENDENTE' | 'PARCIAL' | 'CONCILIADO';
+
+export type InvoiceStatus = 'PENDENTE' | 'EMITIDA' | 'DISPENSADA';
+
+export interface OrderFinancialPaymentEntry {
+  id: string;
+  dataPagamento: string;
+  dataExtrato: string;
+  meioPagamentoId?: string;
+  meioPagamentoNome: string;
+  valor: number;
+  referenciaExtrato?: string;
+}
+
+export interface OrderFinancialRecord {
+  id: string;
+  pedidoId: string;
+  conciliacaoStatus: ReconciliationStatus;
+  meioPagamentoId?: string;
+  meioPagamentoNome?: string;
+  dataPagamento?: string;
+  dataExtrato?: string;
+  valorConciliado: number;
+  lancamentos: OrderFinancialPaymentEntry[];
+  referenciaExtrato?: string;
+  nfStatus: InvoiceStatus;
+  nfDataEmissao?: string;
+  nfObservacoes?: string;
+  observacoes?: string;
+  atualizadoPor?: string;
+  updatedAt?: string;
+}

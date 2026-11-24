@@ -47,3 +47,28 @@ export function getUnitProductAvailability(
     disponivel: Math.max(0, atual - reservado),
   };
 }
+
+export function isLowStockItem(
+  item: Pick<StockItem, 'quantidadeAtual' | 'quantidadeMinima'>
+): boolean {
+  return item.quantidadeMinima > 0 && item.quantidadeAtual <= item.quantidadeMinima;
+}
+
+export function pruneZeroedAutoStock(
+  baseStock: StockItem[],
+  touchedKeys: ReadonlySet<string>
+): { nextStock: StockItem[]; removedItems: StockItem[] } {
+  const nextStock: StockItem[] = [];
+  const removedItems: StockItem[] = [];
+
+  for (const item of baseStock) {
+    const key = stockReservationKey(item.unidadeId, item.produtoId);
+    if (touchedKeys.has(key) && item.quantidadeAtual <= 0 && item.quantidadeMinima <= 0) {
+      removedItems.push(item);
+    } else {
+      nextStock.push(item);
+    }
+  }
+
+  return { nextStock, removedItems };
+}

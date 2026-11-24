@@ -1,4 +1,5 @@
-import { StoreUnit, Category, Product, Order, StockItem, StockMovement, ProductionOrder, UserProfile, Customer } from '../types';
+import { StoreUnit, Category, Product, Order, StockItem, StockMovement, ProductionOrder, UserProfile, Customer, FinancialPaymentChannel, OrderFinancialRecord } from '../types';
+import { DEFAULT_FINANCIAL_PAYMENT_CHANNELS } from '../utils/financialReconciliation';
 
 const INITIAL_UNITS: StoreUnit[] = [
   {
@@ -344,5 +345,21 @@ export class AppStorage {
 
   static saveStockMovements(movements: StockMovement[]): void {
     this.save('stock_movements', movements);
+  }
+
+  static getFinancialPaymentChannels(): FinancialPaymentChannel[] {
+    return this.load('financial_channels', DEFAULT_FINANCIAL_PAYMENT_CHANNELS);
+  }
+
+  static saveFinancialPaymentChannels(channels: FinancialPaymentChannel[]): void {
+    this.save('financial_channels', channels);
+  }
+
+  static getOrderFinancialRecords(): OrderFinancialRecord[] {
+    return this.load('financial_records', []);
+  }
+
+  static saveOrderFinancialRecords(records: OrderFinancialRecord[]): void {
+    this.save('financial_records', records);
   }
 }

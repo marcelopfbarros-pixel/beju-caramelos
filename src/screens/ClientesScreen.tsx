@@ -1,10 +1,18 @@
-import React, { useState, useMemo } from 'react';
-import { Customer, Order } from '../types';
-import { Users, Plus, Search, Phone, MapPin, Trash2, X, Save, Printer, LayoutGrid, List, Layers, Filter, Loader2, ChevronDown, ChevronRight } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Customer, Order, OrderStatus, Product, StoreUnit } from '../types';
+import { Users, Plus, Search, Phone, MapPin, Trash2, X, Save, Printer, LayoutGrid, List, Loader2, ChevronDown, ChevronRight, ShoppingBag, Truck, Store, Clock, ExternalLink } from 'lucide-react';
 import { PrintReportHeader } from '../components/PrintReportHeader';
 import { HybridFilterSort } from '../components/HybridFilterSort';
+import { formatCurrencyBR } from '../components/CurrencyInput';
 import { useExpandedGroups } from '../hooks/useExpandedGroups';
-import { normalizePhoneForWhatsApp } from '../services/whatsappAutomationService';
+import { normalizePhoneForWhatsApp, resolveOrderUnit } from '../services/whatsappAutomationService';
+import { formatDeliveryTimeRange } from '../utils/deliveryTimeRange';
+import {
+  PAYMENT_STATUS_BADGE_CLASSES,
+  PAYMENT_STATUS_LABELS,
+  getEffectivePaymentStatus,
+  getOrderRemainingAmount,
+} from '../utils/paymentStatus';
 import {
   formatCep,
   lookupByCep,
@@ -17,15 +25,43 @@ import {
 interface ClientesScreenProps {
   customers: Customer[];
   orders?: Order[];
+  products?: Product[];
+  units?: StoreUnit[];
   onSaveCustomer: (customer: Customer) => void;
   onDeleteCustomer: (customerId: string) => void;
+  onOpenOrderInPedidos?: (order: Order) => void;
+  onOpenCustomerOrdersInPedidos?: (customer: Customer) => void;
 }
+
+const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
+  PENDENTE: 'Pendente',
+  CONFIRMADO: 'Confirmado',
+  EM_PRODUCAO: 'Em Produção',
+  PRONTO: 'Pronto',
+  EM_ROTA: 'Em Rota',
+  ENTREGUE: 'Entregue',
+  CANCELADO: 'Cancelado',
+};
+
+const ORDER_STATUS_BADGES: Record<OrderStatus, string> = {
+  PENDENTE: 'bg-amber-100 text-amber-800 border-amber-300',
+  CONFIRMADO: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+  EM_PRODUCAO: 'bg-blue-100 text-blue-800 border-blue-300',
+  PRONTO: 'bg-purple-100 text-purple-800 border-purple-300',
+  EM_ROTA: 'bg-indigo-100 text-indigo-800 border-indigo-300',
+  ENTREGUE: 'bg-slate-100 text-slate-700 border-slate-300',
+  CANCELADO: 'bg-red-100 text-red-800 border-red-300',
+};
 
 export const ClientesScreen: React.FC<ClientesScreenProps> = ({
   customers,
   orders = [],
+  products = [],
+  units = [],
   onSaveCustomer,
-  onDeleteCustomer
+  onDeleteCustomer,
+  onOpenOrderInPedidos,
+  onOpenCustomerOrdersInPedidos
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [viewMode, setViewMode] = useState<'TABLE' | 'CARDS'>(() =>
@@ -36,6 +72,7 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
   const [openOrdersFilter, setOpenOrdersFilter] = useState<'TODOS' | 'COM_ABERTOS' | 'SEM_ABERTOS'>('TODOS');
   const [sortBy, setSortBy] = useState<'PROXIMA_ENTREGA' | 'ABERTOS_DESC' | 'NOME_ASC'>('PROXIMA_ENTREGA');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [viewingOrdersCustomer, setViewingOrdersCustomer] = useState<Customer | null>(null);
   const [editingCustomer, setEditingCustomer] = useState<Partial<Customer>>({
     nome: '',
     telefone: '',
@@ -48,47 +85,82 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
   const [cepMessage, setCepMessage] = useState<string | null>(null);
   const [addressCandidates, setAddressCandidates] = useState<CepAddressResult[]>([]);
 
-  const openOrdersByCustomer = useMemo(() => {
-    const map = new Map<string, number>();
+  useEffect(() => {
+    if (!viewingOrdersCustomer) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setViewingOrdersCustomer(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [viewingOrdersCustomer]);
+
+  const productMap = useMemo(() => new Map(products.map(p => [p.id, p])), [products]);
+
+  const openOrdersByCustomerId = useMemo(() => {
+    const byNormTel = new Map<string, Order[]>();
+    const byRawTel = new Map<string, Order[]>();
+    const byName = new Map<string, Order[]>();
+
     orders.forEach(o => {
       if (o.status === 'ENTREGUE' || o.status === 'CANCELADO') return;
-      const phoneKey = (o.clienteTelefone || '').trim();
+      const normTel = normalizePhoneForWhatsApp(o.clienteTelefone || '');
+      const rawTel = (o.clienteTelefone || '').trim();
       const nameKey = (o.clienteNome || '').trim().toLowerCase();
-      if (phoneKey) map.set(`tel:${phoneKey}`, (map.get(`tel:${phoneKey}`) || 0) + 1);
-      if (nameKey) map.set(`name:${nameKey}`, (map.get(`name:${nameKey}`) || 0) + 1);
-    });
-    return map;
-  }, [orders]);
 
-  const getOpenOrdersCount = (customer: Customer) => {
-    const byTel = customer.telefone ? openOrdersByCustomer.get(`tel:${customer.telefone.trim()}`) : undefined;
-    if (byTel !== undefined) return byTel;
-    return openOrdersByCustomer.get(`name:${customer.nome.trim().toLowerCase()}`) || 0;
-  };
-
-  const earliestDeliveryByCustomer = useMemo(() => {
-    const map = new Map<string, number>();
-    orders.forEach(o => {
-      if (o.status === 'ENTREGUE' || o.status === 'CANCELADO') return;
-      const ts = new Date(o.dataHoraEntrega).getTime();
-      const phoneKey = (o.clienteTelefone || '').trim();
-      const nameKey = (o.clienteNome || '').trim().toLowerCase();
-      if (phoneKey) {
-        const prev = map.get(`tel:${phoneKey}`);
-        if (prev === undefined || ts < prev) map.set(`tel:${phoneKey}`, ts);
+      if (normTel) {
+        const list = byNormTel.get(normTel) || [];
+        list.push(o);
+        byNormTel.set(normTel, list);
+      }
+      if (rawTel) {
+        const list = byRawTel.get(rawTel) || [];
+        list.push(o);
+        byRawTel.set(rawTel, list);
       }
       if (nameKey) {
-        const prev = map.get(`name:${nameKey}`);
-        if (prev === undefined || ts < prev) map.set(`name:${nameKey}`, ts);
+        const list = byName.get(nameKey) || [];
+        list.push(o);
+        byName.set(nameKey, list);
       }
     });
-    return map;
-  }, [orders]);
+
+    const result = new Map<string, Order[]>();
+    customers.forEach(c => {
+      const normTel = normalizePhoneForWhatsApp(c.telefone || '');
+      const rawTel = (c.telefone || '').trim();
+      const nameKey = (c.nome || '').trim().toLowerCase();
+
+      const matched =
+        (normTel && byNormTel.get(normTel)) ||
+        (rawTel && byRawTel.get(rawTel)) ||
+        (nameKey && byName.get(nameKey)) ||
+        [];
+
+      const sorted = [...matched].sort(
+        (a, b) =>
+          new Date(a.dataHoraEntrega || a.dataPedido).getTime() -
+          new Date(b.dataHoraEntrega || b.dataPedido).getTime()
+      );
+      result.set(c.id, sorted);
+    });
+
+    return result;
+  }, [customers, orders]);
+
+  const getOpenOrders = (customer: Customer): Order[] => {
+    return openOrdersByCustomerId.get(customer.id) || [];
+  };
+
+  const getOpenOrdersCount = (customer: Customer) => {
+    return getOpenOrders(customer).length;
+  };
 
   const getEarliestDeliveryTs = (customer: Customer) => {
-    const byTel = customer.telefone ? earliestDeliveryByCustomer.get(`tel:${customer.telefone.trim()}`) : undefined;
-    if (byTel !== undefined) return byTel;
-    return earliestDeliveryByCustomer.get(`name:${customer.nome.trim().toLowerCase()}`) ?? Number.MAX_SAFE_INTEGER;
+    const list = getOpenOrders(customer);
+    if (list.length === 0) return Number.MAX_SAFE_INTEGER;
+    return new Date(list[0].dataHoraEntrega || list[0].dataPedido).getTime();
   };
 
   const filtered = useMemo(() => {
@@ -119,7 +191,7 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
         }
         return a.nome.localeCompare(b.nome, 'pt-BR');
       });
-  }, [customers, searchTerm, openOrdersFilter, sortBy, openOrdersByCustomer, earliestDeliveryByCustomer]);
+  }, [customers, searchTerm, openOrdersFilter, sortBy, openOrdersByCustomerId]);
 
   const groupedCustomers = useMemo(() => {
     if (groupBy === 'NENHUM') {
@@ -139,10 +211,9 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
     return Array.from(map.entries())
       .map(([label, items]) => ({ label, items }))
       .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
-  }, [filtered, groupBy, openOrdersByCustomer]);
+  }, [filtered, groupBy, openOrdersByCustomerId]);
 
-  const hidePedidosAbertos = groupBy === 'PENDENCIA';
-  const visibleColumnCount = 6 - (hidePedidosAbertos ? 1 : 0);
+  const visibleColumnCount = 6;
 
   const handleOpenNew = () => {
     setEditingCustomer({
@@ -396,7 +467,9 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {group.items.map(customer => {
                       const openOrdersCount = getOpenOrdersCount(customer);
-                      const isEditingCard = isModalOpen && editingCustomer.id === customer.id;
+                      const isEditingCard =
+                        (isModalOpen && editingCustomer.id === customer.id) ||
+                        viewingOrdersCustomer?.id === customer.id;
                       return (
                         <div
                           key={customer.id}
@@ -410,14 +483,22 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
                           <div className="space-y-2">
                             <div className="flex items-start justify-between gap-2">
                               <h3 className="text-sm font-bold text-slate-900">{customer.nome}</h3>
-                              {!hidePedidosAbertos && (
-                                openOrdersCount > 0 ? (
-                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-100 text-amber-800 border border-amber-300 shrink-0">
-                                    {openOrdersCount} aberto(s)
-                                  </span>
-                                ) : (
-                                  <span className="text-[10px] font-mono text-slate-400 shrink-0">0 abertos</span>
-                                )
+                              {openOrdersCount > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setViewingOrdersCustomer(customer);
+                                  }}
+                                  title={`Ver ${openOrdersCount} pedido(s) aberto(s) de ${customer.nome}`}
+                                  aria-label={`Ver ${openOrdersCount} pedido(s) aberto(s) de ${customer.nome}`}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-100 hover:bg-amber-200 text-amber-800 border border-amber-300 hover:border-amber-400 transition-colors cursor-pointer shrink-0"
+                                >
+                                  <ShoppingBag className="w-3 h-3" />
+                                  <span>{openOrdersCount} aberto(s)</span>
+                                </button>
+                              ) : (
+                                <span className="text-[10px] font-mono text-slate-400 shrink-0">0 abertos</span>
                               )}
                             </div>
                             <div className="flex items-center gap-1.5 text-xs font-mono text-slate-700">
@@ -492,7 +573,7 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
                 <th className="py-3 px-4 font-semibold">Nome</th>
                 <th className="py-3 px-4 font-semibold">Telefone / WhatsApp</th>
                 <th className="py-3 px-4 font-semibold">Endereço Padrão</th>
-                {!hidePedidosAbertos && <th className="py-3 px-4 font-semibold text-center">Pedidos Abertos</th>}
+                <th className="py-3 px-4 font-semibold text-center">Pedidos Abertos</th>
                 <th className="py-3 px-4 font-semibold">Observações</th>
                 <th className="py-3 px-4 font-semibold text-right print:hidden">Ações</th>
               </tr>
@@ -525,7 +606,9 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
                     )}
                     {expanded && group.items.map(customer => {
                       const openOrdersCount = getOpenOrdersCount(customer);
-                      const isEditingRow = isModalOpen && editingCustomer.id === customer.id;
+                      const isEditingRow =
+                        (isModalOpen && editingCustomer.id === customer.id) ||
+                        viewingOrdersCustomer?.id === customer.id;
                       return (
                       <tr
                         key={customer.id}
@@ -570,17 +653,25 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
                             </span>
                           </span>
                         </td>
-                        {!hidePedidosAbertos && (
                         <td className="py-3.5 px-4 text-center">
                           {openOrdersCount > 0 ? (
-                            <span className="inline-flex items-center justify-center px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-amber-100 text-amber-800 border border-amber-300">
-                              {openOrdersCount}
-                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setViewingOrdersCustomer(customer);
+                              }}
+                              title={`Ver ${openOrdersCount} pedido(s) aberto(s) de ${customer.nome}`}
+                              aria-label={`Ver ${openOrdersCount} pedido(s) aberto(s) de ${customer.nome}`}
+                              className="inline-flex items-center justify-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-amber-100 hover:bg-amber-200 text-amber-800 border border-amber-300 hover:border-amber-400 transition-colors cursor-pointer"
+                            >
+                              <ShoppingBag className="w-3 h-3" />
+                              <span>{openOrdersCount}</span>
+                            </button>
                           ) : (
                             <span className="text-slate-400 font-mono text-[11px]">0</span>
                           )}
                         </td>
-                        )}
                         <td className="py-3.5 px-4 text-slate-500 italic">
                           {customer.observacoes || '—'}
                         </td>
@@ -780,6 +871,251 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
           </form>
         </div>
       )}
+      {/* Modal de Pedidos Abertos do Cliente */}
+      {viewingOrdersCustomer && (() => {
+        const customerOpenOrders = getOpenOrders(viewingOrdersCustomer);
+        const totalOpenValue = customerOpenOrders.reduce(
+          (sum, o) => sum + (o.valorTotal || 0),
+          0
+        );
+        const waDigits = normalizePhoneForWhatsApp(viewingOrdersCustomer.telefone || '');
+
+        return (
+          <div
+            onClick={() => setViewingOrdersCustomer(null)}
+            className="fixed inset-0 bg-slate-900/45 backdrop-blur-xs flex items-center justify-center z-[60] p-2 sm:p-4"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white rounded-xl sm:rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92dvh] flex flex-col overflow-hidden border border-slate-200"
+            >
+              <div className="px-3.5 py-2.5 sm:px-6 sm:py-4 bg-[#f8f9ff] border-b border-slate-200 flex items-start justify-between gap-3 shrink-0">
+                <div className="min-w-0 space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <ShoppingBag className="w-4 h-4 text-amber-600 shrink-0" />
+                    <h3 className="text-sm font-bold text-slate-900 truncate">
+                      Pedidos Abertos — {viewingOrdersCustomer.nome}
+                    </h3>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                    {waDigits ? (
+                      <a
+                        href={`https://wa.me/${waDigits}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 font-mono text-emerald-700 hover:underline"
+                      >
+                        <Phone className="w-3 h-3" />
+                        <span>{viewingOrdersCustomer.telefone}</span>
+                      </a>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 font-mono text-slate-600">
+                        <Phone className="w-3 h-3 text-emerald-600" />
+                        <span>{viewingOrdersCustomer.telefone}</span>
+                      </span>
+                    )}
+                    <span className="px-2 py-0.5 rounded-full font-mono font-bold bg-amber-100 text-amber-800 border border-amber-300 text-[10px]">
+                      {customerOpenOrders.length}{' '}
+                      {customerOpenOrders.length === 1 ? 'pedido' : 'pedidos'}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full font-mono font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 text-[10px]">
+                      Total: R$ {formatCurrencyBR(totalOpenValue)}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setViewingOrdersCustomer(null)}
+                  className="text-slate-400 hover:text-slate-700 p-1 shrink-0 cursor-pointer"
+                  aria-label="Fechar lista de pedidos abertos"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-3 sm:p-5 space-y-3 text-xs overflow-y-auto">
+                {customerOpenOrders.length === 0 ? (
+                  <div className="py-10 text-center text-slate-400">
+                    <ShoppingBag className="w-8 h-8 mx-auto text-slate-300 mb-2" />
+                    <p>Este cliente não possui pedidos em aberto no momento.</p>
+                  </div>
+                ) : (
+                  customerOpenOrders.map(order => {
+                    const payStatus = getEffectivePaymentStatus(order);
+                    const remainingAmt = getOrderRemainingAmount(order);
+                    const unit = resolveOrderUnit(order, units);
+                    const deliveryAddr =
+                      (order.enderecoEntrega || '').trim() ||
+                      (order.clienteEndereco || '').trim();
+
+                    return (
+                      <div
+                        key={order.id}
+                        className="rounded-xl border border-slate-200 bg-slate-50/70 p-3 space-y-2.5"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                            <span className="font-mono font-bold text-slate-900 text-xs">
+                              {order.numeroPedido}
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${ORDER_STATUS_BADGES[order.status]}`}
+                            >
+                              {ORDER_STATUS_LABELS[order.status]}
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${PAYMENT_STATUS_BADGE_CLASSES[payStatus]}`}
+                            >
+                              {PAYMENT_STATUS_LABELS[payStatus]}
+                            </span>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <div className="font-mono font-bold text-slate-900 text-xs">
+                              R$ {formatCurrencyBR(order.valorTotal)}
+                            </div>
+                            {payStatus !== 'PAGO' && remainingAmt > 0 && (
+                              <div className="font-mono text-[10px] font-semibold text-amber-700">
+                                Restante: R$ {formatCurrencyBR(remainingAmt)}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-600">
+                          <span className="inline-flex items-center gap-1 font-mono text-slate-700">
+                            <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+                            <span>
+                              {formatDeliveryTimeRange(
+                                order.dataHoraEntrega,
+                                order.dataHoraEntregaFim,
+                                {
+                                  tipoEntrega: order.tipoEntrega,
+                                  turnoEntrega:
+                                    order.tipoEntrega === 'DELIVERY'
+                                      ? order.turnoEntrega
+                                      : undefined,
+                                }
+                              )}
+                            </span>
+                          </span>
+                          <span className="inline-flex items-center gap-1 font-medium text-slate-700">
+                            {order.tipoEntrega === 'DELIVERY' ? (
+                              <Truck className="w-3 h-3 text-blue-600 shrink-0" />
+                            ) : (
+                              <Store className="w-3 h-3 text-emerald-600 shrink-0" />
+                            )}
+                            <span>
+                              {order.tipoEntrega === 'DELIVERY' ? 'Delivery' : 'Retirada'}
+                              {unit?.nome ? ` • ${unit.nome}` : ''}
+                            </span>
+                          </span>
+                        </div>
+
+                        {order.tipoEntrega === 'DELIVERY' && deliveryAddr && (
+                          <div className="flex items-start gap-1.5 text-[11px] text-slate-600">
+                            <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0 mt-0.5" />
+                            <span className="break-words min-w-0">
+                              {deliveryAddr}
+                              {order.detalheEntrega ? ` • ${order.detalheEntrega}` : ''}
+                            </span>
+                          </div>
+                        )}
+
+                        {order.itens && order.itens.length > 0 && (
+                          <div className="bg-white border border-slate-200/80 rounded-lg divide-y divide-slate-100">
+                            {order.itens.map((item, idx) => {
+                              const prod = productMap.get(item.produtoId);
+                              return (
+                                <div
+                                  key={item.id || `${order.id}-${item.produtoId}-${idx}`}
+                                  className="px-2.5 py-1.5 flex items-center justify-between gap-2 text-[11px]"
+                                >
+                                  <span className="text-slate-800 min-w-0 truncate">
+                                    <strong className="font-mono text-slate-900">
+                                      {item.quantidade}x
+                                    </strong>{' '}
+                                    {prod?.descricao || 'Produto'}
+                                  </span>
+                                  <span className="font-mono font-semibold text-slate-700 shrink-0">
+                                    R$ {formatCurrencyBR(item.subtotal)}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 bg-white border border-slate-200/80 rounded-lg px-2.5 py-1.5 text-[11px]">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-slate-500">Taxa de entrega:</span>
+                            <span className="font-mono font-semibold text-slate-700">
+                              R$ {formatCurrencyBR(order.taxaEntrega || 0)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-slate-500">Desconto:</span>
+                            <span
+                              className={`font-mono font-semibold ${
+                                (order.desconto || 0) > 0 ? 'text-emerald-700' : 'text-slate-500'
+                              }`}
+                            >
+                              {(order.desconto || 0) > 0
+                                ? `-R$ ${formatCurrencyBR(order.desconto)}`
+                                : `R$ ${formatCurrencyBR(0)}`}
+                            </span>
+                          </div>
+                        </div>
+
+                        {onOpenOrderInPedidos && (
+                          <div className="flex justify-end pt-0.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setViewingOrdersCustomer(null);
+                                onOpenOrderInPedidos(order);
+                              }}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-[11px] font-bold transition-colors cursor-pointer"
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                              <span>Abrir em Pedidos</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              <div className="px-3.5 py-2.5 sm:px-6 sm:py-3.5 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0">
+                <div>
+                  {onOpenCustomerOrdersInPedidos && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const targetCustomer = viewingOrdersCustomer;
+                        setViewingOrdersCustomer(null);
+                        onOpenCustomerOrdersInPedidos(targetCustomer);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      <span>Ver todos em Pedidos</span>
+                    </button>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setViewingOrdersCustomer(null)}
+                  className="px-4 py-1.5 sm:py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-lg transition-colors cursor-pointer"
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };
