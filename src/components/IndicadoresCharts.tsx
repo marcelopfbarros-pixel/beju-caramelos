@@ -2,7 +2,8 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { Customer, Order, Product, StoreUnit } from '../types';
 import { formatCurrencyBR } from './CurrencyInput';
 import { resolveOrderRegion } from '../utils/orderRegion';
-import { BarChart3, ChevronDown, ChevronUp, MapPin } from 'lucide-react';
+import { BarChart3, ChevronDown, ChevronUp, MapPin, Store } from 'lucide-react';
+import { resolveOrderBillingUnitId } from '../utils/faturamentoReportData';
 
 interface IndicadoresChartsProps {
   orders: Order[];
@@ -14,11 +15,14 @@ interface IndicadoresChartsProps {
   onToggleRegion: () => void;
   isProductExpanded: boolean;
   onToggleProduct: () => void;
+  isUnitExpanded: boolean;
+  onToggleUnit: () => void;
 }
 
 type PeriodFilter = 'TODOS' | '30D' | 'MES';
 type RegionScope = 'TODOS' | 'DELIVERY';
 type ProductMetric = 'PEDIDOS' | 'QUANTIDADE' | 'VALOR';
+type UnitMetric = 'PEDIDOS' | 'VALOR';
 
 const REGION_PALETTE = [
   '#059669', // emerald-600
@@ -39,6 +43,15 @@ const PRODUCT_BAR_COLORS = [
   'bg-teal-500',
 ];
 
+const UNIT_BAR_COLORS = [
+  'bg-teal-500',
+  'bg-cyan-500',
+  'bg-emerald-500',
+  'bg-sky-500',
+  'bg-indigo-500',
+  'bg-amber-500',
+];
+
 function formatQuantity(qty: number): string {
   return Number.isInteger(qty)
     ? String(qty)
@@ -55,20 +68,27 @@ export const IndicadoresCharts: React.FC<IndicadoresChartsProps> = ({
   onToggleRegion,
   isProductExpanded,
   onToggleProduct,
+  isUnitExpanded,
+  onToggleUnit,
 }) => {
   const [periodFilter, setPeriodFilter] = useState<PeriodFilter>('TODOS');
   const [regionScope, setRegionScope] = useState<RegionScope>('TODOS');
   const [productMetric, setProductMetric] = useState<ProductMetric>('PEDIDOS');
+  const [unitMetric, setUnitMetric] = useState<UnitMetric>('PEDIDOS');
   const [selectedRegionKey, setSelectedRegionKey] = useState<string | null>(null);
   const [hoveredRegionKey, setHoveredRegionKey] = useState<string | null>(null);
   const [showAllRegions, setShowAllRegions] = useState(false);
   const [showAllProducts, setShowAllProducts] = useState(false);
+  const [showAllUnits, setShowAllUnits] = useState(false);
 
   useEffect(() => {
     if (!canViewFinancials && productMetric === 'VALOR') {
       setProductMetric('PEDIDOS');
     }
-  }, [canViewFinancials, productMetric]);
+    if (!canViewFinancials && unitMetric === 'VALOR') {
+      setUnitMetric('PEDIDOS');
+    }
+  }, [canViewFinancials, productMetric, unitMetric]);
 
   const filteredOrders = useMemo(() => {
     if (periodFilter === 'TODOS') return orders;
@@ -319,6 +339,78 @@ export const IndicadoresCharts: React.FC<IndicadoresChartsProps> = ({
 
   const maxProductMetric = productStats[0] ? getProductMetricValue(productStats[0]) || 1 : 1;
   const visibleProducts = showAllProducts ? productStats : productStats.slice(0, 6);
+
+  // 3. Pedidos por Unidade
+  const unitStats = useMemo(() => {
+    const unitMap = new Map(units.map(u => [u.id, u]));
+    const aggMap = new Map<
+      string,
+      {
+        unidadeId: string;
+        nome: string;
+        ordersCount: number;
+        totalRevenue: number;
+        deliveryCount: number;
+        pickupCount: number;
+      }
+    >();
+
+    for (const order of filteredOrders) {
+      const preferredId = resolveOrderBillingUnitId(order);
+      const resolvedUnit = unitMap.get(preferredId) || unitMap.get(order.unidadeOrigemId);
+      const unidadeId = resolvedUnit?.id || preferredId || 'sem-unidade';
+      const nome = resolvedUnit?.nome || 'Unidade Não Identificada';
+      const existing = aggMap.get(unidadeId);
+      const rev = Number(order.valorTotal) || 0;
+      const isPickup = order.tipoEntrega === 'RETIRADA';
+
+      if (existing) {
+        existing.ordersCount += 1;
+        existing.totalRevenue += rev;
+        if (isPickup) {
+          existing.pickupCount += 1;
+        } else {
+          existing.deliveryCount += 1;
+        }
+      } else {
+        aggMap.set(unidadeId, {
+          unidadeId,
+          nome,
+          ordersCount: 1,
+          totalRevenue: rev,
+          deliveryCount: isPickup ? 0 : 1,
+          pickupCount: isPickup ? 1 : 0,
+        });
+      }
+    }
+
+    const list = Array.from(aggMap.values());
+    return list.sort((a, b) => {
+      if (unitMetric === 'VALOR') {
+        return (
+          b.totalRevenue - a.totalRevenue ||
+          b.ordersCount - a.ordersCount ||
+          a.nome.localeCompare(b.nome, 'pt-BR')
+        );
+      }
+      return (
+        b.ordersCount - a.ordersCount ||
+        b.totalRevenue - a.totalRevenue ||
+        a.nome.localeCompare(b.nome, 'pt-BR')
+      );
+    });
+  }, [filteredOrders, units, unitMetric]);
+
+  const getUnitMetricValue = (item: (typeof unitStats)[number]): number =>
+    unitMetric === 'VALOR' ? item.totalRevenue : item.ordersCount;
+
+  const totalUnitMetric = useMemo(
+    () => unitStats.reduce((sum, u) => sum + getUnitMetricValue(u), 0),
+    [unitStats, unitMetric]
+  );
+
+  const maxUnitMetric = unitStats[0] ? getUnitMetricValue(unitStats[0]) || 1 : 1;
+  const visibleUnits = showAllUnits ? unitStats : unitStats.slice(0, 6);
 
   const renderPeriodBar = () => (
     <div className="flex items-center justify-between gap-2 bg-white/80 border border-slate-200/80 rounded-xl px-2.5 py-1.5">
@@ -723,6 +815,142 @@ export const IndicadoresCharts: React.FC<IndicadoresChartsProps> = ({
             )}
           </>
         )}
+          </div>
+        )}
+      </div>
+
+      {/* Gráfico 3: Pedidos por Unidade */}
+      <div className="rounded-xl border border-teal-200 bg-gradient-to-br from-teal-50 to-cyan-50/70 shadow-2xs min-w-0 overflow-hidden">
+        <button
+          type="button"
+          onClick={onToggleUnit}
+          aria-expanded={isUnitExpanded}
+          className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left hover:bg-teal-100/50 transition-colors cursor-pointer"
+        >
+          <div className="flex items-center gap-1.5 min-w-0">
+            <Store className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+            <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-slate-700 truncate">
+              Pedidos por Unidade
+            </span>
+          </div>
+          {isUnitExpanded ? (
+            <ChevronUp className="w-4 h-4 text-slate-500 shrink-0" />
+          ) : (
+            <ChevronDown className="w-4 h-4 text-slate-500 shrink-0" />
+          )}
+        </button>
+
+        {isUnitExpanded && (
+          <div className="p-3 border-t border-teal-200/70 space-y-2.5 min-w-0">
+            {renderPeriodBar()}
+
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">
+                Ordenar
+              </span>
+              <div className="inline-flex bg-white/80 p-0.5 rounded-lg border border-teal-200/80 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setUnitMetric('PEDIDOS')}
+                  className={`px-1.5 py-0.5 text-[9px] font-bold rounded-md transition-all cursor-pointer ${
+                    unitMetric === 'PEDIDOS'
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Ped.
+                </button>
+                {canViewFinancials && (
+                  <button
+                    type="button"
+                    onClick={() => setUnitMetric('VALOR')}
+                    className={`px-1.5 py-0.5 text-[9px] font-bold rounded-md transition-all cursor-pointer ${
+                      unitMetric === 'VALOR'
+                        ? 'bg-white text-slate-900 shadow-2xs'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    R$
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {unitStats.length === 0 ? (
+              <div className="py-5 text-center text-[11px] text-slate-400">
+                Nenhum pedido encontrado neste período.
+              </div>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  {visibleUnits.map((item, idx) => {
+                    const metricVal = getUnitMetricValue(item);
+                    const sharePct =
+                      totalUnitMetric > 0 ? (metricVal / totalUnitMetric) * 100 : 0;
+                    const barWidth =
+                      metricVal > 0 ? Math.max(4, (metricVal / maxUnitMetric) * 100) : 0;
+                    const barColor = UNIT_BAR_COLORS[idx % UNIT_BAR_COLORS.length];
+
+                    const primaryLabel =
+                      unitMetric === 'VALOR'
+                        ? `R$ ${formatCurrencyBR(item.totalRevenue)}`
+                        : `${item.ordersCount} ped.`;
+
+                    const secondaryLabel =
+                      unitMetric === 'VALOR'
+                        ? `${item.ordersCount} ped.`
+                        : canViewFinancials
+                        ? `R$ ${formatCurrencyBR(item.totalRevenue)}`
+                        : `${item.deliveryCount} del. • ${item.pickupCount} ret.`;
+
+                    return (
+                      <div key={item.unidadeId} className="space-y-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2 text-[10px]">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="inline-flex items-center justify-center px-1 py-0.2 rounded bg-white/80 border border-teal-200/70 text-teal-800 font-mono font-bold text-[9px] shrink-0">
+                              #{idx + 1}
+                            </span>
+                            <span
+                              className="font-semibold text-slate-800 truncate"
+                              title={item.nome}
+                            >
+                              {item.nome}
+                            </span>
+                          </div>
+                          <span className="font-mono text-slate-600 shrink-0 whitespace-nowrap">
+                            <strong className="text-slate-900">{primaryLabel}</strong> ·{' '}
+                            {secondaryLabel}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 h-2 bg-white/80 border border-teal-200/60 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all duration-300 ${barColor}`}
+                              style={{ width: `${barWidth}%` }}
+                            />
+                          </div>
+                          <span className="text-[9px] font-mono font-semibold text-slate-500 w-7 text-right shrink-0">
+                            {sharePct.toFixed(0)}%
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {unitStats.length > 6 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllUnits(prev => !prev)}
+                    className="w-full py-1 text-[10px] font-bold text-teal-800 hover:text-teal-900 hover:bg-teal-100/70 rounded-lg transition-colors cursor-pointer"
+                  >
+                    {showAllUnits
+                      ? 'Mostrar top 6'
+                      : `Ver todas (${unitStats.length})`}
+                  </button>
+                )}
+              </>
+            )}
           </div>
         )}
       </div>

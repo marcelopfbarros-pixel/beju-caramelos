@@ -157,9 +157,9 @@ export const RightBar: React.FC<RightBarProps> = ({
     focusRoteiroSignal > 0 ? 'ROTEIRIZADOR' : null
   );
   const [expandedIndicator, setExpandedIndicator] = useState<
-    'METAS' | 'KPIS' | 'REGIAO' | 'PRODUTO' | null
+    'METAS' | 'KPIS' | 'REGIAO' | 'PRODUTO' | 'UNIDADE' | null
   >('METAS');
-  const toggleIndicator = (id: 'METAS' | 'KPIS' | 'REGIAO' | 'PRODUTO') =>
+  const toggleIndicator = (id: 'METAS' | 'KPIS' | 'REGIAO' | 'PRODUTO' | 'UNIDADE') =>
     setExpandedIndicator(prev => (prev === id ? null : id));
   const [paymentFilter, setPaymentFilter] = useState<'TODOS' | 'PENDENTE' | 'SINAL'>('TODOS');
   const [editingDepositOrderId, setEditingDepositOrderId] = useState<string | null>(null);
@@ -1038,7 +1038,7 @@ Obrigado por escolher a Beju Caramelos! ✨`
               )}
             </div>
 
-            {/* 3. Gráficos por Região e por Produto */}
+            {/* 3. Gráficos por Região, Produto e Unidade */}
             <IndicadoresCharts
               orders={customerValidOrders}
               products={products}
@@ -1049,6 +1049,8 @@ Obrigado por escolher a Beju Caramelos! ✨`
               onToggleRegion={() => toggleIndicator('REGIAO')}
               isProductExpanded={expandedIndicator === 'PRODUTO'}
               onToggleProduct={() => toggleIndicator('PRODUTO')}
+              isUnitExpanded={expandedIndicator === 'UNIDADE'}
+              onToggleUnit={() => toggleIndicator('UNIDADE')}
             />
           </div>
         )}
@@ -1580,32 +1582,32 @@ Obrigado por escolher a Beju Caramelos! ✨`
 
             {/* Card 2b: Conciliação (Prévia por Unidade) */}
             {canViewFinancials(userRole) && (
-              <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
+              <div className="rounded-xl border-2 border-emerald-500 bg-emerald-50/60 shadow-2xs overflow-hidden">
                 <button
                   type="button"
                   onClick={() =>
                     setExpandedTool(prev => (prev === 'CONCILIACAO' ? null : 'CONCILIACAO'))
                   }
-                  className="w-full px-3.5 py-2.5 flex items-center justify-between text-left hover:bg-slate-50 transition-colors cursor-pointer"
+                  className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100/80 transition-colors cursor-pointer text-left"
                 >
                   <div className="flex items-center gap-2 min-w-0">
-                    <Landmark className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <Landmark className="w-4 h-4 text-teal-600 shrink-0" />
                     <span className="text-xs font-bold text-slate-900 truncate">Conciliação</span>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-teal-50 text-teal-800 border border-teal-200">
                       {conciliationPreview.totalOrders} ped.
                     </span>
                     {expandedTool === 'CONCILIACAO' ? (
-                      <ChevronUp className="w-4 h-4 text-slate-400" />
+                      <ChevronUp className="w-4 h-4 text-slate-500" />
                     ) : (
-                      <ChevronDown className="w-4 h-4 text-slate-400" />
+                      <ChevronDown className="w-4 h-4 text-slate-500" />
                     )}
                   </div>
                 </button>
 
                 {expandedTool === 'CONCILIACAO' && (
-                  <div className="p-3 border-t border-slate-100 space-y-2.5 text-xs">
+                  <div className="p-3 border-t border-[#e2e8f0] space-y-2.5 text-xs">
                     <div className="grid grid-cols-2 gap-1.5">
                       <div className="bg-slate-50 border border-slate-200 rounded-lg p-2">
                         <span className="block text-[9px] font-mono uppercase text-slate-500">
@@ -1792,7 +1794,7 @@ Obrigado por escolher a Beju Caramelos! ✨`
                 className="w-full px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100/80 flex items-center justify-between text-left transition-colors cursor-pointer"
               >
                 <div className="flex items-center gap-2 min-w-0">
-                  <ChefHat className="w-4 h-4 text-brand-600 shrink-0" />
+                  <ChefHat className="w-4 h-4 text-orange-600 shrink-0" />
                   <span className="text-xs font-bold text-slate-900 truncate">
                     Planejamento de Produção
                   </span>
@@ -1894,7 +1896,7 @@ Obrigado por escolher a Beju Caramelos! ✨`
                 className="w-full px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100/80 flex items-center justify-between text-left transition-colors cursor-pointer"
               >
                 <div className="flex items-center gap-2 min-w-0">
-                  <HelpCircle className="w-4 h-4 text-brand-600 shrink-0" />
+                  <HelpCircle className="w-4 h-4 text-purple-600 shrink-0" />
                   <span className="text-xs font-bold text-slate-900 truncate">
                     Tutorial da Tela
                   </span>
@@ -1942,7 +1944,7 @@ Obrigado por escolher a Beju Caramelos! ✨`
                 className="w-full px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100/80 flex items-center justify-between text-left transition-colors cursor-pointer"
               >
                 <div className="flex items-center gap-2 min-w-0">
-                  <ShoppingBag className="w-4 h-4 text-brand-600 shrink-0" />
+                  <ShoppingBag className="w-4 h-4 text-rose-600 shrink-0" />
                   <span className="text-xs font-bold text-slate-900 truncate">
                     Cardápio Clientes
                   </span>

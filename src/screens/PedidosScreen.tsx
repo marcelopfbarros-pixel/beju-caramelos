@@ -58,7 +58,7 @@ import {
   MessageSquare,
   MapPin
 } from 'lucide-react';
-import { ExcelService } from '../services/excelService';
+import { PedidosReportModal } from '../components/PedidosReportModal';
 import { WhatsAppImportModal } from '../components/WhatsAppImportModal';
 import { ParsedWhatsAppOrder } from '../services/whatsappParserService';
 import { PrintReportHeader } from '../components/PrintReportHeader';
@@ -147,6 +147,7 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
   const [statusAuthPin, setStatusAuthPin] = useState('');
   const [statusAuthError, setStatusAuthError] = useState('');
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
+  const [isExportReportModalOpen, setIsExportReportModalOpen] = useState(false);
   const [importBanner, setImportBanner] = useState<{
     source: 'gemini' | 'local_fallback';
     unmatchedItems: string[];
@@ -716,10 +717,11 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
           </div>
 
           <button
-            onClick={() => ExcelService.exportOrders(orders, products, units)}
-            title="Exportar"
-            aria-label="Exportar"
-            className="flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-xs"
+            type="button"
+            onClick={() => setIsExportReportModalOpen(true)}
+            title="Formatar e Exportar Relatório (PDF / XLSX)"
+            aria-label="Formatar e Exportar Relatório"
+            className="flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-xs cursor-pointer"
           >
             <Download className="w-4 h-4 text-slate-500" />
           </button>
@@ -2499,6 +2501,17 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
           </div>
         </div>
       )}
+      <PedidosReportModal
+        isOpen={isExportReportModalOpen}
+        onClose={() => setIsExportReportModalOpen(false)}
+        orders={orders}
+        filteredOrders={filteredOrders}
+        products={products}
+        units={units}
+        activeUnitId={activeUnitId}
+        statusFilter={statusFilter}
+        searchTerm={searchTerm}
+      />
     </div>
   );
 };

@@ -4,6 +4,7 @@ import { Sidebar, ScreenId } from './components/Sidebar';
 import { LandingScreen } from './components/LandingScreen';
 import { TutorialOverlay } from './components/TutorialOverlay';
 import { ButterflyFlight } from './components/ButterflyFlight';
+import { PrincessWalk } from './components/PrincessWalk';
 import { canAccessScreen, canViewFinancials, getDefaultScreenForRole } from './utils/permissions';
 import { isOrderPendingFinancialAction } from './utils/financialReconciliation';
 import {
@@ -63,20 +64,31 @@ export const App: React.FC = () => {
   const [units, setUnits] = useState<StoreUnit[]>(() => AppStorage.getUnits());
   const [categories, setCategories] = useState<Category[]>(() => AppStorage.getCategories());
   const [products, setProducts] = useState<Product[]>(() => AppStorage.getProducts());
-  const [orders, setOrders] = useState<Order[]>(() => AppStorage.getOrders());
+  const [orders, setOrders] = useState<Order[]>(() =>
+    SupabaseService.isConfigured() ? [] : AppStorage.getOrders()
+  );
   const [stock, setStock] = useState<StockItem[]>(() => AppStorage.getStock());
-  const [stockMovements, setStockMovements] = useState<StockMovement[]>(() => AppStorage.getStockMovements());
-  const [productionOrders, setProductionOrders] = useState<ProductionOrder[]>(() => AppStorage.getProductionOrders());
-  const [customers, setCustomers] = useState<Customer[]>(() => AppStorage.getCustomers());
-  const [users, setUsers] = useState<UserProfile[]>(() => AppStorage.getUsers());
+  const [stockMovements, setStockMovements] = useState<StockMovement[]>(() =>
+    SupabaseService.isConfigured() ? [] : AppStorage.getStockMovements()
+  );
+  const [productionOrders, setProductionOrders] = useState<ProductionOrder[]>(() =>
+    SupabaseService.isConfigured() ? [] : AppStorage.getProductionOrders()
+  );
+  const [customers, setCustomers] = useState<Customer[]>(() =>
+    SupabaseService.isConfigured() ? [] : AppStorage.getCustomers()
+  );
+  const [users, setUsers] = useState<UserProfile[]>(() =>
+    SupabaseService.isConfigured() ? [] : AppStorage.getUsers()
+  );
   const [financialChannels, setFinancialChannels] = useState<FinancialPaymentChannel[]>(() =>
     AppStorage.getFinancialPaymentChannels()
   );
   const [financialRecords, setFinancialRecords] = useState<OrderFinancialRecord[]>(() =>
-    AppStorage.getOrderFinancialRecords()
+    SupabaseService.isConfigured() ? [] : AppStorage.getOrderFinancialRecords()
   );
-  const [userProfile, setUserProfile] = useState<UserProfile>(() => AppStorage.getUserProfile());
+  const [userProfile, setUserProfile] = useState<UserProfile>(() => AppStorage.getGuestUserProfile());
   const [revenueGoals, setRevenueGoals] = useState<MonthlyRevenueGoals>(() => {
+    if (SupabaseService.isConfigured()) return {};
     try {
       const saved = localStorage.getItem('juju_revenue_goals');
       return saved ? JSON.parse(saved) : {};
@@ -87,12 +99,13 @@ export const App: React.FC = () => {
 
   const handleSaveRevenueGoals = useCallback((goals: MonthlyRevenueGoals) => {
     setRevenueGoals(goals);
-    try {
-      localStorage.setItem('juju_revenue_goals', JSON.stringify(goals));
-    } catch {
-      // ignore storage quota errors
-    }
-    if (SupabaseService.isConfigured()) {
+    if (!SupabaseService.isConfigured()) {
+      try {
+        localStorage.setItem('juju_revenue_goals', JSON.stringify(goals));
+      } catch {
+        // ignore storage quota errors
+      }
+    } else {
       void SupabaseService.saveAppConfig('revenue_goals', goals).catch(err =>
         console.warn('Falha ao salvar metas de faturamento na nuvem:', err)
       );
@@ -218,12 +231,44 @@ export const App: React.FC = () => {
   const [isOperatorAuthenticated, setIsOperatorAuthenticated] = useState<boolean>(false);
   const [publicReservedStock, setPublicReservedStock] = useState<Map<string, number>>(() => new Map());
   const [showJulianaButterfly, setShowJulianaButterfly] = useState<boolean>(false);
+  const [showMarinaPrincess, setShowMarinaPrincess] = useState<boolean>(false);
+  const marinaGreetingSessionRef = useRef<string | null>(null);
+
+  const handleCompleteMarinaPrincess = useCallback(() => {
+    setShowMarinaPrincess(false);
+  }, []);
+
+  const isMarinaBarrosName = useCallback((nome?: string): boolean => {
+    if (!nome) return false;
+    const normalized = nome
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+    return normalized.includes('marina') && normalized.includes('barros');
+  }, []);
 
   const triggerButterflyIfJuliana = React.useCallback((nome?: string) => {
     if (nome && nome.toLowerCase().includes('juliana')) {
       setShowJulianaButterfly(true);
     }
   }, []);
+
+  const triggerPrincessIfMarina = useCallback(
+    (nome?: string, email?: string) => {
+      if (!isMarinaBarrosName(nome)) {
+        if (email) {
+          marinaGreetingSessionRef.current = null;
+        }
+        return;
+      }
+      const sessionKey = (email || nome || '').trim().toLowerCase();
+      if (!sessionKey || marinaGreetingSessionRef.current === sessionKey) return;
+      marinaGreetingSessionRef.current = sessionKey;
+      setShowMarinaPrincess(true);
+    },
+    [isMarinaBarrosName]
+  );
 
   // Load only non-PII public catalog + reserved stock + public menu configs
   const loadPublicCatalogFromSupabase = useCallback(async () => {
@@ -373,11 +418,6 @@ export const App: React.FC = () => {
 
       if (dbGoals && typeof dbGoals === 'object') {
         setRevenueGoals(dbGoals);
-        try {
-          localStorage.setItem('juju_revenue_goals', JSON.stringify(dbGoals));
-        } catch {
-          // ignore storage quota errors
-        }
       }
       if (dbIntro) {
         const normalizedIntro: CardapioIntroConfig = {
@@ -421,24 +461,40 @@ export const App: React.FC = () => {
 
   // Initial Load & Auth check
   useEffect(() => {
+    const mergeSessionUserProfile = (prev: UserProfile, sessionUser: any): UserProfile => {
+      const nextEmail = (sessionUser.email || prev.email || '').trim();
+      const sameUser =
+        Boolean(prev.email) &&
+        Boolean(nextEmail) &&
+        prev.email.toLowerCase() === nextEmail.toLowerCase();
+      const metaName =
+        sessionUser.user_metadata?.full_name || sessionUser.user_metadata?.name || '';
+      const metaAvatar =
+        sessionUser.user_metadata?.avatar_url || sessionUser.user_metadata?.picture || '/logo.jpg';
+      return {
+        ...prev,
+        email: nextEmail,
+        nome: sameUser && prev.nome && prev.nome !== 'Visitante' ? prev.nome : metaName,
+        avatarUrl: sameUser && prev.avatarUrl ? prev.avatarUrl : metaAvatar,
+        autenticadoGoogle: sessionUser.app_metadata?.provider === 'google'
+      };
+    };
+
     const init = async () => {
       if (SupabaseService.isConfigured()) {
+        AppStorage.clearOperationalPii();
         try {
           const user = await SupabaseService.getCurrentUser();
           setSupabaseUser(user);
           if (user) {
-            setUserProfile(prev => ({
-              ...prev,
-              email: user.email || prev.email,
-              nome: prev.nome || user.user_metadata?.full_name || user.user_metadata?.name || '',
-              avatarUrl: prev.avatarUrl || user.user_metadata?.avatar_url || user.user_metadata?.picture || '',
-              autenticadoGoogle: user.app_metadata?.provider === 'google'
-            }));
+            setUserProfile(prev => mergeSessionUserProfile(prev, user));
           }
           await loadDataFromSupabase();
         } catch (e) {
           console.error(e);
         }
+      } else {
+        AppStorage.clearUserProfile();
       }
     };
     init();
@@ -448,13 +504,7 @@ export const App: React.FC = () => {
       const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
         setSupabaseUser(session?.user || null);
         if (session?.user) {
-          setUserProfile(prev => ({
-            ...prev,
-            email: session.user.email || prev.email,
-            nome: prev.nome || session.user.user_metadata?.full_name || session.user.user_metadata?.name || '',
-            avatarUrl: prev.avatarUrl || session.user.user_metadata?.avatar_url || session.user.user_metadata?.picture || '',
-            autenticadoGoogle: session.user.app_metadata?.provider === 'google'
-          }));
+          setUserProfile(prev => mergeSessionUserProfile(prev, session.user));
         }
       });
 
@@ -494,17 +544,31 @@ export const App: React.FC = () => {
     };
   }, [supabaseUser, isOperatorAuthenticated]);
 
-  // Persist state updates to LocalStorage as resilient cache
+  // Persist state updates to LocalStorage (non-PII catalog always cached; operational PII only in offline mode)
   useEffect(() => { AppStorage.saveUnits(units); }, [units]);
   useEffect(() => { AppStorage.saveCategories(categories); }, [categories]);
   useEffect(() => { AppStorage.saveProducts(products); }, [products]);
-  useEffect(() => { AppStorage.saveOrders(orders); }, [orders]);
+  useEffect(() => {
+    if (!SupabaseService.isConfigured()) AppStorage.saveOrders(orders);
+  }, [orders]);
   useEffect(() => { AppStorage.saveStock(stock); }, [stock]);
-  useEffect(() => { AppStorage.saveProductionOrders(productionOrders); }, [productionOrders]);
-  useEffect(() => { AppStorage.saveCustomers(customers); }, [customers]);
+  useEffect(() => {
+    if (!SupabaseService.isConfigured()) AppStorage.saveProductionOrders(productionOrders);
+  }, [productionOrders]);
+  useEffect(() => {
+    if (!SupabaseService.isConfigured()) AppStorage.saveCustomers(customers);
+  }, [customers]);
   useEffect(() => { AppStorage.saveFinancialPaymentChannels(financialChannels); }, [financialChannels]);
-  useEffect(() => { AppStorage.saveOrderFinancialRecords(financialRecords); }, [financialRecords]);
-  useEffect(() => { AppStorage.saveUserProfile(userProfile); }, [userProfile]);
+  useEffect(() => {
+    if (!SupabaseService.isConfigured()) AppStorage.saveOrderFinancialRecords(financialRecords);
+  }, [financialRecords]);
+  useEffect(() => {
+    if (!SupabaseService.isConfigured() && isOperatorAuthenticated && userProfile.email) {
+      AppStorage.saveUserProfile(userProfile);
+    } else {
+      AppStorage.clearUserProfile();
+    }
+  }, [userProfile, supabaseUser, isOperatorAuthenticated]);
   useEffect(() => { AppStorage.setActiveUnitId(activeUnitId); }, [activeUnitId]);
 
   // Suppress browser default page title ("JuJu Delivery - Gestão de Pedidos") on all print outputs
@@ -569,7 +633,9 @@ export const App: React.FC = () => {
     if (movements.length > 0) {
       setStockMovements(prev => {
         const next = [...movements, ...prev];
-        AppStorage.saveStockMovements(next);
+        if (!SupabaseService.isConfigured()) {
+          AppStorage.saveStockMovements(next);
+        }
         return next;
       });
     }
@@ -956,7 +1022,9 @@ export const App: React.FC = () => {
 
   const handleSaveUserProfile = async (profile: UserProfile) => {
     setUserProfile(profile);
-    AppStorage.saveUserProfile(profile);
+    if (!SupabaseService.isConfigured()) {
+      AppStorage.saveUserProfile(profile);
+    }
     await handleSaveUser(profile);
   };
 
@@ -968,7 +1036,9 @@ export const App: React.FC = () => {
       const next = exists
         ? prev.map(u => ((user.id && u.id === user.id) || u.email.toLowerCase() === normalizedEmail ? user : u))
         : [user, ...prev];
-      AppStorage.saveUsers(next);
+      if (!SupabaseService.isConfigured()) {
+        AppStorage.saveUsers(next);
+      }
       return next;
     });
 
@@ -977,7 +1047,9 @@ export const App: React.FC = () => {
         const saved = await SupabaseService.saveUser(user);
         setUsers(prev => {
           const next = prev.map(u => ((u.id === user.id || u.email.toLowerCase() === normalizedEmail) ? saved : u));
-          AppStorage.saveUsers(next);
+          if (!SupabaseService.isConfigured()) {
+            AppStorage.saveUsers(next);
+          }
           return next;
         });
       } catch (err) {
@@ -989,7 +1061,9 @@ export const App: React.FC = () => {
   const handleToggleUserActive = async (userIdOrEmail: string, ativo: boolean) => {
     setUsers(prev => {
       const next = prev.map(u => (u.id === userIdOrEmail || u.email === userIdOrEmail ? { ...u, ativo } : u));
-      AppStorage.saveUsers(next);
+      if (!SupabaseService.isConfigured()) {
+        AppStorage.saveUsers(next);
+      }
       return next;
     });
 
@@ -1252,6 +1326,21 @@ export const App: React.FC = () => {
         unidadesPermitidas: matchedUserRecord.unidadesPermitidas
       }
     : userProfile;
+
+  useEffect(() => {
+    if (!supabaseUser && !isOperatorAuthenticated) {
+      marinaGreetingSessionRef.current = null;
+      setShowMarinaPrincess(false);
+      return;
+    }
+    triggerPrincessIfMarina(effectiveUserProfile.nome, effectiveUserProfile.email);
+  }, [
+    supabaseUser,
+    isOperatorAuthenticated,
+    effectiveUserProfile.nome,
+    effectiveUserProfile.email,
+    triggerPrincessIfMarina
+  ]);
 
   const allowedUnits = React.useMemo(() => {
     if (
@@ -1548,17 +1637,22 @@ export const App: React.FC = () => {
     }
     setSupabaseUser(null);
     setIsOperatorAuthenticated(false);
-    const loggedOutProfile: UserProfile = {
-      ...userProfile,
-      id: 'guest',
-      nome: 'Visitante',
-      email: '',
-      avatarUrl: '/logo.jpg',
-      autenticadoGoogle: false,
-      ativo: true
-    };
+    const loggedOutProfile = AppStorage.getGuestUserProfile();
     setUserProfile(loggedOutProfile);
-    AppStorage.saveUserProfile(loggedOutProfile);
+    if (SupabaseService.isConfigured()) {
+      AppStorage.clearOperationalPii();
+      setOrders([]);
+      setCustomers([]);
+      setUsers([]);
+      setFinancialRecords([]);
+      setProductionOrders([]);
+      setStockMovements([]);
+      setSelectedOrder(undefined);
+      setSelectedDeliveryIds([]);
+      setRevenueGoals({});
+    } else {
+      AppStorage.clearUserProfile();
+    }
   };
 
   if (effectiveUserProfile.ativo === false) {
@@ -1647,9 +1741,12 @@ export const App: React.FC = () => {
         isSupabaseOnline={isSupabaseOnline}
         onUpdateUserProfile={(profile) => {
           setUserProfile(profile);
-          AppStorage.saveUserProfile(profile);
+          if (!SupabaseService.isConfigured()) {
+            AppStorage.saveUserProfile(profile);
+          }
           setIsOperatorAuthenticated(true);
           triggerButterflyIfJuliana(profile.nome);
+          triggerPrincessIfMarina(profile.nome, profile.email);
         }}
         onRegisterUser={handleSaveUser}
         onSupabaseAuthChange={handleRefreshAuth}
@@ -1678,6 +1775,7 @@ export const App: React.FC = () => {
           setUserProfile(profile);
           setIsOperatorAuthenticated(true);
           triggerButterflyIfJuliana(profile.nome);
+          triggerPrincessIfMarina(profile.nome, profile.email);
         }}
         onRegisterUser={handleSaveUser}
         onRefreshAuth={handleRefreshAuth}
@@ -1781,7 +1879,9 @@ export const App: React.FC = () => {
                 if (movements.length === 0) return;
                 setStockMovements(prev => {
                   const next = [...movements, ...prev];
-                  AppStorage.saveStockMovements(next);
+                  if (!SupabaseService.isConfigured()) {
+                    AppStorage.saveStockMovements(next);
+                  }
                   return next;
                 });
                 if (isSupabaseOnline) {
@@ -2106,6 +2206,11 @@ export const App: React.FC = () => {
       <ButterflyFlight
         active={showJulianaButterfly}
         onComplete={() => setShowJulianaButterfly(false)}
+      />
+
+      <PrincessWalk
+        active={showMarinaPrincess}
+        onComplete={handleCompleteMarinaPrincess}
       />
     </div>
   );

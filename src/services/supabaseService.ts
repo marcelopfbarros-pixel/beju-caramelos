@@ -1663,51 +1663,38 @@ export class SupabaseService {
       }
     }
 
-    // 3. Fallback Postgres server-side bcrypt RPC when operator-auth is not yet deployed
-    const { data: rows, error: rpcErr } = await supabase!.rpc('autenticar_operador', {
-      p_email: normalizedEmail,
-      p_pin: password
-    });
-
-    if (rpcErr || !Array.isArray(rows) || rows.length === 0) {
-      throw new Error('E-mail ou senha numérica de 8 dígitos incorretos.');
-    }
-
-    const row = rows[0] as any;
-    const profile: UserProfile = {
-      id: row.id,
-      email: row.email,
-      nome: row.nome,
-      avatarUrl: row.avatar_url || '/logo.jpg',
-      role: (row.role || 'ATENDIMENTO') as UserProfile['role'],
-      unidadePadraoId: row.unidade_padrao_id || '',
-      autenticadoGoogle: false,
-      ativo: row.ativo !== false,
-      unidadesPermitidas: Array.isArray(row.unidades_permitidas) ? row.unidades_permitidas : []
-    };
-
-    let signUpUser: any = null;
-    try {
-      const { data: signUpData } = await supabase!.auth.signUp({
-        email: normalizedEmail,
-        password,
-        options: {
-          data: { full_name: profile.nome }
-        }
-      });
-      signUpUser = signUpData?.session?.user || null;
-    } catch {
-      // Ignore if email confirmation is required or Auth user already exists
-    }
-
-    return { authUser: signUpUser, profile };
+    throw new Error('E-mail ou senha numérica de 8 dígitos incorretos.');
   }
 
   static async verifyCurrentOperatorPin(email: string, pin: string): Promise<boolean> {
     if (!this.isConfigured()) return false;
+    const trimmedPin = pin.trim();
+    try {
+      const { data: fnData, error: fnErr } = await supabase!.functions.invoke('operator-auth', {
+        body: { action: 'verify_pin', pin: trimmedPin }
+      });
+      if (!fnErr && typeof fnData?.valid === 'boolean') {
+        return Boolean(fnData.valid);
+      }
+      if (fnErr) {
+        const msg = String((fnErr as any)?.message || '');
+        const isUnreachable =
+          msg.includes('Failed to send') ||
+          msg.includes('FunctionsFetchError') ||
+          msg.includes('404');
+        if (!isUnreachable) {
+          return false;
+        }
+      } else {
+        return false;
+      }
+    } catch {
+      // Fall back to authenticated RPC only if operator-auth is unreachable
+    }
+
     const { data, error } = await supabase!.rpc('verificar_pin_operador', {
       p_email: email.trim().toLowerCase(),
-      p_pin: pin.trim()
+      p_pin: trimmedPin
     });
     if (error) {
       console.error('Erro ao verificar PIN do operador:', error);

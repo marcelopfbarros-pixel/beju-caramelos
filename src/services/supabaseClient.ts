@@ -9,12 +9,24 @@ export const isSupabaseConfigured = Boolean(
   !supabaseUrl.includes('seu-projeto')
 );
 
+if (typeof window !== 'undefined' && window.localStorage) {
+  try {
+    Object.keys(window.localStorage).forEach(key => {
+      if (/^sb-.*-auth-token/.test(key)) {
+        window.localStorage.removeItem(key);
+      }
+    });
+  } catch {
+    // ignore storage access errors
+  }
+}
+
 export const supabase = isSupabaseConfigured
   ? createClient(supabaseUrl, supabaseAnonKey, {
       auth: {
-        persistSession: true,
+        persistSession: false,
         autoRefreshToken: true,
-        detectSessionInUrl: true,
+        detectSessionInUrl: false,
       },
       realtime: {
         params: {

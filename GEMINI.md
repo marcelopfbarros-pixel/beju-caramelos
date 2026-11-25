@@ -18,6 +18,7 @@
 - **Sidebar esquerda (`Sidebar.tsx`)**: Mantenha o botão de contrair/expandir à **esquerda** do texto `"MENU"`. No mobile, o item `Painel` fica imediatamente antes de `Configurações` (último item).
 - **Badge de `Pedidos` na `Sidebar.tsx`**: O contador exibido no item `Pedidos` deve contabilizar exclusivamente pedidos com `status === 'CONFIRMADO'` (`confirmedOrdersCount`).
 - **Painel / Ferramentas (`RightBar.tsx`)**: Em `"Resumo do Pedido"`, exiba na mesma linha do título o badge pílula selecionável com o código do pedido (`numeroPedido`). Não exiba badge `"ViaCEP"` em `"Buscador de CEP"`.
+- **Cards de `FERRAMENTAS` na `RightBar.tsx`**: Todos os cards da seção `FERRAMENTAS` devem compartilhar o mesmo formato e design (`rounded-xl border-2 border-emerald-500 bg-emerald-50/60`, cabeçalho `bg-emerald-50 hover:bg-emerald-100/80`) e utilizar **cores distintas nos ícones** entre si. O card **`Conciliação`** deve espelhar os mesmos dados do card **`Prévia por Unidade`** do Relatório de Faturamento.
 
 ## 3. Modais e Empilhamento (`z-index`)
 - **Fora de contextos `z-index` restritos**: Nunca renderize modais `fixed` dentro de `<header className="... z-20">` (como `<AuthModal />` em `Header.tsx`), pois ficam sob a sidebar (`z-40`). Renderize modais como irmãos fora do `<header>` via Fragment (`<>...</>`) com overlay acima de `z-40` (ex.: `z-[70]`).
@@ -54,6 +55,13 @@
 - **Padrão de Novo Pedido (`PedidosScreen.tsx`)**: O botão `+ Pedido` inicializa o formulário com `status: 'CONFIRMADO'`, janela de entrega padrão de `+1h` (`dataHoraEntregaFim`), `turnoEntrega` inferido do horário e `statusPagamento: 'PENDENTE'`.
 - **Padrões de `PedidosScreen.tsx` e `ProducaoScreen.tsx`**: Em Pedidos, o cabeçalho de entrega/retirada deve se chamar `"Data Combinada"`. Em Produção, o filtro de data inicia em `'PROXIMOS_7_DIAS'`, a coluna de distribuição chama-se `"Destino"` com cores de fundo distintas por loja (`STORE_BADGE_PALETTE`), e o `Estágio Cozinha` inclui `'CANCELADA'` (`Cancelada`), excluída das contagens pendentes de produção.
 - **Exportação Excel formatada com fórmulas (`ProgramacaoProducaoModal.tsx`)**: Relatórios Excel que espelham telas visuais devem utilizar `xlsx-js-style` (reproduzindo cores, mesclagens e bordas da tela) e gravar fórmulas nativas `SUM(...)` em todas as células de totalização — nunca valores numéricos fixos.
+- **Padrões da tela `FinanceiroScreen.tsx`**:
+  - O campo **Data do Extrato** permanece desabilitado por padrão e só pode ser habilitado/preenchido quando **Valor do Extrato > 0**.
+  - O campo **Forma Pagamento** do extrato deve exibir fonte colorida conforme o tipo de pagamento.
+  - Na coluna **Valor Pedido**, o rótulo do valor pago deve ser **`Pago:`**.
+  - Na faixa de agrupamento, exibir os totais do **Valor do Pedido** e do **Valor do Extrato**.
+  - No grupo de filtros (`HybridFilterSort`), manter dois filtros de data independentes (**Data do Pedido** e **Data do Extrato**), ambos iniciando em `'TODOS'` (`Todo o Período`).
+- **Relatório de Faturamento (`RelatorioFaturamentoModal.tsx`)**: Incluir a **Forma de Pagamento do Pedido** dentro da coluna **Número Pedido** entre parênteses, manter agrupamento por **Unidade** e subagrupamento por **Conciliado / Não Conciliado**, e incluir coluna **Nota Fiscal** (`Emitida` / `A emitir`).
 
 ## 9. Dashboard Permanente de Governança do Projeto
 - **Artefato permanente**: Mantenha o dashboard gráfico interativo em `C:\Users\marce\.gemini\antigravity\brain\3b048a66-e8c0-42b5-b3d8-b093d9d7afd5\project_health_dashboard.html` como painel consolidado do projeto.

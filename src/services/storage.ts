@@ -136,99 +136,14 @@ const INITIAL_PRODUCTS: Product[] = [
   }
 ];
 
-const INITIAL_ORDERS: Order[] = [
-  {
-    id: 'ord-101',
-    numeroPedido: '#PED-2026-0042',
-    status: 'CONFIRMADO',
-    dataPedido: '2026-11-14T10:15:00',
-    dataHoraEntrega: '2026-11-14T17:00:00',
-    tipoEntrega: 'DELIVERY',
-    unidadeOrigemId: 'u-loja1',
-    clienteNome: 'Mariana Guimarães',
-    clienteTelefone: '+55 11 98765-4321',
-    clienteEndereco: 'Rua Bela Cintra, 890, Apto 51 - Consolação',
-    enderecoEntrega: 'Rua Bela Cintra, 890, Apto 51 - Consolação',
-    valorSubtotal: 193.00,
-    taxaEntrega: 15.00,
-    desconto: 0.00,
-    valorTotal: 208.00,
-    formaPagamento: 'pix',
-    instrucoesPagamento: 'Chave PIX (E-mail): jardins@jujudelivery.com.br',
-    observacoes: 'Tocar o interfone e deixar com a portaria.',
-    itens: [
-      { id: 'item-1', produtoId: 'p-1', quantidade: 1, precoUnitario: 145.00, subtotal: 145.00, observacoes: 'Vela decorativa inclusa' },
-      { id: 'item-2', produtoId: 'p-2', quantidade: 1, precoUnitario: 48.00, subtotal: 48.00 }
-    ]
-  },
-  {
-    id: 'ord-102',
-    numeroPedido: '#PED-2026-0043',
-    status: 'PENDENTE',
-    dataPedido: '2026-11-14T11:30:00',
-    dataHoraEntrega: '2026-11-14T18:30:00',
-    tipoEntrega: 'RETIRADA',
-    unidadeOrigemId: 'u-loja2',
-    unidadeRetiradaId: 'u-loja2',
-    clienteNome: 'Rodrigo Antunes',
-    clienteTelefone: '+55 11 99123-8877',
-    clienteEndereco: 'Av. Ibirapuera, 1400',
-    valorSubtotal: 135.50,
-    taxaEntrega: 0.00,
-    desconto: 5.50,
-    valorTotal: 130.00,
-    formaPagamento: 'credito',
-    instrucoesPagamento: 'Pagamento presencial no balcão no ato da retirada',
-    observacoes: 'Cliente retirará pessoalmente às 18h30.',
-    itens: [
-      { id: 'item-3', produtoId: 'p-3', quantidade: 2, precoUnitario: 24.00, subtotal: 48.00 },
-      { id: 'item-4', produtoId: 'p-5', quantidade: 1, precoUnitario: 89.00, subtotal: 89.00 }
-    ]
-  },
-  {
-    id: 'ord-103',
-    numeroPedido: '#PED-2026-0044',
-    status: 'EM_ROTA',
-    dataPedido: '2026-11-14T09:00:00',
-    dataHoraEntrega: '2026-11-14T15:45:00',
-    tipoEntrega: 'DELIVERY',
-    unidadeOrigemId: 'u-loja1',
-    clienteNome: 'Carla Vasconcellos',
-    clienteTelefone: '+55 11 97654-1122',
-    enderecoEntrega: 'Alameda Lorena, 1420 - Cerqueira César',
-    valorSubtotal: 168.00,
-    taxaEntrega: 12.00,
-    desconto: 0.00,
-    valorTotal: 180.00,
-    formaPagamento: 'dinheiro',
-    trocoPara: 200.00,
-    instrucoesPagamento: 'Levar R$ 20,00 de troco para nota de R$ 200,00',
-    observacoes: 'Entregador João a caminho.',
-    itens: [
-      { id: 'item-5', produtoId: 'p-6', quantidade: 1, precoUnitario: 120.00, subtotal: 120.00 },
-      { id: 'item-6', produtoId: 'p-2', quantidade: 1, precoUnitario: 48.00, subtotal: 48.00 }
-    ]
-  }
-];
-
-const INITIAL_STOCK: StockItem[] = [
-  { id: 'st-1', unidadeId: 'u-central', produtoId: 'p-1', quantidadeAtual: 18, quantidadeMinima: 10, dataAtualizacao: '2026-11-14T08:00:00' },
-  { id: 'st-2', unidadeId: 'u-loja1', produtoId: 'p-1', quantidadeAtual: 4, quantidadeMinima: 3, dataAtualizacao: '2026-11-14T08:00:00' },
-  { id: 'st-3', unidadeId: 'u-loja2', produtoId: 'p-1', quantidadeAtual: 2, quantidadeMinima: 3, dataAtualizacao: '2026-11-14T08:00:00' },
-  { id: 'st-4', unidadeId: 'u-central', produtoId: 'p-2', quantidadeAtual: 50, quantidadeMinima: 20, dataAtualizacao: '2026-11-14T08:00:00' },
-  { id: 'st-5', unidadeId: 'u-loja1', produtoId: 'p-2', quantidadeAtual: 8, quantidadeMinima: 5, dataAtualizacao: '2026-11-14T08:00:00' },
-  { id: 'st-6', unidadeId: 'u-loja2', produtoId: 'p-2', quantidadeAtual: 3, quantidadeMinima: 5, dataAtualizacao: '2026-11-14T08:00:00' },
-  { id: 'st-7', unidadeId: 'u-central', produtoId: 'p-5', quantidadeAtual: 25, quantidadeMinima: 10, dataAtualizacao: '2026-11-14T08:00:00' },
-  { id: 'st-8', unidadeId: 'u-loja1', produtoId: 'p-5', quantidadeAtual: 1, quantidadeMinima: 4, dataAtualizacao: '2026-11-14T08:00:00' }
-];
-
-const INITIAL_USER: UserProfile = {
-  email: 'marcelo.pf.barros@gmail.com',
-  nome: 'Marcelo Barros',
-  avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
-  role: 'ADMIN',
+export const GUEST_USER_PROFILE: UserProfile = {
+  id: 'guest',
+  email: '',
+  nome: 'Visitante',
+  avatarUrl: '/logo.jpg',
+  role: 'ATENDIMENTO',
   unidadePadraoId: 'u-central',
-  autenticadoGoogle: true,
+  autenticadoGoogle: false,
   ativo: true
 };
 
@@ -290,13 +205,45 @@ export class AppStorage {
     this.save('stock', stock);
   }
 
+  static getGuestUserProfile(): UserProfile {
+    return { ...GUEST_USER_PROFILE };
+  }
+
   static getUserProfile(): UserProfile {
-    return this.load('user', INITIAL_USER);
+    return this.load('user', GUEST_USER_PROFILE);
   }
 
   static saveUserProfile(user: UserProfile): void {
     const { senha: _omitPin, ...safeUser } = user;
     this.save('user', safeUser);
+  }
+
+  static clearUserProfile(): void {
+    try {
+      localStorage.removeItem('juju_user');
+    } catch {
+      // ignore storage errors
+    }
+  }
+
+  static clearOperationalPii(): void {
+    const keys = [
+      'juju_orders',
+      'juju_customers',
+      'juju_users',
+      'juju_financial_records',
+      'juju_production_orders',
+      'juju_stock_movements',
+      'juju_user',
+      'juju_revenue_goals',
+    ];
+    for (const key of keys) {
+      try {
+        localStorage.removeItem(key);
+      } catch {
+        // ignore storage errors
+      }
+    }
   }
 
   static getActiveUnitId(): string {
@@ -324,14 +271,7 @@ export class AppStorage {
   }
 
   static getUsers(): UserProfile[] {
-    return this.load('users', [
-      {
-        ...INITIAL_USER,
-        id: 'usr-1',
-        ativo: true,
-        unidadesPermitidas: ['u-central', 'u-loja1', 'u-loja2']
-      }
-    ]);
+    return this.load('users', []);
   }
 
   static saveUsers(users: UserProfile[]): void {

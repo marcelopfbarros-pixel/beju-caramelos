@@ -46,6 +46,7 @@ Never apply strict `authenticated`-only RLS lockdown before operators can receiv
 1. **Passo A — Deploy Edge Functions**: Confirm `operator-auth` (`verify_jwt: false`) and `parse-whatsapp-order` (`verify_jwt: true`) are `ACTIVE`.
 2. **Passo B — Verify Live JWT Login**: Sign in on production (`https://juju-delivery-app.netlify.app`), confirm **"Sessão BD Ativa"** in the profile modal, and verify `auth.users` + `private.operador_credenciais.auth_user_id` linkage via `execute_sql`.
 3. **Passo C — Execute Final RLS Lockdown SQL**: Run the migration dropping legacy permissive policies and plaintext columns only after Passos A & B succeed, then audit `pg_policies`, `get_advisors(type: "security")`, and `information_schema.columns`.
+4. **RLS on `private.operador_credenciais`**: Keep `ENABLE ROW LEVEL SECURITY` enabled on `private.operador_credenciais` **with no policies** for `anon` or `authenticated` (blocking direct access while `SECURITY DEFINER` functions owned by `postgres` and `service_role` continue bypassing RLS). This prevents `rls_disabled` alerts in Supabase Security Advisor (`rls_enabled_no_policy` at `INFO` level is expected).
 
 ## 4. Syncing Postgres `CHECK` Constraints Before Adding Frontend Status/Enum Values
 
