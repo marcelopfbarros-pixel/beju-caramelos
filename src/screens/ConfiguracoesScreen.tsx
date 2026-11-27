@@ -461,7 +461,9 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
     if (!file) return;
 
     const confirmed = window.confirm(
-      `Deseja restaurar o backup "${file.name}"?\n\nOs dados carregados na sessão serão atualizados com o conteúdo do arquivo.`
+      isSupabaseOnline
+        ? `Deseja restaurar o backup "${file.name}"?\n\nOs dados operacionais serão carregados na sessão atual e as configurações/taxas de bairro serão sincronizadas com o banco. Para restauração completa no PostgreSQL em produção, utilize pg_restore (docs/BACKUP_POLICY.md).`
+        : `Deseja restaurar o backup "${file.name}"?\n\nOs dados carregados na sessão serão atualizados com o conteúdo do arquivo.`
     );
     if (!confirmed) {
       if (backupFileRef.current) backupFileRef.current.value = '';
@@ -475,7 +477,9 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
         : await ExcelService.importFullBackup(file);
       onRestoreFullBackup(data);
       alert(
-        `Backup completo em ${isJson ? 'JSON (.json)' : 'Excel (.xlsx)'} restaurado com sucesso no sistema!`
+        isSupabaseOnline
+          ? `Backup em ${isJson ? 'JSON (.json)' : 'Excel (.xlsx)'} carregado na sessão (e configurações/taxas de entrega sincronizadas com o Supabase)!`
+          : `Backup completo em ${isJson ? 'JSON (.json)' : 'Excel (.xlsx)'} restaurado com sucesso na sessão local!`
       );
     } catch (err) {
       console.error(err);
@@ -942,6 +946,7 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
                               <button
                                 onClick={() => onToggleUserActive(u.id || u.email, !isActive)}
                                 title={isActive ? 'Desativar usuário' : 'Ativar usuário'}
+                                aria-label={isActive ? 'Desativar usuário' : 'Ativar usuário'}
                                 className={`p-1.5 rounded-lg border transition-colors ${
                                   isActive
                                     ? 'border-rose-200 text-rose-600 hover:bg-rose-50'

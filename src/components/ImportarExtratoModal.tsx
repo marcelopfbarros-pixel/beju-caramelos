@@ -8,7 +8,6 @@ import {
   ManualColumnMapping,
   ParsedStatementRow,
   StatementParseResult,
-  computeStatementFingerprint,
   parseStatementFile,
 } from '../utils/statementParser';
 import { formatCurrencyBR } from './CurrencyInput';
@@ -139,10 +138,7 @@ export const ImportarExtratoModal: React.FC<ImportarExtratoModalProps> = ({
     for (const row of parseResult.rows) {
       const effCanalName = row.canalOverride || selectedChannelName;
       const resolvedCh = channelByNameLower.get(effCanalName.trim().toLowerCase());
-      const fp =
-        row.canalOverride && row.canalOverride !== selectedChannelName
-          ? computeStatementFingerprint(effCanalName, row.dataExtrato, row.valorBruto, row.referenciaNsu || row.descricao)
-          : row.fingerprintHash;
+      const fp = row.fingerprintHash;
 
       if (existingFingerprints.has(fp) || seenInFile.has(fp)) {
         duplicateCount += 1;
@@ -237,7 +233,11 @@ export const ImportarExtratoModal: React.FC<ImportarExtratoModalProps> = ({
                 <select
                   aria-label="Outro canal financeiro"
                   value={selectedChannelName}
-                  onChange={e => setSelectedChannelName(e.target.value)}
+                  onChange={e => {
+                    const next = e.target.value;
+                    setSelectedChannelName(next);
+                    if (selectedFile) void runParse(selectedFile, next);
+                  }}
                   className="h-7 px-2 rounded-lg border border-slate-300 bg-white text-[11px] font-semibold text-slate-700"
                 >
                   {channels

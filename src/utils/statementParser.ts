@@ -99,6 +99,13 @@ export function parseLocalizedCurrency(val: unknown): number {
   return Number(signed.toFixed(2));
 }
 
+function todayLocalIso(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+    d.getDate()
+  ).padStart(2, '0')}`;
+}
+
 export function parseFlexibleDateToIso(val: unknown): string | null {
   if (typeof val === 'number' && val > 20000 && val < 90000) {
     // Excel serial date
@@ -126,9 +133,10 @@ export function parseFlexibleDateToIso(val: unknown): string | null {
     return `${brMatch[3]}-${brMatch[2]}-${brMatch[1]}`;
   }
 
-  // YYYY-MM-DD (with optional time)
+  // YYYY-MM-DD (local date only; timezone-aware ISO falls through to Date parsing)
   const isoMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
-  if (isoMatch) {
+  const hasTz = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(s);
+  if (isoMatch && !hasTz) {
     return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
   }
 
@@ -182,7 +190,7 @@ export function parseOfxStatement(rawText: string, defaultCanalNome: string): St
     }
 
     const dtPosted = extractOfxTag(blk, 'DTPOSTED');
-    const dataExtrato = parseFlexibleDateToIso(dtPosted) || new Date().toISOString().slice(0, 10);
+    const dataExtrato = parseFlexibleDateToIso(dtPosted) || todayLocalIso();
     const fitId = extractOfxTag(blk, 'FITID') || `OFX-${idx + 1}`;
     const memo = extractOfxTag(blk, 'MEMO');
     const nameTag = extractOfxTag(blk, 'NAME');
@@ -251,7 +259,7 @@ function detectHeaderAndPreset(matrix: unknown[][], hintChannel: string): {
   }
 
   const rawRow = matrix[bestRowIdx] || [];
-  const headers = rawRow.map(c => String(c ?? '').trim() || `Coluna ${rawRow.indexOf(c) + 1}`);
+  const headers = rawRow.map((c, idx) => String(c ?? '').trim() || `Coluna ${idx + 1}`);
   const norm = headers.map(normalizeHeaderToken);
 
   const dateCol = findColumnIndex(norm, [
@@ -350,12 +358,19 @@ export function parseMatrixWithMapping(
       continue;
     }
 
+    if (mapping.dateCol < 0 || mapping.amountCol < 0) {
+      emptyRowsSkipped += 1;
+      continue;
+    }
+
     const rawDate = row[mapping.dateCol];
     const rawAmount = row[mapping.amountCol];
     const dataExtrato = parseFlexibleDateToIso(rawDate);
     let valorBruto = parseLocalizedCurrency(rawAmount);
-    const parsedNet = mapping.netCol !== undefined ? parseLocalizedCurrency(row[mapping.netCol]) : NaN;
-    const parsedFee = mapping.feeCol !== undefined ? parseLocalizedCurrency(row[mapping.feeCol]) : NaN;
+    const parsedNet =
+      mapping.netCol !== undefined && mapping.netCol >= 0 ? parseLocalizedCurrency(row[mapping.netCol]) : NaN;
+    const parsedFee =
+      mapping.feeCol !== undefined && mapping.feeCol >= 0 ? parseLocalizedCurrency(row[mapping.feeCol]) : NaN;
 
     if (!Number.isFinite(valorBruto) && Number.isFinite(parsedNet)) {
       valorBruto = Number((parsedNet + (Number.isFinite(parsedFee) ? Math.abs(parsedFee) : 0)).toFixed(2));
@@ -372,7 +387,7 @@ export function parseMatrixWithMapping(
       continue;
     }
 
-    const safeDate = dataExtrato || new Date().toISOString().slice(0, 10);
+    const safeDate = dataExtrato || todayLocalIso();
     const canalOverride =
       mapping.channelCol !== undefined ? String(row[mapping.channelCol] ?? '').trim() || undefined : undefined;
     const effectiveCanal = canalOverride || defaultCanalNome;
@@ -385,7 +400,9 @@ export function parseMatrixWithMapping(
     const descricao = rawDesc || rawPayer || `Lançamento ${effectiveCanal}`;
 
     let valorTaxa = Number.isFinite(parsedFee) ? Math.max(0, Math.abs(parsedFee)) : 0;
-    let valorLiquido = Number.isFinite(parsedNet) ? Math.max(0, parsedNet) : Number((valorBruto - valorTaxa).toFixed(2));
+    let valorLiquido = Number.isFinite(parsedNet)
+      ? Math.max(0, parsedNet)
+      : Math.max(0, Number((valorBruto - valorTaxa).toFixed(2)));
     if (!Number.isFinite(parsedFee) && Number.isFinite(parsedNet) && valorBruto >= parsedNet) {
       valorTaxa = Number((valorBruto - parsedNet).toFixed(2));
     }

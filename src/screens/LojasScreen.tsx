@@ -437,12 +437,15 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                   codigo: `LOJA-0${units.length}`,
                   nome: '',
                   tipo: 'LOJA',
+                  cep: '',
                   endereco: '',
-                  cidade: 'São Paulo',
+                  cidade: 'Salvador',
                   telefone: '',
                   chavePix: '',
                   ativo: true
                 });
+                setCepMessage(null);
+                setAddressCandidates([]);
                 setIsModalOpen(true);
               }}
               title="Nova Unidade"
@@ -668,7 +671,14 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {groupedUnits.map(group => {
+              {groupedUnits.length === 0 ? (
+                <tr>
+                  <td colSpan={visibleColumnCount} className="py-10 px-4 text-center text-slate-400 text-xs">
+                    Nenhuma unidade encontrada com os filtros atuais.
+                  </td>
+                </tr>
+              ) : (
+                groupedUnits.map(group => {
                 const expanded = isGroupExpanded(group.label, groupBy !== 'NENHUM');
                 return (
                 <React.Fragment key={group.label}>
@@ -762,14 +772,20 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                   })}
                 </React.Fragment>
                 );
-              })}
+                })
+              )}
             </tbody>
           </table>
         </div>
 
         {viewMode === 'CARDS' && (
           <div className="space-y-6 print:hidden">
-            {groupedUnits.map(group => {
+            {groupedUnits.length === 0 ? (
+              <div className="bg-white border border-slate-200 rounded-xl p-10 text-center text-xs text-slate-400">
+                Nenhuma unidade encontrada com os filtros atuais.
+              </div>
+            ) : (
+              groupedUnits.map(group => {
               const expanded = isGroupExpanded(group.label, groupBy !== 'NENHUM');
               return (
               <div key={group.label} className="space-y-3">
@@ -929,7 +945,8 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                 )}
               </div>
               );
-            })}
+              })
+            )}
           </div>
         )}
       </div>

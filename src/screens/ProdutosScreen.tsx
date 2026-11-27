@@ -591,7 +591,12 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
         </div>
         {viewMode === 'GRID' && (
         <div className="space-y-6 print:hidden">
-          {groupedProducts.map(group => {
+          {groupedProducts.length === 0 ? (
+            <div className="bg-white border border-[#e2e8f0] rounded-xl p-10 text-center text-xs text-slate-400">
+              Nenhum produto encontrado com os filtros atuais.
+            </div>
+          ) : (
+            groupedProducts.map(group => {
             const expanded = isGroupExpanded(group.label, groupBy !== 'NENHUM');
             return (
             <div key={group.label} className="space-y-3">
@@ -723,7 +728,8 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
               )}
             </div>
             );
-          })}
+            })
+          )}
         </div>
         )}
       </div>

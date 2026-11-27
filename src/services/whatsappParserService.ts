@@ -2,6 +2,8 @@ import { supabase, isSupabaseConfigured } from './supabaseClient';
 import { Product, StoreUnit, DeliveryType, DeliveryShift, PaymentMethod, OrderItem } from '../types';
 import {
   addHoursToDateTime,
+  extractLocalDateYyyyMmDd,
+  extractTimeHHmm,
   inferDeliveryShiftFromDateTime,
   toLocalDateTimeString
 } from '../utils/deliveryTimeRange';
@@ -536,17 +538,20 @@ export class WhatsAppParserService {
         obs = obs ? `${aviso}\n${obs}` : aviso;
       }
 
+      const toLocalDateTimeValue = (raw?: string): string => {
+        if (!raw || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(raw)) return '';
+        const datePart = extractLocalDateYyyyMmDd(raw);
+        const timePart = extractTimeHHmm(raw);
+        return datePart && timePart ? `${datePart}T${timePart}` : '';
+      };
+
       const localRange = extractDeliveryDateTimeRange(rawText);
-      const resolvedStart =
-        parsed.dataHoraEntrega && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(parsed.dataHoraEntrega)
-          ? parsed.dataHoraEntrega.slice(0, 16)
-          : localRange.start;
+      const resolvedStart = toLocalDateTimeValue(parsed.dataHoraEntrega) || localRange.start;
       const resolvedEnd =
-        parsed.dataHoraEntregaFim && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(parsed.dataHoraEntregaFim)
-          ? parsed.dataHoraEntregaFim.slice(0, 16)
-          : localRange.hasExplicitEnd
+        toLocalDateTimeValue(parsed.dataHoraEntregaFim) ||
+        (localRange.hasExplicitEnd
           ? `${resolvedStart.slice(0, 10)}T${localRange.end.slice(11, 16)}`
-          : addHoursToDateTime(resolvedStart, 1);
+          : addHoursToDateTime(resolvedStart, 1));
 
       const resolvedTipoEntrega: DeliveryType =
         parsed.tipoEntrega === 'RETIRADA' ? 'RETIRADA' : 'DELIVERY';

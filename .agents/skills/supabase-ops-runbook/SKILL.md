@@ -2,9 +2,10 @@
 name: supabase-ops-runbook
 description: >-
   Operational runbook for JuJu Delivery Supabase deployments, migrations, Edge
-  Function publishing on Docker-less Windows, clipboard helpers, and safe RLS
-  lockdown ordering. Use when applying migrations, deploying Supabase Edge
-  Functions, or auditing production auth and RLS policies.
+  Function publishing on Docker-less Windows, clipboard helpers, safe RLS
+  lockdown ordering, and automated GitHub Actions pg_dump backups. Use when
+  applying migrations, deploying Supabase Edge Functions, configuring or fixing
+  encrypted database backups, or auditing production auth and RLS policies.
 ---
 
 # Supabase Operations Runbook (JuJu Delivery)
@@ -59,3 +60,17 @@ Before introducing or renaming any status/enum literal in `src/types.ts` (such a
    ```
 2. Apply an explicit migration (`apply_migration` or Dashboard SQL Editor if MCP auto-cancels) updating the constraint to allow the new value, and re-run the `pg_constraint` query to confirm.
 3. Keep `supabase/schema.sql` synchronized with the live constraint definition before modifying frontend screens.
+
+## 5. Automated Daily Encrypted Backups (`supabase-backup.yml`)
+
+Workflow: `.github/workflows/supabase-backup.yml` (runs daily at `06:00 UTC` / `03:00 BRT`, plus `workflow_dispatch`, retaining AES-256 `.dump.gpg` + `.sha256` artifacts for 90 days; restore drill documented in `docs/BACKUP_POLICY.md`).
+
+- **Verified Supavisor Pooler host for `zfqpqhutklhvwoulflwc`**:
+  - Always copy the **Session pooler** URI (port **`5432`**) directly from **Connect** on the Supabase dashboard — this project uses **`aws-1-sa-east-1.pooler.supabase.com`** (`aws-0-...` fails with `ENOTFOUND tenant/user postgres.zfqpqhutklhvwoulflwc not found`).
+  - Never use **Direct connection** (`db.*.supabase.co`, IPv6-only on Free tier; GitHub Actions Ubuntu runners are IPv4) or **Transaction pooler** (port `6543`, incompatible with `pg_dump`).
+- **GitHub Repository Secrets (`SUPABASE_DB_URL` & `BACKUP_ENCRYPTION_KEY`)**:
+  - `SUPABASE_DB_URL` must be a complete single-line URI starting with `postgresql://postgres.zfqpqhutklhvwoulflwc:<PASSWORD>@aws-1-sa-east-1.pooler.supabase.com:5432/postgres` (no `[` `]` brackets and no leading/trailing spaces — missing the `postgresql://` scheme makes `pg_dump` try `/var/run/postgresql/.s.PGSQL.5432`).
+  - Avoid unencoded URI-reserved characters (`@`, `#`, `?`, `/`, `%`, `:`) in the DB password or URL-encode them (using an alphanumeric DB password is simplest). Resetting the Postgres password in Dashboard → Database Settings does **not** affect the app's REST/Auth/Edge Function keys.
+  - `BACKUP_ENCRYPTION_KEY` is an independent passphrase (keep literal characters as saved; do **not** URL-encode it).
+- **GitHub Actions runtime**:
+  - Use **`actions/upload-artifact@v6`** (or newer) rather than `@v4`, which targets Node.js 20 and triggers runner deprecation warnings on Node.js 24.

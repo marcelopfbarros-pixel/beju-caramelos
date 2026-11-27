@@ -302,20 +302,24 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
       );
       onUpdateStock(updated);
       if (prevItem && onRecordStockMovements && nextQty !== prevItem.quantidadeAtual) {
-        onRecordStockMovements([
-          {
-            id: `mov-${Date.now()}-edit`,
-            unidadeId: prevItem.unidadeId,
-            produtoId: prevItem.produtoId,
-            tipo: nextQty === 0 ? 'SAIDA' : 'AJUSTE',
-            quantidade: nextQty === 0 ? prevItem.quantidadeAtual : nextQty,
-            motivo:
-              nextQty === 0
-                ? `Zerar estoque (${prevItem.quantidadeAtual} → 0)`
-                : `Ajuste manual (${prevItem.quantidadeAtual} → ${nextQty})`,
-            dataMovimentacao: now
-          }
-        ]);
+        const oldQty = prevItem.quantidadeAtual;
+        const delta = Math.abs(nextQty - oldQty);
+        if (delta > 0) {
+          onRecordStockMovements([
+            {
+              id: `mov-${Date.now()}-edit`,
+              unidadeId: prevItem.unidadeId,
+              produtoId: prevItem.produtoId,
+              tipo: nextQty > oldQty ? 'ENTRADA' : 'SAIDA',
+              quantidade: delta,
+              motivo:
+                nextQty === 0
+                  ? `Zerar estoque (${oldQty} → 0)`
+                  : `Ajuste manual (${oldQty} → ${nextQty})`,
+              dataMovimentacao: now
+            }
+          ]);
+        }
       }
     } else {
       const existing = stock.find(s => s.unidadeId === stockFormUnitId && s.produtoId === stockFormProdId);
@@ -332,20 +336,24 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
         );
         onUpdateStock(updated);
         if (onRecordStockMovements && nextQty !== existing.quantidadeAtual) {
-          onRecordStockMovements([
-            {
-              id: `mov-${Date.now()}-edit`,
-              unidadeId: existing.unidadeId,
-              produtoId: existing.produtoId,
-              tipo: nextQty === 0 ? 'SAIDA' : 'AJUSTE',
-              quantidade: nextQty === 0 ? existing.quantidadeAtual : nextQty,
-              motivo:
-                nextQty === 0
-                  ? `Zerar estoque (${existing.quantidadeAtual} → 0)`
-                  : `Ajuste manual (${existing.quantidadeAtual} → ${nextQty})`,
-              dataMovimentacao: now
-            }
-          ]);
+          const oldQty = existing.quantidadeAtual;
+          const delta = Math.abs(nextQty - oldQty);
+          if (delta > 0) {
+            onRecordStockMovements([
+              {
+                id: `mov-${Date.now()}-edit`,
+                unidadeId: existing.unidadeId,
+                produtoId: existing.produtoId,
+                tipo: nextQty > oldQty ? 'ENTRADA' : 'SAIDA',
+                quantidade: delta,
+                motivo:
+                  nextQty === 0
+                    ? `Zerar estoque (${oldQty} → 0)`
+                    : `Ajuste manual (${oldQty} → ${nextQty})`,
+                dataMovimentacao: now
+              }
+            ]);
+          }
         }
       } else {
         onUpdateStock([
@@ -559,7 +567,12 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
       >
         {viewMode === 'CARDS' && (
           <div className="space-y-6 print:hidden">
-            {groupedStock.map(group => {
+            {groupedStock.length === 0 ? (
+              <div className="bg-white border border-[#e2e8f0] rounded-xl p-10 text-center text-xs text-slate-400">
+                Nenhum item de estoque encontrado com os filtros atuais.
+              </div>
+            ) : (
+              groupedStock.map(group => {
               const expanded = isGroupExpanded(group.label, groupBy !== 'NENHUM');
               return (
               <div key={group.label} className="space-y-3">
@@ -706,7 +719,8 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
                 )}
               </div>
               );
-            })}
+              })
+            )}
           </div>
         )}
 
@@ -745,7 +759,14 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-[#e2e8f0]">
-              {groupedStock.map(group => {
+              {groupedStock.length === 0 ? (
+                <tr>
+                  <td colSpan={visibleColumnCount} className="py-10 px-4 text-center text-slate-400 text-xs">
+                    Nenhum item de estoque encontrado com os filtros atuais.
+                  </td>
+                </tr>
+              ) : (
+                groupedStock.map(group => {
                 const expanded = isGroupExpanded(group.label, groupBy !== 'NENHUM');
                 return (
                 <React.Fragment key={group.label}>
@@ -888,7 +909,8 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
                   })}
                 </React.Fragment>
                 );
-              })}
+                })
+              )}
             </tbody>
           </table>
         </div>

@@ -1567,7 +1567,8 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
     isConciliated: boolean,
     isSaving: boolean,
     canCheck = true,
-    isLockedByNf = false
+    isLockedByNf = false,
+    onUncheckOverride?: () => void
   ) => (
     <button
       type="button"
@@ -1586,6 +1587,10 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
       disabled={isSaving || isLockedByNf}
       onClick={e => {
         e.stopPropagation();
+        if (isConciliated && onUncheckOverride) {
+          onUncheckOverride();
+          return;
+        }
         void handleToggleConciliation(order, record, !isConciliated);
       }}
       className={`inline-flex items-center justify-center w-6 h-6 rounded-md border-2 transition-all disabled:cursor-not-allowed print:hidden ${
@@ -2559,7 +2564,7 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
                                 </div>
 
                                 <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
-                                  {renderUnitBadge(order.unidadeOrigemId, unitName, 'max-w-[110px]')}
+                                  {!hideUnidadeCol && renderUnitBadge(order.unidadeOrigemId, unitName, 'max-w-[110px]')}
                                   {renderOrderPaymentMethodBadge(order)}
                                   <span
                                     className={`px-2 py-0.5 rounded-full font-semibold border ${RECONCILIATION_STATUS_BADGES[recStatus]}`}

@@ -166,7 +166,7 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({
             <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
               <div>
                 <h2 className="font-bold text-sm">
-                  LogIn
+                  Login
                 </h2>
                 <p className="text-[11px] text-slate-400">
                   Entre com seu e-mail e senha numérica de 8 dígitos

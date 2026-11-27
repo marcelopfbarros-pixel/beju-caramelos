@@ -25,6 +25,7 @@ import {
   getOrderOpenBalance,
 } from '../utils/reconciliationMatcher';
 import { formatCompetenciaLabel } from '../utils/conciliacaoReportExcel';
+import { extractLocalDateYyyyMmDd } from '../utils/deliveryTimeRange';
 import { SupabaseService } from '../services/supabaseService';
 import { ImportarExtratoModal } from './ImportarExtratoModal';
 import { ConciliacaoReportModal } from './ConciliacaoReportModal';
@@ -65,7 +66,8 @@ interface ConciliacaoTabProps {
     isConciliated: boolean,
     isSaving: boolean,
     canCheck?: boolean,
-    isLockedByNf?: boolean
+    isLockedByNf?: boolean,
+    onUncheckOverride?: () => void
   ) => React.ReactNode;
   renderInvoiceToggle: (
     order: Order,
@@ -190,7 +192,7 @@ export const ConciliacaoTab: React.FC<ConciliacaoTabProps> = ({
       if (p.competencia) set.add(p.competencia);
     });
     orders.forEach(o => {
-      const m = (o.dataPedido || '').slice(0, 7);
+      const m = extractLocalDateYyyyMmDd(o.dataPedido).slice(0, 7);
       if (/^\d{4}-\d{2}$/.test(m)) set.add(m);
     });
     return Array.from(set).sort((a, b) => b.localeCompare(a));
@@ -453,6 +455,21 @@ export const ConciliacaoTab: React.FC<ConciliacaoTabProps> = ({
 
     if (allAllocations.length === 0) {
       notify('Os pedidos selecionados já estão com saldo zerado.');
+      return;
+    }
+
+    const totalUnallocated = sts.reduce((sum, st) => {
+      const allocatedForSt = (perStatementLinks.get(st.id) || []).reduce((a, l) => a + l.amount, 0);
+      return sum + Math.max(0, Number((st.valorBruto - allocatedForSt).toFixed(2)));
+    }, 0);
+    if (
+      totalUnallocated > 0.01 &&
+      !window.confirm(
+        `Os extratos selecionados somam R$ ${formatCurrencyBR(
+          totalUnallocated
+        )} além do saldo devedor dos pedidos selecionados.\n\nDeseja conciliar mesmo assim marcando os extratos como Conciliados?`
+      )
+    ) {
       return;
     }
 
@@ -1037,7 +1054,7 @@ export const ConciliacaoTab: React.FC<ConciliacaoTabProps> = ({
       <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden bg-white">
         {subTab === 'PENDENTE' && (
           <>
-            <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-slate-200 overflow-hidden">
+            <div className="flex-1 min-h-0 grid grid-cols-1 grid-rows-2 lg:grid-cols-2 lg:grid-rows-1 divide-y lg:divide-y-0 lg:divide-x divide-slate-200 overflow-hidden">
               {/* Left Column: Extratos */}
               <div className="flex flex-col min-h-0 min-w-0">
                 <div className="px-3.5 py-2 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0">
@@ -1447,7 +1464,10 @@ export const ConciliacaoTab: React.FC<ConciliacaoTabProps> = ({
                                     isConc,
                                     busyAction || isPeriodLocked,
                                     canCheck,
-                                    isLockedByNf || isPeriodLocked
+                                    isLockedByNf || isPeriodLocked,
+                                    () => {
+                                      void handleRevertStatement(st);
+                                    }
                                   )}
                                 </div>
                               );

@@ -1792,19 +1792,6 @@ export class SupabaseService {
     return data;
   }
 
-  static async signUpWithPassword(email: string, password: string, nome?: string) {
-    if (!this.isConfigured()) throw new Error('Supabase não configurado');
-    const { data, error } = await supabase!.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { full_name: nome || email.split('@')[0] }
-      }
-    });
-    if (error) throw error;
-    return data;
-  }
-
   static async signOut() {
     if (!this.isConfigured()) return;
     await supabase!.auth.signOut();
@@ -1919,8 +1906,13 @@ export class SupabaseService {
       .in('fingerprint_hash', hashes);
     if (checkErr) throw checkErr;
 
-    const existingSet = new Set((existingRows || []).map(r => String(r.fingerprint_hash)));
-    const toInsert = entries.filter(e => !existingSet.has(e.fingerprintHash));
+    const seenHashes = new Set((existingRows || []).map(r => String(r.fingerprint_hash)));
+    const toInsert: typeof entries = [];
+    for (const entry of entries) {
+      if (seenHashes.has(entry.fingerprintHash)) continue;
+      seenHashes.add(entry.fingerprintHash);
+      toInsert.push(entry);
+    }
     const duplicateCount = entries.length - toInsert.length;
 
     const { data: batchData, error: batchErr } = await supabase!

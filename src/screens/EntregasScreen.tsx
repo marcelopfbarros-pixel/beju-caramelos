@@ -692,14 +692,14 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
 
                             {/* Actions */}
                             <div className="mt-4 pt-3 border-t border-slate-100 space-y-2">
-                              <div className="grid grid-cols-3 gap-1.5">
+                              <div className="flex items-center gap-1.5">
                                 <button
                                   type="button"
                                   onClick={() => {
                                     const msg = formatStatusNotificationMessage(order, order.status, products, units);
                                     dispatchWhatsAppMessage(order.clienteTelefone, msg);
                                   }}
-                                  className="h-9 flex items-center justify-center gap-1 px-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-[11px] font-semibold rounded-lg transition-colors cursor-pointer"
+                                  className="flex-1 min-w-0 h-9 flex items-center justify-center gap-1 px-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-[11px] font-semibold rounded-lg transition-colors cursor-pointer"
                                   title={`Notificar cliente no WhatsApp (${order.status})`}
                                 >
                                   <MessageSquare className="w-3.5 h-3.5 shrink-0" />
@@ -709,7 +709,7 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                                 {order.clienteTelefone && (
                                   <a
                                     href={`tel:${order.clienteTelefone.replace(/[^\d+]/g, '')}`}
-                                    className="md:hidden h-9 flex items-center justify-center gap-1 px-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-semibold rounded-lg transition-colors"
+                                    className="md:hidden flex-1 min-w-0 h-9 flex items-center justify-center gap-1 px-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-semibold rounded-lg transition-colors"
                                     title="Ligar para cliente"
                                   >
                                     <Phone className="w-3.5 h-3.5 shrink-0" />
@@ -722,7 +722,7 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                                     href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(order.enderecoEntrega)}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="md:hidden h-9 flex items-center justify-center gap-1 px-2 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 text-[11px] font-semibold rounded-lg transition-colors"
+                                    className="md:hidden flex-1 min-w-0 h-9 flex items-center justify-center gap-1 px-2 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 text-[11px] font-semibold rounded-lg transition-colors"
                                     title="Abrir endereço no Google Maps"
                                   >
                                     <MapPin className="w-3.5 h-3.5 shrink-0" />
@@ -733,18 +733,18 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                                 <button
                                   type="button"
                                   onClick={() => handlePrint(order, 'receipt')}
-                                  className="flex h-9 items-center justify-center gap-1 px-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-semibold rounded-lg transition-colors cursor-pointer"
+                                  className="flex-1 min-w-0 flex h-9 items-center justify-center gap-1 px-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-semibold rounded-lg transition-colors cursor-pointer"
                                   title="Imprimir Comprovante"
                                   aria-label="Imprimir Comprovante"
                                 >
                                   <Printer className="w-3.5 h-3.5 shrink-0" />
-                                  <span className="hidden md:inline">Comprovante</span>
+                                  <span className="hidden md:inline truncate">Comprovante</span>
                                 </button>
 
                                 <button
                                   type="button"
                                   onClick={() => handlePrint(order, 'label')}
-                                  className="hidden md:flex h-9 items-center justify-center gap-1 px-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[11px] font-semibold rounded-lg transition-colors cursor-pointer"
+                                  className="hidden md:flex flex-1 min-w-0 h-9 items-center justify-center gap-1 px-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[11px] font-semibold rounded-lg transition-colors cursor-pointer"
                                   title="Imprimir Etiqueta Adesiva Colorida"
                                 >
                                   <Tag className="w-3.5 h-3.5 shrink-0" />
@@ -960,6 +960,8 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                 ? 'Loja/Unidade → Data/Turno'
                 : groupBy === 'LOJA'
                 ? 'Por Loja / Unidade'
+                : groupBy === 'REGIAO'
+                ? 'Por Região / Bairro'
                 : groupBy === 'STATUS'
                 ? 'Por Status'
                 : 'Geral'

@@ -65,7 +65,7 @@ const SCREEN_TUTORIALS: Record<ScreenId, TutorialStep[]> = {
     {
       title: 'Filtrar Data e Turno',
       description: 'Por padrão exibe os Próximos 7 dias; alterne entre Hoje, Amanhã ou Todas as Datas e filtre por turno.',
-      findTarget: () => findInMainByText('button', 'Hoje') || findVisible('main input[type="date"]'),
+      findTarget: () => findVisible('main select') || findVisible('main'),
     },
     {
       title: 'Alterar Estágio da Cozinha',
@@ -124,9 +124,9 @@ const SCREEN_TUTORIALS: Record<ScreenId, TutorialStep[]> = {
   ],
   financeiro: [
     {
-      title: 'Resumo de Pendências',
-      description: 'Clique nos cards do topo para filtrar pedidos pendentes de conciliação no extrato ou prontos para emissão de Nota Fiscal.',
-      findTarget: () => findInMainByText('button', 'Prontos p/ Emitir NF') || findVisible('main'),
+      title: 'Alternar Pedidos & NF e Conciliação',
+      description: 'Use os filtros de status/datas para localizar pedidos pendentes de conciliação ou NF, ou abra a aba Conciliação para importar extratos.',
+      findTarget: () => findInMainByText('button', 'Conciliação') || findVisible('main select') || findVisible('main'),
     },
     {
       title: 'Conciliar Extrato e Emitir NF',
@@ -135,8 +135,8 @@ const SCREEN_TUTORIALS: Record<ScreenId, TutorialStep[]> = {
     },
     {
       title: 'Meios de Pagamento Configuráveis',
-      description: 'Use "Meios de Pagamento" para gerenciar PixC6, C6pay, Sumup, Dinheiro, Bonificado, Boleto ou criar novos meios.',
-      findTarget: () => findInMainByText('button', 'Meios de Pagamento') || findVisible('main'),
+      description: 'Use o ícone de "Meios de Pagamento" para gerenciar PixC6, C6pay, Sumup, Dinheiro, Bonificado, Boleto ou criar novos meios.',
+      findTarget: () => findVisible('main button[aria-label*="Meios de Pagamento"]') || findVisible('main'),
     },
   ],
   clientes: [
@@ -170,12 +170,16 @@ const SCREEN_TUTORIALS: Record<ScreenId, TutorialStep[]> = {
     {
       title: 'Importar ou Exportar Planilha',
       description: 'Exporte o catálogo completo para Excel ou importe produtos em lote.',
-      findTarget: () => findInMainByText('button', 'Exportar') || findVisible('main'),
+      findTarget: () => findVisible('main button[aria-label*="Exportar"]') || findInMainByText('button', 'Exportar') || findVisible('main'),
     },
     {
       title: 'Alternar Grade e Tabela',
       description: 'Alterne entre visualização em cards ou tabela e filtre por categoria ou ordenação.',
-      findTarget: () => findInMainByText('button', 'Grade') || findInMainByText('button', 'Tabela') || findVisible('main'),
+      findTarget: () =>
+        findVisible('main button[aria-label*="Grade"], main button[aria-label*="Tabela"]') ||
+        findInMainByText('button', 'Grade') ||
+        findInMainByText('button', 'Tabela') ||
+        findVisible('main'),
     },
   ],
   lojas: [
@@ -208,7 +212,7 @@ const SCREEN_TUTORIALS: Record<ScreenId, TutorialStep[]> = {
     },
     {
       title: 'Editar Perfil, Avatar e Senha',
-      description: 'Na aba Usuários, atualize sua foto de perfil, senha de 8 dígitos e permissões de unidades da equipe.',
+      description: 'Nas abas Perfil e Usuários, atualize sua foto de perfil, senha de 8 dígitos e permissões de unidades da equipe.',
       findTarget: () => findInMainByText('button', 'Salvar') || findVisible('main'),
     },
     {

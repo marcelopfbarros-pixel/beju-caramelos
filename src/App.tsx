@@ -12,6 +12,7 @@ import {
   pruneZeroedAutoStock,
   stockReservationKey,
 } from './utils/stockAvailability';
+import { extractLocalDateYyyyMmDd } from './utils/deliveryTimeRange';
 
 const RightBar = lazy(() => import('./components/RightBar').then(m => ({ default: m.RightBar })));
 const PedidosScreen = lazy(() => import('./screens/PedidosScreen').then(m => ({ default: m.PedidosScreen })));
@@ -205,7 +206,7 @@ export const App: React.FC = () => {
   }, []);
 
   const [activeUnitId, setActiveUnitId] = useState<string>(() => AppStorage.getActiveUnitId());
-  const [activeDate, setActiveDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [activeDate, setActiveDate] = useState<string>(() => extractLocalDateYyyyMmDd(new Date().toISOString()));
   const [activeShift, setActiveShift] = useState<ProductionShift | 'TODOS'>('TODOS');
   const [currentScreen, setCurrentScreen] = useState<ScreenId>('pedidos');
   const [selectedOrder, setSelectedOrder] = useState<Order | undefined>(() => orders[0]);
@@ -2051,13 +2052,13 @@ export const App: React.FC = () => {
 
           {currentScreen === 'painel' && (
             <RightBar
-              orders={orders}
+              orders={allowedOrders}
               products={products}
               categories={categories}
-              units={units}
+              units={allowedUnits}
               customers={customers}
               onSaveCustomer={handleSaveCustomer}
-              stock={stock}
+              stock={allowedStock}
               activeUnitId={activeUnitId}
               financialRecords={financialRecords}
               financialChannels={financialChannels}
@@ -2083,13 +2084,13 @@ export const App: React.FC = () => {
         {/* Column 3: Right Side KPI & Tools Bar (Desktop) */}
         <Suspense fallback={null}>
           <RightBar
-            orders={orders}
+            orders={allowedOrders}
             products={products}
             categories={categories}
-            units={units}
+            units={allowedUnits}
             customers={customers}
             onSaveCustomer={handleSaveCustomer}
-            stock={stock}
+            stock={allowedStock}
             activeUnitId={activeUnitId}
             financialRecords={financialRecords}
             financialChannels={financialChannels}

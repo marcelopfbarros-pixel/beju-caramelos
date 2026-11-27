@@ -14,10 +14,11 @@
 No repositório GitHub (`marcelopfbarros-pixel/beju-caramelos`), acesse **Settings → Secrets and variables → Actions → New repository secret** e crie:
 
 1. **`SUPABASE_DB_URL`**
-   - No Supabase Dashboard (`zfqpqhutklhvwoulflwc`), abra **Project Settings → Database → Connect** e copie a URI do **Session Pooler** (compatível com IPv4 dos runners do GitHub Actions):
+   - No Supabase Dashboard (`zfqpqhutklhvwoulflwc`), abra **Project Settings → Database → Connect** e copie a URI completa do **Session Pooler** (compatível com IPv4 dos runners do GitHub Actions):
      ```text
-     postgresql://postgres.zfqpqhutklhvwoulflwc:<DB_PASSWORD>@aws-0-sa-east-1.pooler.supabase.com:5432/postgres?sslmode=require
+     postgresql://postgres.zfqpqhutklhvwoulflwc:<DB_PASSWORD>@aws-1-sa-east-1.pooler.supabase.com:5432/postgres?sslmode=require
      ```
+   - Informe a URI `postgresql://...` completa (nunca apenas a senha) e utilize senha estritamente alfanumérica (ou URL-encoded caso contenha `!`, `@`, `#`, `:`, `/`, `?`, `%`).
 2. **`BACKUP_ENCRYPTION_KEY`**
    - Uma senha/passphrase forte e aleatória armazenada no gerenciador de senhas da equipe (nunca versionada no código).
 
@@ -50,13 +51,14 @@ Após salvar os dois secrets, você pode testar imediatamente pela aba **Actions
    ```
 
 > [!NOTE]
-> O workflow realiza dump completo dos schemas `public` e `private` (incluindo `private.operador_credenciais` com hashes bcrypt). Usuários `auth.users` ficam gerenciados pelo Supabase Auth e podem ser reassociados em caso de migração de projeto.
+> O workflow diário (`pg_dump`) realiza dump completo das **23 tabelas** dos schemas `public` e `private` (incluindo as 4 tabelas de Conciliação Bancária `extratos_importados`, `extrato_lancamentos`, `extrato_conciliacao_vinculos` e `conciliacao_periodos_fechados`, além de `private.operador_credenciais` com hashes bcrypt). Usuários `auth.users` ficam gerenciados pelo Supabase Auth e podem ser reassociados em caso de migração de projeto.
 
 ---
 
 ## 4. Camada Complementar In-App (`Configurações → Dados`)
 
 Além do `pg_dump` diário criptografado:
-- **Snapshot JSON (`.json` — recomendado):** exportação/restauração **sem perdas** (imune ao limite de `32.767` caracteres por célula do Excel), cobrindo unidades, categorias, produtos, pedidos (incluindo `statusPagamento` e `valorPago`), estoque, movimentações de estoque, clientes, ordens de produção, usuários (sem senhas/PINs em texto claro), meios financeiros, conciliações/NF, configurações (`app_configuracoes`) e taxas por bairro (`taxas_entrega_bairros`).
-- **Planilha Excel (`.xlsx`):** exportação e restauração em 13 abas tabulares para inspeção visual e carga em lote.
+- **Snapshot JSON (`.json` — recomendado):** exportação sem perdas (imune ao limite de `32.767` caracteres por célula do Excel) cobrindo os **13 conjuntos operacionais principais** (unidades, categorias, produtos, pedidos incluindo `statusPagamento` e `valorPago`, estoque, movimentações de estoque, clientes, ordens de produção, usuários sem senhas/PINs em texto claro, meios financeiros, conciliações/NF por pedido, configurações `app_configuracoes` e taxas por bairro `taxas_entrega_bairros`).
+- **Planilha Excel (`.xlsx`):** exportação em 13 abas tabulares para inspeção visual e carga em lote.
+- **Restauração In-App vs. `pg_restore`:** ao importar `.json`/`.xlsx` em `Configurações → Dados` com o banco online, os dados operacionais são carregados na sessão ativa e `app_configuracoes` + `taxas_entrega_bairros` são sincronizadas no Supabase; para restauração integral do PostgreSQL em produção (incluindo as tabelas de extratos bancários), utilize o procedimento `pg_restore` da Seção 3.
 - **Lembrete na tela:** o último backup (`last_backup_meta` em `app_configuracoes`) é exibido em `Configurações → Dados` com aviso quando passar de 7 dias sem exportação registrada.

@@ -183,6 +183,10 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
   );
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [pendingStatusChange, setPendingStatusChange] = useState<OrderStatus | null>(null);
+  const [pendingQuickPinChange, setPendingQuickPinChange] = useState<{
+    order: Order;
+    nextStatus: OrderStatus;
+  } | null>(null);
   const [pendingQuickStatusConfirm, setPendingQuickStatusConfirm] = useState<{
     order: Order;
     nextStatus: OrderStatus;
@@ -885,6 +889,12 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
 
   const handleQuickStatusChange = (order: Order, nextStatus: OrderStatus) => {
     if (order.status === nextStatus) return;
+    if (order.status === 'ENTREGUE' && nextStatus !== 'ENTREGUE') {
+      setPendingQuickPinChange({ order, nextStatus });
+      setStatusAuthPin('');
+      setStatusAuthError('');
+      return;
+    }
     setPendingQuickStatusConfirm({ order, nextStatus });
   };
 
@@ -3048,7 +3058,7 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
       />
 
       {/* PASSWORD CONFIRMATION MODAL FOR ENTREGUE STATUS CHANGE */}
-      {pendingStatusChange && (
+      {(pendingStatusChange || pendingQuickPinChange) && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-[60] p-4">
           <form
             onSubmit={async (e) => {
@@ -3061,8 +3071,16 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                   setStatusAuthError('Senha incorreta. Informe a senha do usuário para alterar um pedido já Entregue.');
                   return;
                 }
-                setEditingOrder({ ...editingOrder, status: pendingStatusChange });
-                setPendingStatusChange(null);
+                if (pendingQuickPinChange) {
+                  onSaveOrder({
+                    ...pendingQuickPinChange.order,
+                    status: pendingQuickPinChange.nextStatus
+                  });
+                  setPendingQuickPinChange(null);
+                } else if (pendingStatusChange) {
+                  setEditingOrder({ ...editingOrder, status: pendingStatusChange });
+                  setPendingStatusChange(null);
+                }
                 setStatusAuthPin('');
                 setStatusAuthError('');
               } catch {
@@ -3076,7 +3094,15 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
             <div>
               <h3 className="text-sm font-bold text-slate-900">Confirmação de Senha Necessária</h3>
               <p className="text-xs text-slate-500 mt-1">
-                Este pedido já está com status <strong>ENTREGUE</strong>. Digite sua senha de usuário para alterar o status para <strong>{pendingStatusChange.replace('_', ' ')}</strong>.
+                {pendingQuickPinChange ? (
+                  <>
+                    O pedido <strong className="font-mono text-slate-900">{pendingQuickPinChange.order.numeroPedido}</strong> já está com status <strong>ENTREGUE</strong>. Digite sua senha de usuário para alterar o status para <strong>{pendingQuickPinChange.nextStatus.replace('_', ' ')}</strong>.
+                  </>
+                ) : (
+                  <>
+                    Este pedido já está com status <strong>ENTREGUE</strong>. Digite sua senha de usuário para alterar o status para <strong>{(pendingStatusChange || '').replace('_', ' ')}</strong>.
+                  </>
+                )}
               </p>
             </div>
             <div>
@@ -3103,6 +3129,7 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                 type="button"
                 onClick={() => {
                   setPendingStatusChange(null);
+                  setPendingQuickPinChange(null);
                   setStatusAuthPin('');
                   setStatusAuthError('');
                 }}

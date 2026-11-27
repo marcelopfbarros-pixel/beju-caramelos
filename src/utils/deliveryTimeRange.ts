@@ -26,7 +26,7 @@ export function inferDeliveryShiftFromDateTime(dateTimeStr?: string): DeliverySh
   return 'NOITE';
 }
 
-function extractLocalDateYyyyMmDd(dateTimeStr?: string): string {
+export function extractLocalDateYyyyMmDd(dateTimeStr?: string): string {
   const trimmed = (dateTimeStr ?? '').trim();
   if (!trimmed) return '';
   if (/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?$/.test(trimmed)) {

@@ -10,6 +10,7 @@ import {
   formatDateBR,
   getEffectiveInvoiceStatus,
 } from './financialReconciliation';
+import { extractLocalDateYyyyMmDd } from './deliveryTimeRange';
 
 const XLSX = (
   (XLSXStyleMod as unknown as { default?: typeof XLSXStyleMod }).default ?? XLSXStyleMod
@@ -152,8 +153,8 @@ export function buildConciliacaoReportModel(params: {
   );
   const openOrders = orders.filter(o => {
     if (o.status === 'CANCELADO') return false;
-    const pedMonth = (o.dataPedido || '').slice(0, 7);
-    const delMonth = (o.dataHoraEntrega || '').slice(0, 7);
+    const pedMonth = extractLocalDateYyyyMmDd(o.dataPedido).slice(0, 7);
+    const delMonth = extractLocalDateYyyyMmDd(o.dataHoraEntrega).slice(0, 7);
     if (pedMonth !== competencia && delMonth !== competencia) return false;
     const rec = recordByOrderId.get(o.id);
     const conc = Math.max(0, Number(rec?.valorConciliado) || 0);
