@@ -376,12 +376,31 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
     <div className="flex-1 min-w-0 flex flex-col h-full bg-[#f8f9ff] overflow-hidden">
       {/* Top Bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between md:bg-white md:border-b md:border-[#e2e8f0] md:px-6 md:py-4 md:gap-4 print:hidden">
-        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2.5 md:p-0 md:bg-transparent md:border-b-0">
-          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex flex-wrap items-center gap-2">
+        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2.5 md:p-0 md:bg-transparent md:border-b-0 min-w-0">
+          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex flex-wrap items-center gap-2 min-w-0">
             <span>Unidades</span>
-            <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800">
-              {filteredUnits.length} unidades
-            </span>
+            {(() => {
+              const typeLabels: Record<string, string> = {
+                TODAS: 'Todas',
+                CENTRAL: 'Central',
+                LOJA: 'Lojas / Filiais',
+                ATIVAS: 'Ativas',
+                INATIVAS: 'Inativas',
+              };
+              const parts = [typeLabels[typeFilter] || typeFilter];
+              if (searchTerm.trim()) {
+                parts.push(`Busca: "${searchTerm.trim()}"`);
+              }
+              const badgeText = `${filteredUnits.length} unidades • ${parts.join(' • ')}`;
+              return (
+                <span
+                  className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 max-w-full truncate"
+                  title={badgeText}
+                >
+                  {badgeText}
+                </span>
+              );
+            })()}
           </h1>
         </div>
 
@@ -447,12 +466,13 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
       </div>
 
       {/* Filter & Grouping Bar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between md:bg-white/70 md:border-b md:border-[#e2e8f0] md:px-6 md:py-2.5 md:gap-3 print:hidden">
+      <div className="shrink-0 min-w-0 flex flex-col md:flex-row md:flex-wrap md:items-center justify-between md:bg-white/70 md:border-b md:border-[#e2e8f0] md:px-6 md:py-2.5 md:gap-3 print:hidden">
         <div className="bg-white/70 border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex items-center w-full md:w-auto min-w-0 overflow-hidden">
           <HybridFilterSort
             filterLabel="Filtrar:"
             filterValue={typeFilter}
             onFilterChange={(v) => setTypeFilter(v as 'TODAS' | 'CENTRAL' | 'LOJA' | 'ATIVAS' | 'INATIVAS')}
+            filterActive={typeFilter !== 'TODAS'}
             filterOptions={[
               { value: 'TODAS', label: 'Todas' },
               { value: 'CENTRAL', label: 'Central' },
@@ -474,6 +494,11 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
               { value: 'STATUS', label: 'Status' },
               { value: 'NENHUM', label: 'Sem Agrupamento' }
             ]}
+            hasActiveFilters={typeFilter !== 'TODAS' || searchTerm.trim() !== ''}
+            onResetFilters={() => {
+              setTypeFilter('TODAS');
+              setSearchTerm('');
+            }}
           />
         </div>
 
@@ -492,7 +517,13 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
       </div>
 
       {/* Grid / Table of Stores + Print Report */}
-      <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-3 sm:p-6">
+      <div
+        className={
+          viewMode === 'TABLE' && !inventoryPrintUnit && !replenishmentPrintOrder
+            ? 'flex-1 min-h-0 min-w-0 flex flex-col p-3 sm:p-6 overflow-hidden'
+            : 'flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-3 sm:p-6'
+        }
+      >
         {inventoryPrintUnit && (
           <div id="print-report-area" className="hidden print:block bg-white p-4">
             <PrintReportHeader
@@ -617,7 +648,7 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
           id={inventoryPrintUnit || replenishmentPrintOrder ? undefined : 'print-report-area'}
           className={`${viewMode === 'CARDS' || inventoryPrintUnit || replenishmentPrintOrder ? 'hidden' : ''} ${
             inventoryPrintUnit || replenishmentPrintOrder ? 'print:hidden' : 'print:block'
-          } bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-x-auto max-w-full`}
+          } bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-auto max-w-full max-h-full min-h-0 print:overflow-visible print:max-h-none`}
         >
           <PrintReportHeader
             title="Unidades"
@@ -625,7 +656,7 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
             subtitle={`${filteredUnits.length} unidade(s) cadastrada(s)`}
           />
           <table className="w-full text-left text-xs border-collapse">
-            <thead className="bg-[#f8f9ff] border-b border-slate-200 text-[11px] font-mono uppercase tracking-wider text-slate-500 font-semibold">
+            <thead className="sticky top-0 z-10 bg-[#f8f9ff] border-b border-slate-200 text-[11px] font-mono uppercase tracking-wider text-slate-500 font-semibold">
               <tr>
                 <th className="py-3 px-4">Código</th>
                 <th className="py-3 px-4">Nome</th>
@@ -746,13 +777,13 @@ export const LojasScreen: React.FC<LojasScreenProps> = ({
                   <button
                     type="button"
                     onClick={() => toggleGroup(group.label)}
-                    className="w-full flex items-center justify-between border-b border-slate-200 pb-1.5 hover:text-slate-900 cursor-pointer"
+                    className="w-full flex items-center justify-between px-3 py-2 bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200/80 rounded-lg cursor-pointer transition-colors"
                   >
                     <h2 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
                       {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                       <span>{group.label}</span>
                     </h2>
-                    <span className="text-[11px] font-mono font-semibold text-slate-500">
+                    <span className="text-[11px] font-mono font-semibold text-slate-600">
                       {group.items.length} unidade(s)
                     </span>
                   </button>

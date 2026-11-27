@@ -44,6 +44,7 @@ import {
   Product, 
   Order, 
   OrderStatus,
+  SaveOrderOptions,
   StockItem, 
   StockMovement,
   UserProfile,
@@ -709,7 +710,7 @@ export const App: React.FC = () => {
     );
   };
 
-  const handleSaveOrder = async (newOrder: Order) => {
+  const handleSaveOrder = async (newOrder: Order, options?: SaveOrderOptions) => {
     const previousOrder = orders.find(o => o.id === newOrder.id);
     const statusChanged = !previousOrder || previousOrder.status !== newOrder.status;
 
@@ -723,9 +724,11 @@ export const App: React.FC = () => {
     });
     setSelectedOrder(newOrder);
 
-    await syncOrderDeliveryStock(newOrder, previousOrder?.status, newOrder.status);
+    if (!options?.skipStockMovement) {
+      await syncOrderDeliveryStock(newOrder, previousOrder?.status, newOrder.status);
+    }
 
-    if (statusChanged && !isCardapioDigitalOpen) {
+    if (statusChanged && !isCardapioDigitalOpen && !options?.skipWhatsAppNotification) {
       const waCfg = getWhatsAppAutomationSettings();
       if (waCfg.apiEnabled && waCfg.apiEndpointUrl.trim()) {
         const msg = formatStatusNotificationMessage(newOrder, newOrder.status, products, units, waCfg);
@@ -1604,6 +1607,16 @@ export const App: React.FC = () => {
     [customers]
   );
 
+  const activeProductsCount = React.useMemo(
+    () => products.filter(p => p.ativo).length,
+    [products]
+  );
+
+  const activeUnitsCount = React.useMemo(
+    () => units.filter(u => u.ativo).length,
+    [units]
+  );
+
   const financialRecordsByOrderId = React.useMemo(
     () => new Map(financialRecords.map(r => [r.pedidoId, r])),
     [financialRecords]
@@ -1799,6 +1812,8 @@ export const App: React.FC = () => {
           pendingDeliveriesCount={pendingDeliveriesCount}
           pendingFinancialCount={pendingFinancialCount}
           pendingCustomersCount={pendingCustomersCount}
+          activeProductsCount={activeProductsCount}
+          activeUnitsCount={activeUnitsCount}
           selectedDeliveriesCount={selectedDeliveryIds.length}
         />
 
@@ -1849,6 +1864,7 @@ export const App: React.FC = () => {
               stockMovements={stockMovements}
               orders={orders}
               products={products}
+              categories={categories}
               units={allowedUnits}
               activeUnitId={activeUnitId}
               userRole={effectiveUserProfile.role}
@@ -1914,6 +1930,7 @@ export const App: React.FC = () => {
           {currentScreen === 'financeiro' && canViewFinancials(effectiveUserProfile.role) && (
             <FinanceiroScreen
               orders={allowedOrders}
+              products={products}
               units={allowedUnits}
               activeUnitId={activeUnitId}
               financialChannels={financialChannels}

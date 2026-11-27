@@ -9,12 +9,14 @@ import {
   OrderStatus,
   PaymentMethod,
   PaymentStatus,
+  Product,
   StoreUnit,
   UserProfile,
 } from '../types';
 import { HybridFilterSort } from '../components/HybridFilterSort';
 import { CurrencyInput, formatCurrencyBR } from '../components/CurrencyInput';
 import { PrintReportHeader } from '../components/PrintReportHeader';
+import { FinanceiroReportModal } from '../components/FinanceiroReportModal';
 import { useExpandedGroups } from '../hooks/useExpandedGroups';
 import { formatDeliveryTimeRange } from '../utils/deliveryTimeRange';
 import {
@@ -48,11 +50,13 @@ import {
 import {
   FaturamentoReportData,
   FaturamentoReportRow,
+  formatPedidoWithPaymentMethod,
   groupAndSortFaturamentoRows,
   resolveOrderBillingUnitId,
 } from '../utils/faturamentoReportData';
 import {
   AlertCircle,
+  ArrowLeft,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -60,6 +64,7 @@ import {
   CreditCard,
   Download,
   ExternalLink,
+  Eye,
   FileSpreadsheet,
   FileText,
   Landmark,
@@ -76,6 +81,7 @@ import {
 
 interface FinanceiroScreenProps {
   orders: Order[];
+  products: Product[];
   units: StoreUnit[];
   activeUnitId: string;
   financialChannels: FinancialPaymentChannel[];
@@ -107,14 +113,18 @@ type FinancialSortBy =
   | 'DATA_PEDIDO_DESC'
   | 'PRIORIDADE_NF'
   | 'DATA_EXTRATO_DESC'
+  | 'DATA_EXTRATO_ASC'
   | 'VALOR_DESC'
+  | 'SALDO_DESC'
   | 'CLIENTE_ASC';
 
 type FinancialGroupBy =
   | 'PENDENCIA'
   | 'MEIO_PAGAMENTO'
   | 'LOJA_ORIGEM'
+  | 'SITUACAO_NF'
   | 'DATA_EXTRATO'
+  | 'DATA_PEDIDO'
   | 'NENHUM';
 
 const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
@@ -272,6 +282,7 @@ function suggestChannelForOrder(
 
 export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
   orders,
+  products,
   units,
   activeUnitId,
   financialChannels,
@@ -293,6 +304,15 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
   const [sortBy, setSortBy] = useState<FinancialSortBy>('DATA_PEDIDO_ASC');
   const [groupBy, setGroupBy] = useState<FinancialGroupBy>('PENDENCIA');
   const { isGroupExpanded, toggleGroup } = useExpandedGroups(groupBy);
+  const [expandedOrderIds, setExpandedOrderIds] = useState<Set<string>>(() => new Set());
+  const toggleOrderExpanded = (orderId: string) => {
+    setExpandedOrderIds(prev => {
+      const next = new Set(prev);
+      if (next.has(orderId)) next.delete(orderId);
+      else next.add(orderId);
+      return next;
+    });
+  };
 
   // Modal de Conciliação & NF
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -330,6 +350,9 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
   });
   const [savingChannel, setSavingChannel] = useState(false);
 
+  // Modal de Relatório Financeiro Padronizado (PDF / XLSX)
+  const [isFinanceiroReportModalOpen, setIsFinanceiroReportModalOpen] = useState(false);
+
   // Modal de Relatório de Faturamento (PDF / XLSX)
   const [isBillingReportModalOpen, setIsBillingReportModalOpen] = useState(false);
   const [billingReportUnitId, setBillingReportUnitId] = useState<string>(activeUnitId);
@@ -338,12 +361,37 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
   const [billingReportStartDate, setBillingReportStartDate] = useState('');
   const [billingReportEndDate, setBillingReportEndDate] = useState('');
   const [exportingBillingFormat, setExportingBillingFormat] = useState<'PDF' | 'XLSX' | null>(null);
+  const [billingReportStep, setBillingReportStep] = useState<'config' | 'preview'>('config');
+  const [billingPreviewTab, setBillingPreviewTab] = useState<'pdf' | 'faturamento' | 'resumo'>('pdf');
+  const [billingPdfPreviewUrl, setBillingPdfPreviewUrl] = useState<string | null>(null);
+  const [preparingBillingPreview, setPreparingBillingPreview] = useState(false);
+  const billingPdfBlobRef = useRef<Blob | null>(null);
+
+  const clearBillingPreview = () => {
+    setBillingPdfPreviewUrl(prev => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    billingPdfBlobRef.current = null;
+  };
+
+  const closeBillingReportModal = () => {
+    clearBillingPreview();
+    setBillingReportStep('config');
+    setIsBillingReportModalOpen(false);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (billingPdfPreviewUrl) URL.revokeObjectURL(billingPdfPreviewUrl);
+    };
+  }, [billingPdfPreviewUrl]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (isBillingReportModalOpen) {
-          setIsBillingReportModalOpen(false);
+          closeBillingReportModal();
         } else if (isChannelsModalOpen) {
           setIsChannelsModalOpen(false);
         } else if (isModalOpen) {
@@ -356,6 +404,7 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
   }, [isModalOpen, isChannelsModalOpen, isBillingReportModalOpen]);
 
   const unitMap = useMemo(() => new Map(units.map(u => [u.id, u])), [units]);
+  const productMap = useMemo(() => new Map(products.map(p => [p.id, p])), [products]);
   const channelById = useMemo(
     () => new Map(financialChannels.map(c => [c.id, c])),
     [financialChannels]
@@ -368,6 +417,14 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
   const recordsByOrderId = useMemo(
     () => new Map(financialRecords.map(r => [r.pedidoId, r])),
     [financialRecords]
+  );
+
+  const allEligibleFinancialRows = useMemo(
+    () =>
+      orders
+        .filter(isOrderEligibleForFinancial)
+        .map(order => ({ order, record: recordsByOrderId.get(order.id) })),
+    [orders, recordsByOrderId]
   );
 
   const scopedEligibleOrders = useMemo(() => {
@@ -530,13 +587,29 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
             new Date(b.order.dataHoraEntrega || a.order.dataPedido).getTime()
           );
         }
-        if (sortBy === 'DATA_EXTRATO_DESC') {
+        if (sortBy === 'DATA_EXTRATO_DESC' || sortBy === 'DATA_EXTRATO_ASC') {
           const da = a.record?.dataExtrato || a.record?.dataPagamento || '';
           const db = b.record?.dataExtrato || b.record?.dataPagamento || '';
-          if (da !== db) return db.localeCompare(da);
+          if (da !== db) {
+            if (!da) return 1;
+            if (!db) return -1;
+            return sortBy === 'DATA_EXTRATO_DESC'
+              ? db.localeCompare(da)
+              : da.localeCompare(db);
+          }
           return b.order.numeroPedido.localeCompare(a.order.numeroPedido);
         }
         if (sortBy === 'VALOR_DESC') {
+          return (b.order.valorTotal || 0) - (a.order.valorTotal || 0);
+        }
+        if (sortBy === 'SALDO_DESC') {
+          const getSaldo = (item: { order: Order; record?: OrderFinancialRecord }) => {
+            const total = Number(item.order.valorTotal) || 0;
+            const conciliado = Number(item.record?.valorConciliado) || 0;
+            return total - conciliado;
+          };
+          const cmp = getSaldo(b) - getSaldo(a);
+          if (cmp !== 0) return cmp;
           return (b.order.valorTotal || 0) - (a.order.valorTotal || 0);
         }
         return a.order.clienteNome.localeCompare(b.order.clienteNome, 'pt-BR');
@@ -557,10 +630,26 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
         key = item.record?.meioPagamentoNome?.trim() || 'Sem Meio Definido';
       } else if (groupBy === 'LOJA_ORIGEM') {
         key = unitMap.get(item.order.unidadeOrigemId)?.nome || 'Loja Não Identificada';
+      } else if (groupBy === 'SITUACAO_NF') {
+        const nfStatus = getEffectiveInvoiceStatus(item.record);
+        if (nfStatus === 'EMITIDA') {
+          key = 'NF Emitida';
+        } else if (nfStatus === 'DISPENSADA') {
+          key = 'NF Dispensada';
+        } else if (isOrderReadyForInvoice(item.order, item.record)) {
+          key = 'Pronto para Emitir NF';
+        } else {
+          key = 'Aguardando Conciliação para NF';
+        }
       } else if (groupBy === 'DATA_EXTRATO') {
         key = item.record?.dataExtrato
           ? `${item.record.dataExtrato}::${formatDateBR(item.record.dataExtrato)}`
           : '9999-99-99::Sem Data no Extrato';
+      } else if (groupBy === 'DATA_PEDIDO') {
+        const pedDay = toLocalDateInput(item.order.dataPedido || '');
+        key = pedDay
+          ? `${pedDay}::${formatDateBR(pedDay)}`
+          : '9999-99-99::Sem Data do Pedido';
       }
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(item);
@@ -575,7 +664,10 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
         return ka.localeCompare(kb, 'pt-BR');
       })
       .map(([rawKey, items]) => ({
-        label: groupBy === 'DATA_EXTRATO' ? rawKey.split('::')[1] : rawKey,
+        label:
+          groupBy === 'DATA_EXTRATO' || groupBy === 'DATA_PEDIDO'
+            ? rawKey.split('::')[1]
+            : rawKey,
         items,
       }));
   }, [filteredRows, groupBy, unitMap]);
@@ -1463,50 +1555,6 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
     }
   };
 
-  const handleExportExcel = async () => {
-    const { exportFinanceiroStyledExcel } = await import('../utils/financeiroExcel');
-    const unitLabel =
-      activeUnitId === 'all'
-        ? 'Todas as Unidades'
-        : unitMap.get(activeUnitId)?.nome || 'Unidade';
-
-    const rows = filteredRows.map(({ order, record }) => {
-      const recStatus = getEffectiveReconciliationStatus(order, record);
-      const nfStatus = getEffectiveInvoiceStatus(record);
-      const conciliado = Number(record?.valorConciliado || 0);
-      const saldo = Math.max(0, Number((order.valorTotal - conciliado).toFixed(2)));
-      return {
-        numeroPedido: order.numeroPedido,
-        dataEntrega: formatDeliveryTimeRange(order.dataHoraEntrega, order.dataHoraEntregaFim, {
-          tipoEntrega: order.tipoEntrega,
-          turnoEntrega: order.tipoEntrega === 'DELIVERY' ? order.turnoEntrega : undefined,
-        }),
-        unidadeNome: unitMap.get(order.unidadeOrigemId)?.nome || '-',
-        clienteNome: order.clienteNome,
-        statusPedido: ORDER_STATUS_LABELS[order.status],
-        valorTotal: Number(order.valorTotal || 0),
-        conciliacaoStatus: RECONCILIATION_STATUS_LABELS[recStatus],
-        meioPagamento: record?.meioPagamentoNome || '—',
-        dataPagamento: formatDateBR(record?.dataPagamento),
-        dataExtrato: formatDateBR(record?.dataExtrato),
-        valorConciliado: conciliado,
-        saldoPendente: saldo,
-        nfStatus: INVOICE_STATUS_LABELS[nfStatus],
-        nfDataEmissao: formatDateBR(record?.nfDataEmissao),
-        nfObservacoes: record?.nfObservacoes || record?.observacoes || '',
-      };
-    });
-
-    exportFinanceiroStyledExcel({
-      unitLabel,
-      filterLabel: FILTER_LABELS[statusFilter],
-      dateFilterLabel: `Pedido: ${DATE_FILTER_LABELS[orderDateFilter]} • Extrato: ${DATE_FILTER_LABELS[statementDateFilter]}`,
-      generatedAtLabel: new Date().toLocaleString('pt-BR'),
-      rows,
-      channelsSummary: summary.byChannel,
-    });
-  };
-
   const canDeleteChannels = userProfile.role === 'ADMIN';
 
   const renderConciliationToggle = (
@@ -1590,71 +1638,174 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
     }
 
     const isIssued = nfStatus === 'EMITIDA';
-    const canClickEmitida = canToggleInvoice;
-    const canClickPendente = isIssued || canToggleInvoice;
-    const isBlockedEmitida = !isIssued && !canClickEmitida;
-    const isBlockedPendente = !canClickPendente;
+    const canClickCheck = isIssued || canToggleInvoice;
+    const checkTitle =
+      !isIssued && !canToggleInvoice
+        ? blockedMsg
+        : isIssued
+        ? `${
+            record?.nfDataEmissao
+              ? `NF Emitida em ${formatDateBR(record.nfDataEmissao)}`
+              : 'NF Emitida'
+          } — clique para desmarcar (voltar para A emitir)`
+        : 'Marcar Nota Fiscal como Emitida';
 
     return (
       <div
         className="inline-flex flex-col items-center gap-0.5 print:hidden"
         onClick={e => e.stopPropagation()}
       >
-        <div
-          className={`inline-flex flex-col items-stretch rounded-lg border border-slate-200 bg-slate-100 p-0.5 gap-0.5 min-w-[64px] transition-opacity ${
-            !canToggleInvoice && !isIssued ? 'opacity-60' : ''
-          }`}
-          role="group"
+        <button
+          type="button"
+          role="checkbox"
+          aria-checked={isIssued}
           aria-label={`Nota Fiscal do pedido ${order.numeroPedido}`}
+          title={checkTitle}
+          disabled={isSaving || !canClickCheck}
+          onClick={e => {
+            e.stopPropagation();
+            void handleToggleInvoice(order, record, !isIssued);
+          }}
+          className={`inline-flex items-center justify-center w-6 h-6 rounded-md border-2 transition-all disabled:cursor-not-allowed ${
+            isIssued
+              ? 'bg-red-600 border-red-600 text-white shadow-2xs hover:bg-red-700 hover:border-red-700 cursor-pointer disabled:opacity-60'
+              : canToggleInvoice
+              ? 'bg-white border-slate-300 text-transparent hover:border-red-500 cursor-pointer disabled:opacity-60'
+              : 'bg-slate-100 border-slate-200 text-transparent opacity-60 cursor-not-allowed'
+          }`}
         >
-          <button
-            type="button"
-            disabled={isSaving || isBlockedEmitida}
-            title={
-              isBlockedEmitida
-                ? blockedMsg
-                : isIssued
-                ? 'NF Emitida'
-                : 'Marcar NF como Emitida'
-            }
-            onClick={() => void handleToggleInvoice(order, record, true)}
-            className={`w-full px-2 py-0.5 text-center rounded-md text-[10px] font-bold transition-all whitespace-nowrap ${
-              isIssued
-                ? 'bg-emerald-600 text-white shadow-2xs cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed'
-                : isBlockedEmitida
-                ? 'opacity-50 cursor-not-allowed text-slate-400'
-                : 'text-slate-600 hover:text-emerald-700 cursor-pointer disabled:opacity-60'
-            }`}
-          >
-            Emitida
-          </button>
-          <button
-            type="button"
-            disabled={isSaving || isBlockedPendente}
-            title={
-              isBlockedPendente
-                ? blockedMsg
-                : !isIssued
-                ? 'NF A emitir'
-                : 'Voltar NF para A emitir'
-            }
-            onClick={() => void handleToggleInvoice(order, record, false)}
-            className={`w-full px-2 py-0.5 text-center rounded-md text-[10px] font-bold transition-all whitespace-nowrap ${
-              !isIssued
-                ? 'bg-rose-600 text-white shadow-2xs cursor-pointer disabled:cursor-not-allowed'
-                : isBlockedPendente
-                ? 'opacity-50 cursor-not-allowed text-slate-400'
-                : 'text-slate-600 hover:text-rose-700 cursor-pointer disabled:opacity-60'
-            }`}
-          >
-            A emitir
-          </button>
-        </div>
+          <Check className="w-3.5 h-3.5 stroke-[3]" aria-hidden="true" />
+        </button>
         {isIssued && record?.nfDataEmissao && (
-          <span className="text-[9px] font-mono text-emerald-700">
+          <span className="text-[9px] font-mono text-red-700">
             {formatDateBR(record.nfDataEmissao)}
           </span>
         )}
+      </div>
+    );
+  };
+
+  const renderOrderItemsSummary = (order: Order) => {
+    const items = order.itens || [];
+    const itemsSubtotal = items.reduce((sum, item) => {
+      const qty = Number(item.quantidade) || 0;
+      const unitPrice = Number(item.precoUnitario) || 0;
+      const lineTotal =
+        item.subtotal !== undefined && item.subtotal !== null
+          ? Number(item.subtotal) || 0
+          : qty * unitPrice;
+      return sum + lineTotal;
+    }, 0);
+    const subtotalProdutos =
+      Number(order.valorSubtotal) > 0 ? Number(order.valorSubtotal) : itemsSubtotal;
+    const frete = Number(order.taxaEntrega) || 0;
+    const desconto = Number(order.desconto) || 0;
+    const totalPedido = Number(order.valorTotal) || 0;
+
+    return (
+      <div className="bg-emerald-50 border border-emerald-200 rounded-lg overflow-hidden shadow-2xs">
+        <div className="bg-emerald-100/80 border-b border-emerald-200 px-3 py-1.5 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-bold text-slate-800">
+              Resumo do Pedido {order.numeroPedido}
+            </span>
+            <span className="px-1.5 py-0.5 rounded-full bg-emerald-200/70 text-emerald-900 text-[10px] font-mono font-semibold">
+              {items.length} {items.length === 1 ? 'item' : 'itens'}
+            </span>
+          </div>
+          <span
+            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+              order.tipoEntrega === 'DELIVERY'
+                ? 'bg-blue-50 text-blue-700 border-blue-200'
+                : 'bg-amber-50 text-amber-700 border-amber-200'
+            }`}
+          >
+            {order.tipoEntrega === 'DELIVERY' ? 'Delivery' : 'Retirada'}
+          </span>
+        </div>
+
+        <div className="overflow-x-auto max-w-full">
+          <table className="w-full text-left border-collapse text-[11px]">
+            <thead className="bg-emerald-100/50 border-b border-emerald-200 text-[10px] font-mono uppercase tracking-tight text-emerald-800">
+              <tr>
+                <th className="py-1.5 px-3 font-semibold">Produto</th>
+                <th className="py-1.5 px-2 font-semibold text-right whitespace-nowrap">Qtd.</th>
+                <th className="py-1.5 px-2 font-semibold text-right whitespace-nowrap">
+                  Valor Unit.
+                </th>
+                <th className="py-1.5 px-3 font-semibold text-right whitespace-nowrap">
+                  Valor Total
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-emerald-200/60">
+              {items.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="py-3 px-3 text-center text-slate-400 italic">
+                    Nenhum produto registrado neste pedido.
+                  </td>
+                </tr>
+              ) : (
+                items.map((item, idx) => {
+                  const prod = productMap.get(item.produtoId);
+                  const qty = Number(item.quantidade) || 0;
+                  const unitPrice = Number(item.precoUnitario) || 0;
+                  const lineTotal =
+                    item.subtotal !== undefined && item.subtotal !== null
+                      ? Number(item.subtotal) || 0
+                      : qty * unitPrice;
+
+                  return (
+                    <tr key={item.id || `${order.id}-item-${idx}`} className="bg-emerald-50/70">
+                      <td className="py-1.5 px-3 text-slate-800">
+                        <div className="font-semibold">
+                          {prod?.descricao || 'Produto não identificado'}
+                        </div>
+                        {item.observacoes && (
+                          <div className="text-[10px] text-slate-500">{item.observacoes}</div>
+                        )}
+                      </td>
+                      <td className="py-1.5 px-2 text-right font-mono text-slate-700 whitespace-nowrap">
+                        {qty}
+                        {prod?.unidade ? ` ${prod.unidade}` : ''}
+                      </td>
+                      <td className="py-1.5 px-2 text-right font-mono text-slate-700 whitespace-nowrap">
+                        R$ {formatCurrencyBR(unitPrice)}
+                      </td>
+                      <td className="py-1.5 px-3 text-right font-mono font-semibold text-slate-900 whitespace-nowrap">
+                        R$ {formatCurrencyBR(lineTotal)}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="px-3 py-2 bg-emerald-100/60 border-t border-emerald-200 flex flex-wrap items-center justify-end gap-x-5 gap-y-1 text-[11px] font-mono">
+          <span className="text-slate-600">
+            Subtotal Produtos:{' '}
+            <strong className="text-slate-800">R$ {formatCurrencyBR(subtotalProdutos)}</strong>
+          </span>
+          <span className="text-slate-600">
+            Frete:{' '}
+            <strong className="text-slate-800">R$ {formatCurrencyBR(frete)}</strong>
+            {order.tipoEntrega === 'RETIRADA' && frete <= 0 && (
+              <span className="text-[10px] font-sans text-slate-500 ml-1">(Retirada)</span>
+            )}
+          </span>
+          {desconto > 0 && (
+            <span className="text-rose-700">
+              Desconto:{' '}
+              <strong>- R$ {formatCurrencyBR(desconto)}</strong>
+            </span>
+          )}
+          <span className="text-slate-900 text-xs">
+            Total do Pedido:{' '}
+            <strong className="font-bold">R$ {formatCurrencyBR(totalPedido)}</strong>
+          </span>
+        </div>
       </div>
     );
   };
@@ -1879,12 +2030,33 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
     return true;
   };
 
+  const handleOpenBillingPreview = async () => {
+    if (!validateBillingDateRange() || preparingBillingPreview) return;
+    setPreparingBillingPreview(true);
+    clearBillingPreview();
+    try {
+      const { buildFaturamentoPdfBlob } = await import('../utils/faturamentoReportPdf');
+      const blob = buildFaturamentoPdfBlob(billingReportData);
+      billingPdfBlobRef.current = blob;
+      setBillingPdfPreviewUrl(URL.createObjectURL(blob));
+      setBillingPreviewTab('pdf');
+      setBillingReportStep('preview');
+    } finally {
+      setPreparingBillingPreview(false);
+    }
+  };
+
   const handleExportBillingPdf = async () => {
     if (!validateBillingDateRange()) return;
     setExportingBillingFormat('PDF');
     try {
-      const { exportFaturamentoPdf } = await import('../utils/faturamentoReportPdf');
-      exportFaturamentoPdf(billingReportData);
+      if (billingReportStep === 'preview' && billingPdfBlobRef.current) {
+        const { downloadFaturamentoPdfBlob } = await import('../utils/faturamentoReportPdf');
+        downloadFaturamentoPdfBlob(billingPdfBlobRef.current);
+      } else {
+        const { exportFaturamentoPdf } = await import('../utils/faturamentoReportPdf');
+        exportFaturamentoPdf(billingReportData);
+      }
     } finally {
       setExportingBillingFormat(null);
     }
@@ -1979,20 +2151,45 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
     );
   };
 
+  const activeFilterBadgeText = (() => {
+    const statusLabels: Record<FinancialStatusFilter, string> = {
+      TODOS: 'Todos',
+      PENDENTES_GERAL: 'Pendentes (Conc./NF)',
+      PRONTOS_PARA_NF: 'Prontos p/ Emitir NF',
+      PENDENTE_CONCILIACAO: 'Pendente Conciliação',
+      PENDENTE_NF: 'Pendente de NF',
+      CONCLUIDOS: 'Conciliado + NF OK',
+    };
+    const parts = [statusLabels[statusFilter] || statusFilter];
+    if (orderDateFilter !== 'TODOS') {
+      parts.push(`Pedido: ${DATE_FILTER_LABELS[orderDateFilter]}`);
+    }
+    if (statementDateFilter !== 'TODOS') {
+      parts.push(`Extrato: ${DATE_FILTER_LABELS[statementDateFilter]}`);
+    }
+    if (searchTerm.trim()) {
+      parts.push(`Busca: "${searchTerm.trim()}"`);
+    }
+    return `${filteredRows.length} pedidos • ${parts.join(' • ')}`;
+  })();
+
   return (
     <div className="flex-1 min-h-0 min-w-0 w-full flex flex-col h-full bg-[#f8f9ff] overflow-hidden">
       {/* Header */}
-      <div className="shrink-0 flex flex-col md:flex-row md:items-center justify-between md:bg-white md:border-b md:border-[#e2e8f0] md:px-4 lg:px-5 md:py-3 md:gap-4 print:hidden">
-        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2.5 md:p-0 md:bg-transparent md:border-b-0">
-          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex flex-wrap items-center gap-2">
+      <div className="shrink-0 min-w-0 flex flex-col md:flex-row md:flex-wrap md:items-center justify-between md:bg-white md:border-b md:border-[#e2e8f0] md:px-4 lg:px-5 md:py-2.5 md:gap-2 print:hidden">
+        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2.5 md:p-0 md:bg-transparent md:border-b-0 min-w-0">
+          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex flex-wrap items-center gap-2 min-w-0">
             <span>Financeiro</span>
-            <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800">
-              {filteredRows.length} pedidos
+            <span
+              className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 max-w-full truncate"
+              title={activeFilterBadgeText}
+            >
+              {activeFilterBadgeText}
             </span>
           </h1>
         </div>
 
-        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex flex-wrap items-center gap-2">
+        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex flex-wrap items-center gap-2 min-w-0">
           <div
             className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-white p-0.5 shadow-2xs shrink-0"
             role="group"
@@ -2040,6 +2237,9 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
           <button
             type="button"
             onClick={() => {
+              clearBillingPreview();
+              setBillingReportStep('config');
+              setBillingPreviewTab('pdf');
               setBillingReportUnitId(activeUnitId);
               setIsBillingReportModalOpen(true);
             }}
@@ -2053,12 +2253,12 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
 
           <button
             type="button"
-            onClick={handleExportExcel}
-            title="Exportar Excel"
-            aria-label="Exportar Excel"
-            className="flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors shadow-xs cursor-pointer"
+            onClick={() => setIsFinanceiroReportModalOpen(true)}
+            title="Exportar Relatório Financeiro (PDF / XLSX)"
+            aria-label="Exportar Relatório Financeiro (PDF / XLSX)"
+            className="flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-xs cursor-pointer"
           >
-            <Download className="w-4 h-4" />
+            <Download className="w-4 h-4 text-slate-500" />
           </button>
 
           <button
@@ -2074,12 +2274,13 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
       </div>
 
       {/* Filters & Search */}
-      <div className="shrink-0 flex flex-col md:flex-row md:flex-wrap md:items-center justify-between md:bg-white/70 md:border-b md:border-[#e2e8f0] md:px-4 lg:px-5 md:py-2 md:gap-2 print:hidden">
-        <div className="bg-white/70 border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex items-center w-full md:w-auto min-w-0 overflow-hidden">
+      <div className="shrink-0 min-w-0 flex flex-col md:flex-row md:flex-wrap md:items-center justify-between md:bg-white/70 md:border-b md:border-[#e2e8f0] md:px-4 lg:px-5 md:py-2 md:gap-2 print:hidden">
+        <div className="bg-white/70 border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex items-center w-full md:w-auto md:max-w-full min-w-0 overflow-hidden">
           <HybridFilterSort
             dateLabel="Data do Pedido:"
             dateValue={orderDateFilter}
             onDateChange={v => setOrderDateFilter(v as FinancialDateFilter)}
+            dateActive={orderDateFilter !== 'TODOS'}
             dateOptions={[
               { value: 'TODOS', label: 'Pedido: Todo o Período' },
               { value: 'MES_ATUAL', label: 'Pedido: Mês Atual' },
@@ -2089,6 +2290,7 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
             secondDateLabel="Data do Extrato:"
             secondDateValue={statementDateFilter}
             onSecondDateChange={v => setStatementDateFilter(v as FinancialDateFilter)}
+            secondDateActive={statementDateFilter !== 'TODOS'}
             secondDateOptions={[
               { value: 'TODOS', label: 'Extrato: Todo o Período' },
               { value: 'MES_ATUAL', label: 'Extrato: Mês Atual' },
@@ -2098,6 +2300,7 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
             filterLabel="Situação:"
             filterValue={statusFilter}
             onFilterChange={v => setStatusFilter(v as FinancialStatusFilter)}
+            filterActive={statusFilter !== 'TODOS'}
             filterOptions={[
               { value: 'PENDENTES_GERAL', label: 'Pendentes (Conc./NF)' },
               { value: 'PRONTOS_PARA_NF', label: 'Prontos p/ Emitir NF' },
@@ -2113,7 +2316,9 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
               { value: 'DATA_PEDIDO_DESC', label: 'Data Pedido ↓' },
               { value: 'PRIORIDADE_NF', label: 'Prioridade NF / Entrega ↑' },
               { value: 'DATA_EXTRATO_DESC', label: 'Data Extrato ↓' },
+              { value: 'DATA_EXTRATO_ASC', label: 'Data Extrato ↑' },
               { value: 'VALOR_DESC', label: 'Maior Valor' },
+              { value: 'SALDO_DESC', label: 'Maior Saldo Pendente' },
               { value: 'CLIENTE_ASC', label: 'Cliente (A-Z)' },
             ]}
             groupValue={groupBy}
@@ -2122,9 +2327,23 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
               { value: 'PENDENCIA', label: 'Pendência' },
               { value: 'MEIO_PAGAMENTO', label: 'Meio Pagamento' },
               { value: 'LOJA_ORIGEM', label: 'Loja Origem' },
+              { value: 'SITUACAO_NF', label: 'Situação NF' },
               { value: 'DATA_EXTRATO', label: 'Data Extrato' },
+              { value: 'DATA_PEDIDO', label: 'Data Pedido' },
               { value: 'NENHUM', label: 'Sem Agrupamento' },
             ]}
+            hasActiveFilters={
+              orderDateFilter !== 'TODOS' ||
+              statementDateFilter !== 'TODOS' ||
+              statusFilter !== 'TODOS' ||
+              searchTerm.trim() !== ''
+            }
+            onResetFilters={() => {
+              setOrderDateFilter('TODOS');
+              setStatementDateFilter('TODOS');
+              setStatusFilter('TODOS');
+              setSearchTerm('');
+            }}
           />
         </div>
 
@@ -2207,7 +2426,7 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
                     )}
 
                     {expanded && (
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                      <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3">
                         {group.items.map(({ order, record }) => {
                           const recStatus = getEffectiveReconciliationStatus(order, record);
                           const isConciliated = recStatus === 'CONCILIADO';
@@ -2217,6 +2436,7 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
                           const payStatus = getEffectivePaymentStatus(order);
                           const isSelected = isModalOpen && editingOrder?.id === order.id;
                           const isSaving = savingInlineOrderId === order.id;
+                          const isOrderExpanded = expandedOrderIds.has(order.id);
                           const unitName = unitMap.get(order.unidadeOrigemId)?.nome || '—';
                           const {
                             entries,
@@ -2429,6 +2649,34 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
                                     </span>
                                   </div>
                                 </div>
+
+                                <div
+                                  className="space-y-2"
+                                  onClick={e => e.stopPropagation()}
+                                >
+                                  <button
+                                    type="button"
+                                    aria-expanded={isOrderExpanded}
+                                    onClick={() => toggleOrderExpanded(order.id)}
+                                    className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-[11px] font-semibold text-slate-700 cursor-pointer transition-colors"
+                                  >
+                                    <span className="inline-flex items-center gap-1.5">
+                                      {isOrderExpanded ? (
+                                        <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                      ) : (
+                                        <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                      )}
+                                      <span>
+                                        Resumo do pedido ({order.itens?.length || 0}{' '}
+                                        {(order.itens?.length || 0) === 1 ? 'item' : 'itens'})
+                                      </span>
+                                    </span>
+                                    <span className="text-[10px] font-mono text-slate-500">
+                                      {isOrderExpanded ? 'Ocultar' : 'Ver itens'}
+                                    </span>
+                                  </button>
+                                  {isOrderExpanded && renderOrderItemsSummary(order)}
+                                </div>
                               </div>
 
                               <div
@@ -2478,7 +2726,7 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
           id="print-report-area"
           className={
             viewMode === 'TABLE'
-              ? 'flex-1 min-h-0 bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-auto max-w-full max-h-full print:overflow-visible print:max-h-none'
+              ? 'w-full min-w-0 min-h-0 bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-auto max-w-full max-h-full print:overflow-visible print:max-h-none'
               : 'hidden print:block bg-white'
           }
         >
@@ -2489,33 +2737,33 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
           />
           <table className="w-full text-left border-collapse">
             <colgroup>
-              <col className="w-[132px]" />
-              <col className="min-w-[155px]" />
-              <col className="w-[106px]" />
-              <col className="w-[122px]" />
-              <col className="w-[228px]" />
-              <col className="w-[70px]" />
-              <col className="w-[80px]" />
+              <col className="w-[126px]" />
+              <col className="min-w-[120px]" />
+              <col className="w-[96px]" />
+              <col className="w-[104px]" />
+              <col className="w-[208px]" />
+              <col className="w-[62px]" />
+              <col className="w-[58px]" />
             </colgroup>
             <thead className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200 text-[10px] font-mono uppercase tracking-tight text-slate-500">
               <tr>
-                <th className="py-2 px-2 font-semibold whitespace-nowrap">Pedido / Data / Status</th>
-                <th className="py-2 px-2 font-semibold whitespace-nowrap">
+                <th className="py-2 px-1.5 font-semibold leading-tight">Pedido / Data / Status</th>
+                <th className="py-2 px-1.5 font-semibold leading-tight">
                   {hideUnidadeCol ? 'Cliente / Entrega' : 'Cliente / Entrega / Unidade'}
                 </th>
-                <th className="py-2 px-2 font-semibold leading-tight w-[106px]">
+                <th className="py-2 px-1.5 font-semibold leading-tight">
                   Forma / Pagamento
                 </th>
-                <th className="py-2 px-2 font-semibold text-right whitespace-nowrap">
+                <th className="py-2 px-1.5 font-semibold text-right leading-tight">
                   Valor Pedido
                 </th>
-                <th className="py-2 px-2 font-semibold whitespace-nowrap">
+                <th className="py-2 px-1.5 font-semibold leading-tight">
                   Valor / Data do Extrato
                 </th>
-                <th className="py-2 px-1.5 font-semibold text-center whitespace-nowrap">
+                <th className="py-2 px-1 font-semibold text-center whitespace-nowrap">
                   Conciliado
                 </th>
-                <th className="py-2 px-1.5 font-semibold text-center whitespace-nowrap">
+                <th className="py-2 px-1 font-semibold text-center leading-tight">
                   Nota Fiscal
                 </th>
               </tr>
@@ -2545,36 +2793,36 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
                           >
                             <span className="inline-flex items-center gap-1.5">
                               {expanded ? (
-                                <ChevronDown className="w-3.5 h-3.5" />
+                                <ChevronDown className="w-3.5 h-3.5 shrink-0" />
                               ) : (
-                                <ChevronRight className="w-3.5 h-3.5" />
+                                <ChevronRight className="w-3.5 h-3.5 shrink-0" />
                               )}
                               <span>
                                 {group.label} ({group.items.length})
                               </span>
                             </span>
                           </td>
-                          <td className="py-2 px-2 text-right font-mono whitespace-nowrap">
-                            <span className="text-[9px] font-sans font-semibold uppercase tracking-normal text-slate-500 mr-1">
-                              Pedido:
-                            </span>
-                            <span className="text-[11px] font-bold text-slate-900">
+                          <td className="py-1.5 px-1.5 text-right font-mono leading-tight whitespace-nowrap">
+                            <div className="text-[9px] font-sans font-semibold uppercase tracking-normal text-slate-500">
+                              Pedido
+                            </div>
+                            <div className="text-[11px] font-bold text-slate-900">
                               R$ {formatCurrencyBR(totalPedido)}
-                            </span>
+                            </div>
                           </td>
-                          <td className="py-2 px-2 text-left font-mono whitespace-nowrap">
-                            <span className="text-[9px] font-sans font-semibold uppercase tracking-normal text-slate-500 mr-1">
-                              Extrato:
-                            </span>
-                            <span
+                          <td className="py-1.5 px-1.5 text-left font-mono leading-tight whitespace-nowrap">
+                            <div className="text-[9px] font-sans font-semibold uppercase tracking-normal text-slate-500">
+                              Extrato
+                            </div>
+                            <div
                               className={`text-[11px] font-bold ${
                                 totalExtrato > 0 ? 'text-emerald-700' : 'text-slate-600'
                               }`}
                             >
                               R$ {formatCurrencyBR(totalExtrato)}
-                            </span>
+                            </div>
                           </td>
-                          <td colSpan={2} className="py-2 px-1.5" />
+                          <td colSpan={2} className="py-2 px-1" />
                         </tr>
                       )}
                       {expanded &&
@@ -2586,7 +2834,17 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
                           const payStatus = getEffectivePaymentStatus(order);
                           const isSelected = isModalOpen && editingOrder?.id === order.id;
                           const isSaving = savingInlineOrderId === order.id;
+                          const isOrderExpanded = expandedOrderIds.has(order.id);
                           const unitName = unitMap.get(order.unidadeOrigemId)?.nome || '—';
+                          const deliveryTimeText = formatDeliveryTimeRange(
+                            order.dataHoraEntrega,
+                            order.dataHoraEntregaFim,
+                            {
+                              tipoEntrega: order.tipoEntrega,
+                              turnoEntrega:
+                                order.tipoEntrega === 'DELIVERY' ? order.turnoEntrega : undefined,
+                            }
+                          );
                           const {
                             entries,
                             draftTotals,
@@ -2606,365 +2864,407 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
                             ? 'border-l-4 border-l-rose-500'
                             : '';
 
-                          return entries.map((entry, entryIdx) => {
-                            const resolvedCh =
-                              (entry.meioPagamentoId
-                                ? channelById.get(entry.meioPagamentoId)
-                                : undefined) ||
-                              (entry.meioPagamentoNome
-                                ? channelByName.get(entry.meioPagamentoNome.toLowerCase())
-                                : undefined);
-                            const channelSelectVal =
-                              resolvedCh?.id ||
-                              entry.meioPagamentoId ||
-                              entry.meioPagamentoNome ||
-                              '';
-                            const isCash = isEntryCash(entry, financialChannels);
-                            const entryDateVal =
-                              entry.dataExtrato || (isCash ? entry.dataPagamento : '') || '';
-                            const missingDateWarning = getEntryMissingDateWarning(
-                              entry,
-                              financialChannels
-                            );
+                          return (
+                            <React.Fragment key={order.id}>
+                              {entries.map((entry, entryIdx) => {
+                                const resolvedCh =
+                                  (entry.meioPagamentoId
+                                    ? channelById.get(entry.meioPagamentoId)
+                                    : undefined) ||
+                                  (entry.meioPagamentoNome
+                                    ? channelByName.get(entry.meioPagamentoNome.toLowerCase())
+                                    : undefined);
+                                const channelSelectVal =
+                                  resolvedCh?.id ||
+                                  entry.meioPagamentoId ||
+                                  entry.meioPagamentoNome ||
+                                  '';
+                                const isCash = isEntryCash(entry, financialChannels);
+                                const entryDateVal =
+                                  entry.dataExtrato || (isCash ? entry.dataPagamento : '') || '';
+                                const missingDateWarning = getEntryMissingDateWarning(
+                                  entry,
+                                  financialChannels
+                                );
 
-                            return (
-                              <tr
-                                key={`${order.id}-${entry.id || entryIdx}`}
-                                onClick={() => openConciliationModal(order)}
-                                className={`cursor-pointer transition-colors hover:bg-slate-50/80 ${rowBgClass} ${
-                                  entryIdx === 0 ? 'border-t border-slate-200' : ''
-                                }`}
-                              >
-                                {entryIdx === 0 && (
-                                  <>
-                                    <td
-                                      rowSpan={rowCount}
-                                      className={`py-2 px-2 align-top font-mono font-bold text-[11px] text-slate-900 whitespace-nowrap ${accentBorderClass}`}
-                                    >
-                                      <div>{renderOrderNumberControl(order)}</div>
-                                      <div className="text-[10px] font-mono font-normal text-slate-500 mt-0.5">
-                                        {formatDateBR(order.dataPedido)}
-                                      </div>
-                                      <div className="flex flex-wrap items-center gap-1 mt-1">
-                                        <span
-                                          className={`px-1.5 py-0.5 rounded-full text-[9px] font-sans font-semibold border ${ORDER_STATUS_BADGES[order.status]}`}
+                                return (
+                                  <tr
+                                    key={`${order.id}-${entry.id || entryIdx}`}
+                                    onClick={() => openConciliationModal(order)}
+                                    className={`cursor-pointer transition-colors hover:bg-slate-50/80 ${rowBgClass} ${
+                                      entryIdx === 0 ? 'border-t border-slate-200' : ''
+                                    }`}
+                                  >
+                                    {entryIdx === 0 && (
+                                      <>
+                                        <td
+                                          rowSpan={rowCount}
+                                          className={`py-2 px-1.5 align-top font-mono font-bold text-[11px] text-slate-900 whitespace-nowrap ${accentBorderClass}`}
                                         >
-                                          {ORDER_STATUS_LABELS[order.status]}
-                                        </span>
-                                      </div>
-                                    </td>
-                                    <td rowSpan={rowCount} className="py-2 px-2 align-top text-[11px]">
-                                      <div
-                                        className="font-bold text-slate-900 max-w-[175px] xl:max-w-[240px] 2xl:max-w-[300px] truncate"
-                                        title={order.clienteNome}
-                                      >
-                                        {order.clienteNome}
-                                      </div>
-                                      <div className="text-[10px] font-mono text-slate-500 mt-0.5 whitespace-nowrap">
-                                        {formatDeliveryTimeRange(
-                                          order.dataHoraEntrega,
-                                          order.dataHoraEntregaFim,
-                                          {
-                                            tipoEntrega: order.tipoEntrega,
-                                            turnoEntrega:
-                                              order.tipoEntrega === 'DELIVERY'
-                                                ? order.turnoEntrega
-                                                : undefined,
-                                          }
-                                        )}
-                                      </div>
-                                      {!hideUnidadeCol && (
-                                        <div className="mt-1">
-                                          {renderUnitBadge(
-                                            order.unidadeOrigemId,
-                                            unitName,
-                                            'max-w-[145px] xl:max-w-[180px]'
+                                          <div className="flex items-start gap-1">
+                                            <button
+                                              type="button"
+                                              aria-expanded={isOrderExpanded}
+                                              aria-label={
+                                                isOrderExpanded
+                                                  ? `Ocultar resumo do pedido ${order.numeroPedido}`
+                                                  : `Expandir resumo do pedido ${order.numeroPedido}`
+                                              }
+                                              title={
+                                                isOrderExpanded
+                                                  ? 'Ocultar resumo do pedido'
+                                                  : 'Expandir resumo do pedido'
+                                              }
+                                              onClick={e => {
+                                                e.stopPropagation();
+                                                toggleOrderExpanded(order.id);
+                                              }}
+                                              className="mt-0.5 p-0.5 rounded hover:bg-slate-200/80 text-slate-500 hover:text-slate-900 transition-colors cursor-pointer shrink-0 print:hidden"
+                                            >
+                                              {isOrderExpanded ? (
+                                                <ChevronDown className="w-3.5 h-3.5" />
+                                              ) : (
+                                                <ChevronRight className="w-3.5 h-3.5" />
+                                              )}
+                                            </button>
+                                            <div className="min-w-0">
+                                              <div>{renderOrderNumberControl(order)}</div>
+                                              <div className="text-[10px] font-mono font-normal text-slate-500 mt-0.5">
+                                                {formatDateBR(order.dataPedido)}
+                                              </div>
+                                              <div className="flex flex-wrap items-center gap-1 mt-1">
+                                                <span
+                                                  className={`px-1.5 py-0.5 rounded-full text-[9px] font-sans font-semibold border ${ORDER_STATUS_BADGES[order.status]}`}
+                                                >
+                                                  {ORDER_STATUS_LABELS[order.status]}
+                                                </span>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        </td>
+                                        <td
+                                          rowSpan={rowCount}
+                                          className="py-2 px-1.5 align-top text-[11px] max-w-[150px] xl:max-w-[200px] 2xl:max-w-[280px]"
+                                        >
+                                          <div
+                                            className="font-bold text-slate-900 truncate"
+                                            title={order.clienteNome}
+                                          >
+                                            {order.clienteNome}
+                                          </div>
+                                          <div
+                                            className="text-[10px] font-mono text-slate-500 mt-0.5 truncate"
+                                            title={deliveryTimeText}
+                                          >
+                                            {deliveryTimeText}
+                                          </div>
+                                          {!hideUnidadeCol && (
+                                            <div className="mt-1">
+                                              {renderUnitBadge(
+                                                order.unidadeOrigemId,
+                                                unitName,
+                                                'max-w-full'
+                                              )}
+                                            </div>
+                                          )}
+                                        </td>
+                                        <td rowSpan={rowCount} className="py-2 px-1.5 align-top text-[11px]">
+                                          <div className="flex flex-col items-start gap-1">
+                                            {renderOrderPaymentMethodBadge(order)}
+                                            {renderOrderPaymentStatusBadge(order, payStatus)}
+                                          </div>
+                                          {payStatus === 'SINAL' && (
+                                            <div className="text-[10px] font-mono text-sky-700 mt-0.5 whitespace-nowrap">
+                                              Sinal: R$ {formatCurrencyBR(getOrderPaidAmount(order))}
+                                            </div>
+                                          )}
+                                          {order.formaPagamento === 'dinheiro' && order.trocoPara && (
+                                            <div className="text-[10px] font-mono text-slate-600 mt-0.5 whitespace-nowrap">
+                                              Troco p/ R$ {formatCurrencyBR(order.trocoPara)}
+                                            </div>
+                                          )}
+                                          {order.instrucoesPagamento && (
+                                            <div
+                                              className="text-[10px] text-slate-500 mt-0.5 max-w-[90px] truncate"
+                                              title={order.instrucoesPagamento}
+                                            >
+                                              {order.instrucoesPagamento}
+                                            </div>
+                                          )}
+                                        </td>
+                                        <td
+                                          rowSpan={rowCount}
+                                          className="py-2 px-1.5 align-top text-right font-mono font-bold text-[11px] text-slate-900 whitespace-nowrap"
+                                        >
+                                          <div>
+                                            <button
+                                              type="button"
+                                              disabled={isConciliated}
+                                              onClick={e => {
+                                                e.stopPropagation();
+                                                handleReplicateOrderValueToStatement(order, record);
+                                              }}
+                                              title={
+                                                isConciliated
+                                                  ? 'Pedido conciliado — desmarque Conciliado para editar o extrato'
+                                                  : 'Clique para replicar o valor do pedido para o Valor do Extrato'
+                                              }
+                                              className="hover:text-brand-700 hover:underline cursor-pointer disabled:hover:no-underline disabled:hover:text-slate-900 disabled:cursor-default print:no-underline print:text-slate-900"
+                                            >
+                                              R$ {formatCurrencyBR(order.valorTotal)}
+                                            </button>
+                                          </div>
+                                          <div
+                                            className={`text-[10px] font-semibold mt-0.5 ${
+                                              entriesTotal > 0 &&
+                                              Math.abs(entriesTotal - order.valorTotal) <= 0.01
+                                                ? 'text-emerald-700'
+                                                : 'text-slate-600'
+                                            }`}
+                                          >
+                                            Pago: R$ {formatCurrencyBR(entriesTotal)}
+                                          </div>
+                                          <div
+                                            className={`flex items-center justify-end gap-1 text-[10px] font-semibold mt-0.5 ${
+                                              saldoDevedor > 0.009 ? 'text-rose-600' : 'text-emerald-700'
+                                            }`}
+                                          >
+                                            {saldoDevedor <= 0.009 && (
+                                              <CheckCircle2
+                                                className="w-3 h-3 text-emerald-600 shrink-0"
+                                                aria-hidden="true"
+                                              />
+                                            )}
+                                            <span>Saldo: R$ {formatCurrencyBR(saldoDevedor)}</span>
+                                          </div>
+                                        </td>
+                                      </>
+                                    )}
+
+                                    <td
+                                      className={`py-2 px-1.5 align-middle text-[11px] ${
+                                        entryIdx > 0 ? 'border-t border-dashed border-slate-200/80' : ''
+                                      }`}
+                                      onClick={e => e.stopPropagation()}
+                                    >
+                                      <div className="flex flex-col gap-1 print:hidden">
+                                        <div className="flex items-center gap-1">
+                                          <CurrencyInput
+                                            fixedDecimals
+                                            disabled={isConciliated}
+                                            value={entry.valor}
+                                            ariaLabel={`Valor do extrato ${entryIdx + 1} do pedido ${order.numeroPedido}`}
+                                            placeholder="0,00"
+                                            onChangeValue={val =>
+                                              handleInlineAmountChange(order, record, entryIdx, val)
+                                            }
+                                            onBlur={() => handleInlineAmountBlur(order, record)}
+                                            className="w-[72px] bg-white border border-slate-300 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 rounded-md px-1 py-0.5 text-right font-mono font-bold text-[11px] text-slate-900 outline-none disabled:bg-slate-100 disabled:text-slate-500 disabled:border-slate-200 disabled:cursor-not-allowed"
+                                          />
+                                          <input
+                                            ref={el => {
+                                              const refKey = `${order.id}::${entryIdx}`;
+                                              if (el) {
+                                                inlineStatementDateRefs.current[refKey] = el;
+                                              } else {
+                                                delete inlineStatementDateRefs.current[refKey];
+                                              }
+                                            }}
+                                            type="date"
+                                            disabled={isConciliated || (Number(entry.valor) || 0) <= 0}
+                                            max={todayLocalDate}
+                                            aria-label={`Data do extrato ${entryIdx + 1} do pedido ${order.numeroPedido}`}
+                                            value={entryDateVal}
+                                            onChange={e =>
+                                              handleInlineDateChange(
+                                                order,
+                                                record,
+                                                entryIdx,
+                                                e.target.value
+                                              )
+                                            }
+                                            title={
+                                              isConciliated
+                                                ? 'Pedido conciliado — desmarque Conciliado para editar a data'
+                                                : (Number(entry.valor) || 0) <= 0
+                                                ? 'Informe o Valor do Extrato (> 0) para habilitar a Data do Extrato'
+                                                : missingDateWarning ||
+                                                  (isCash
+                                                    ? 'Data do recebimento / extrato'
+                                                    : 'Data confirmada no extrato bancário')
+                                            }
+                                            className={`w-[96px] rounded-md px-1 py-0.5 font-mono text-[10px] border outline-none disabled:bg-slate-100 disabled:text-slate-500 disabled:border-slate-200 disabled:cursor-not-allowed ${
+                                              missingDateWarning
+                                                ? 'bg-amber-50/70 border-amber-400 text-slate-900 focus:border-amber-600 focus:ring-1 focus:ring-amber-500'
+                                                : 'bg-white border-slate-300 text-slate-800 focus:border-brand-500 focus:ring-1 focus:ring-brand-500'
+                                            }`}
+                                          />
+                                          {entryIdx === entries.length - 1 && (
+                                            <button
+                                              type="button"
+                                              disabled={isConciliated}
+                                              onClick={() => handleInlineAddEntry(order, record)}
+                                              title={
+                                                isConciliated
+                                                  ? 'Pedido conciliado — desmarque Conciliado para adicionar lançamentos'
+                                                  : 'Adicionar outro pagamento do extrato neste pedido'
+                                              }
+                                              aria-label={`Adicionar pagamento no pedido ${order.numeroPedido}`}
+                                              className="inline-flex items-center justify-center p-1 rounded-md border border-dashed border-slate-300 hover:border-brand-500 hover:bg-brand-50 text-slate-600 hover:text-brand-700 transition-colors shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-slate-300 disabled:hover:bg-transparent disabled:hover:text-slate-600"
+                                            >
+                                              <Plus className="w-3 h-3" />
+                                            </button>
                                           )}
                                         </div>
-                                      )}
-                                    </td>
-                                    <td rowSpan={rowCount} className="py-2 px-2 align-top text-[11px]">
-                                      <div className="flex flex-col items-start gap-1">
-                                        {renderOrderPaymentMethodBadge(order)}
-                                        {renderOrderPaymentStatusBadge(order, payStatus)}
-                                      </div>
-                                      {payStatus === 'SINAL' && (
-                                        <div className="text-[10px] font-mono text-sky-700 mt-0.5 whitespace-nowrap">
-                                          Sinal: R$ {formatCurrencyBR(getOrderPaidAmount(order))}
+                                        <div className="flex items-center gap-1">
+                                          <select
+                                            disabled={isConciliated}
+                                            aria-label={`Meio de pagamento ${entryIdx + 1} do pedido ${order.numeroPedido}`}
+                                            title={
+                                              isConciliated
+                                                ? 'Pedido conciliado — desmarque Conciliado para alterar o meio de pagamento'
+                                                : undefined
+                                            }
+                                            value={channelSelectVal}
+                                            onChange={e =>
+                                              handleInlineChannelChange(
+                                                order,
+                                                record,
+                                                entryIdx,
+                                                e.target.value
+                                              )
+                                            }
+                                            className={`w-[172px] bg-white border border-slate-300 focus:border-brand-500 rounded-md px-1 py-0.5 text-[10px] font-semibold outline-none cursor-pointer disabled:bg-slate-100 disabled:opacity-75 disabled:border-slate-200 disabled:cursor-not-allowed ${getStatementChannelTextColorClass(
+                                              resolvedCh,
+                                              entry.meioPagamentoNome
+                                            )}`}
+                                          >
+                                            <option value="" className="text-slate-500">
+                                              Meio...
+                                            </option>
+                                            {activeChannels.map(ch => (
+                                              <option
+                                                key={ch.id}
+                                                value={ch.id}
+                                                className={getStatementChannelTextColorClass(
+                                                  ch,
+                                                  ch.nome
+                                                )}
+                                              >
+                                                {ch.nome}
+                                              </option>
+                                            ))}
+                                            {entry.meioPagamentoNome &&
+                                              !activeChannels.some(
+                                                c =>
+                                                  c.id === entry.meioPagamentoId ||
+                                                  c.nome.toLowerCase() ===
+                                                    entry.meioPagamentoNome.toLowerCase()
+                                              ) && (
+                                                <option
+                                                  value={entry.meioPagamentoNome}
+                                                  className={getStatementChannelTextColorClass(
+                                                    undefined,
+                                                    entry.meioPagamentoNome
+                                                  )}
+                                                >
+                                                  {entry.meioPagamentoNome}
+                                                </option>
+                                              )}
+                                          </select>
+                                          {entries.length > 1 && (
+                                            <button
+                                              type="button"
+                                              disabled={isConciliated}
+                                              onClick={() =>
+                                                handleInlineRemoveEntry(order, record, entryIdx)
+                                              }
+                                              title={
+                                                isConciliated
+                                                  ? 'Pedido conciliado — desmarque Conciliado para remover lançamentos'
+                                                  : 'Remover este lançamento'
+                                              }
+                                              aria-label={`Remover lançamento ${entryIdx + 1} do pedido ${order.numeroPedido}`}
+                                              className="p-0.5 rounded-md text-rose-500 hover:text-rose-700 hover:bg-rose-50 transition-colors cursor-pointer shrink-0 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-rose-500"
+                                            >
+                                              <Trash2 className="w-3 h-3" />
+                                            </button>
+                                          )}
                                         </div>
-                                      )}
-                                      {order.formaPagamento === 'dinheiro' && order.trocoPara && (
-                                        <div className="text-[10px] font-mono text-slate-600 mt-0.5 whitespace-nowrap">
-                                          Troco p/ R$ {formatCurrencyBR(order.trocoPara)}
-                                        </div>
-                                      )}
-                                      {order.instrucoesPagamento && (
-                                        <div
-                                          className="text-[10px] text-slate-500 mt-0.5 max-w-[104px] truncate"
-                                          title={order.instrucoesPagamento}
-                                        >
-                                          {order.instrucoesPagamento}
-                                        </div>
-                                      )}
-                                    </td>
-                                    <td
-                                      rowSpan={rowCount}
-                                      className="py-2 px-2 align-top text-right font-mono font-bold text-[11px] text-slate-900 whitespace-nowrap"
-                                    >
-                                      <div>
-                                        <button
-                                          type="button"
-                                          disabled={isConciliated}
-                                          onClick={e => {
-                                            e.stopPropagation();
-                                            handleReplicateOrderValueToStatement(order, record);
-                                          }}
-                                          title={
-                                            isConciliated
-                                              ? 'Pedido conciliado — desmarque Conciliado para editar o extrato'
-                                              : 'Clique para replicar o valor do pedido para o Valor do Extrato'
-                                          }
-                                          className="hover:text-brand-700 hover:underline cursor-pointer disabled:hover:no-underline disabled:hover:text-slate-900 disabled:cursor-default print:no-underline print:text-slate-900"
-                                        >
-                                          R$ {formatCurrencyBR(order.valorTotal)}
-                                        </button>
                                       </div>
-                                      <div
-                                        className={`text-[10px] font-semibold mt-0.5 ${
-                                          entriesTotal > 0 &&
-                                          Math.abs(entriesTotal - order.valorTotal) <= 0.01
-                                            ? 'text-emerald-700'
-                                            : 'text-slate-600'
-                                        }`}
-                                      >
-                                        Pago: R$ {formatCurrencyBR(entriesTotal)}
-                                      </div>
-                                      <div
-                                        className={`flex items-center justify-end gap-1 text-[10px] font-semibold mt-0.5 ${
-                                          saldoDevedor > 0.009 ? 'text-rose-600' : 'text-emerald-700'
-                                        }`}
-                                      >
-                                        {saldoDevedor <= 0.009 && (
-                                          <CheckCircle2
-                                            className="w-3 h-3 text-emerald-600 shrink-0"
-                                            aria-hidden="true"
-                                          />
+                                      <span className="hidden print:inline font-mono text-xs">
+                                        R$ {formatCurrencyBR(entry.valor || 0)}{' '}
+                                        {entry.meioPagamentoNome ? (
+                                          <span
+                                            className={`font-semibold ${getStatementChannelTextColorClass(
+                                              resolvedCh,
+                                              entry.meioPagamentoNome
+                                            )}`}
+                                          >
+                                            ({entry.meioPagamentoNome})
+                                          </span>
+                                        ) : (
+                                          ''
                                         )}
-                                        <span>Saldo: R$ {formatCurrencyBR(saldoDevedor)}</span>
-                                      </div>
+                                        {entryDateVal ? ` • ${formatDateBR(entryDateVal)}` : ''}
+                                      </span>
                                     </td>
-                                  </>
-                                )}
 
-                                <td
-                                  className={`py-2 px-2 align-middle text-[11px] ${
-                                    entryIdx > 0 ? 'border-t border-dashed border-slate-200/80' : ''
-                                  }`}
+                                    {entryIdx === 0 && (
+                                      <>
+                                        <td
+                                          rowSpan={rowCount}
+                                          className="py-2 px-1 align-middle text-center text-[11px] whitespace-nowrap"
+                                          onClick={e => e.stopPropagation()}
+                                        >
+                                          {renderConciliationToggle(
+                                            order,
+                                            record,
+                                            isConciliated,
+                                            isSaving,
+                                            saldoDevedor <= 0.009 && draftTotals.canMarkConciliated,
+                                            nfStatus === 'EMITIDA'
+                                          )}
+                                          <span className="hidden print:inline font-semibold text-xs">
+                                            {isConciliated ? 'Sim' : 'Não'}
+                                          </span>
+                                        </td>
+                                        <td
+                                          rowSpan={rowCount}
+                                          className="py-2 px-1 align-middle text-center text-[11px] whitespace-nowrap"
+                                          onClick={e => e.stopPropagation()}
+                                        >
+                                          {renderInvoiceToggle(
+                                            order,
+                                            record,
+                                            nfStatus,
+                                            isSaving,
+                                            isConciliated && saldoDevedor <= 0.009
+                                          )}
+                                          <span className="hidden print:inline font-semibold text-xs">
+                                            {INVOICE_STATUS_LABELS[nfStatus]}
+                                          </span>
+                                        </td>
+                                      </>
+                                    )}
+                                  </tr>
+                                );
+                              })}
+                              {isOrderExpanded && (
+                                <tr
+                                  className="bg-emerald-50/60 border-t border-emerald-200/80 print:hidden"
                                   onClick={e => e.stopPropagation()}
                                 >
-                                  <div className="flex flex-col gap-1 print:hidden">
-                                    <div className="flex items-center gap-1">
-                                      <CurrencyInput
-                                        fixedDecimals
-                                        disabled={isConciliated}
-                                        value={entry.valor}
-                                        ariaLabel={`Valor do extrato ${entryIdx + 1} do pedido ${order.numeroPedido}`}
-                                        placeholder="0,00"
-                                        onChangeValue={val =>
-                                          handleInlineAmountChange(order, record, entryIdx, val)
-                                        }
-                                        onBlur={() => handleInlineAmountBlur(order, record)}
-                                        className="w-[86px] bg-white border border-slate-300 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 rounded-md px-1.5 py-0.5 text-right font-mono font-bold text-[11px] text-slate-900 outline-none disabled:bg-slate-100 disabled:text-slate-500 disabled:border-slate-200 disabled:cursor-not-allowed"
-                                      />
-                                      <input
-                                        ref={el => {
-                                          const refKey = `${order.id}::${entryIdx}`;
-                                          if (el) {
-                                            inlineStatementDateRefs.current[refKey] = el;
-                                          } else {
-                                            delete inlineStatementDateRefs.current[refKey];
-                                          }
-                                        }}
-                                        type="date"
-                                        disabled={isConciliated || (Number(entry.valor) || 0) <= 0}
-                                        max={todayLocalDate}
-                                        aria-label={`Data do extrato ${entryIdx + 1} do pedido ${order.numeroPedido}`}
-                                        value={entryDateVal}
-                                        onChange={e =>
-                                          handleInlineDateChange(
-                                            order,
-                                            record,
-                                            entryIdx,
-                                            e.target.value
-                                          )
-                                        }
-                                        title={
-                                          isConciliated
-                                            ? 'Pedido conciliado — desmarque Conciliado para editar a data'
-                                            : (Number(entry.valor) || 0) <= 0
-                                            ? 'Informe o Valor do Extrato (> 0) para habilitar a Data do Extrato'
-                                            : missingDateWarning ||
-                                              (isCash
-                                                ? 'Data do recebimento / extrato'
-                                                : 'Data confirmada no extrato bancário')
-                                        }
-                                        className={`w-[108px] rounded-md px-1 py-0.5 font-mono text-[10px] border outline-none disabled:bg-slate-100 disabled:text-slate-500 disabled:border-slate-200 disabled:cursor-not-allowed ${
-                                          missingDateWarning
-                                            ? 'bg-amber-50/70 border-amber-400 text-slate-900 focus:border-amber-600 focus:ring-1 focus:ring-amber-500'
-                                            : 'bg-white border-slate-300 text-slate-800 focus:border-brand-500 focus:ring-1 focus:ring-brand-500'
-                                        }`}
-                                      />
-                                      {entryIdx === entries.length - 1 && (
-                                        <button
-                                          type="button"
-                                          disabled={isConciliated}
-                                          onClick={() => handleInlineAddEntry(order, record)}
-                                          title={
-                                            isConciliated
-                                              ? 'Pedido conciliado — desmarque Conciliado para adicionar lançamentos'
-                                              : 'Adicionar outro pagamento do extrato neste pedido'
-                                          }
-                                          aria-label={`Adicionar pagamento no pedido ${order.numeroPedido}`}
-                                          className="inline-flex items-center justify-center p-1 rounded-md border border-dashed border-slate-300 hover:border-brand-500 hover:bg-brand-50 text-slate-600 hover:text-brand-700 transition-colors shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-slate-300 disabled:hover:bg-transparent disabled:hover:text-slate-600"
-                                        >
-                                          <Plus className="w-3 h-3" />
-                                        </button>
-                                      )}
-                                    </div>
-                                    <div className="flex items-center gap-1">
-                                      <select
-                                        disabled={isConciliated}
-                                        aria-label={`Meio de pagamento ${entryIdx + 1} do pedido ${order.numeroPedido}`}
-                                        title={
-                                          isConciliated
-                                            ? 'Pedido conciliado — desmarque Conciliado para alterar o meio de pagamento'
-                                            : undefined
-                                        }
-                                        value={channelSelectVal}
-                                        onChange={e =>
-                                          handleInlineChannelChange(
-                                            order,
-                                            record,
-                                            entryIdx,
-                                            e.target.value
-                                          )
-                                        }
-                                        className={`w-[198px] bg-white border border-slate-300 focus:border-brand-500 rounded-md px-1 py-0.5 text-[10px] font-semibold outline-none cursor-pointer disabled:bg-slate-100 disabled:opacity-75 disabled:border-slate-200 disabled:cursor-not-allowed ${getStatementChannelTextColorClass(
-                                          resolvedCh,
-                                          entry.meioPagamentoNome
-                                        )}`}
-                                      >
-                                        <option value="" className="text-slate-500">
-                                          Meio...
-                                        </option>
-                                        {activeChannels.map(ch => (
-                                          <option
-                                            key={ch.id}
-                                            value={ch.id}
-                                            className={getStatementChannelTextColorClass(
-                                              ch,
-                                              ch.nome
-                                            )}
-                                          >
-                                            {ch.nome}
-                                          </option>
-                                        ))}
-                                        {entry.meioPagamentoNome &&
-                                          !activeChannels.some(
-                                            c =>
-                                              c.id === entry.meioPagamentoId ||
-                                              c.nome.toLowerCase() ===
-                                                entry.meioPagamentoNome.toLowerCase()
-                                          ) && (
-                                            <option
-                                              value={entry.meioPagamentoNome}
-                                              className={getStatementChannelTextColorClass(
-                                                undefined,
-                                                entry.meioPagamentoNome
-                                              )}
-                                            >
-                                              {entry.meioPagamentoNome}
-                                            </option>
-                                          )}
-                                      </select>
-                                      {entries.length > 1 && (
-                                        <button
-                                          type="button"
-                                          disabled={isConciliated}
-                                          onClick={() =>
-                                            handleInlineRemoveEntry(order, record, entryIdx)
-                                          }
-                                          title={
-                                            isConciliated
-                                              ? 'Pedido conciliado — desmarque Conciliado para remover lançamentos'
-                                              : 'Remover este lançamento'
-                                          }
-                                          aria-label={`Remover lançamento ${entryIdx + 1} do pedido ${order.numeroPedido}`}
-                                          className="p-0.5 rounded-md text-rose-500 hover:text-rose-700 hover:bg-rose-50 transition-colors cursor-pointer shrink-0 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-rose-500"
-                                        >
-                                          <Trash2 className="w-3 h-3" />
-                                        </button>
-                                      )}
-                                    </div>
-                                  </div>
-                                  <span className="hidden print:inline font-mono text-xs">
-                                    R$ {formatCurrencyBR(entry.valor || 0)}{' '}
-                                    {entry.meioPagamentoNome ? (
-                                      <span
-                                        className={`font-semibold ${getStatementChannelTextColorClass(
-                                          resolvedCh,
-                                          entry.meioPagamentoNome
-                                        )}`}
-                                      >
-                                        ({entry.meioPagamentoNome})
-                                      </span>
-                                    ) : (
-                                      ''
-                                    )}
-                                    {entryDateVal ? ` • ${formatDateBR(entryDateVal)}` : ''}
-                                  </span>
-                                </td>
-
-                                {entryIdx === 0 && (
-                                  <>
-                                    <td
-                                      rowSpan={rowCount}
-                                      className="py-2 px-1.5 align-middle text-center text-[11px] whitespace-nowrap"
-                                      onClick={e => e.stopPropagation()}
-                                    >
-                                      {renderConciliationToggle(
-                                        order,
-                                        record,
-                                        isConciliated,
-                                        isSaving,
-                                        saldoDevedor <= 0.009 && draftTotals.canMarkConciliated,
-                                        nfStatus === 'EMITIDA'
-                                      )}
-                                      <span className="hidden print:inline font-semibold text-xs">
-                                        {isConciliated ? 'Sim' : 'Não'}
-                                      </span>
-                                    </td>
-                                    <td
-                                      rowSpan={rowCount}
-                                      className="py-2 px-1.5 align-middle text-center text-[11px] whitespace-nowrap"
-                                      onClick={e => e.stopPropagation()}
-                                    >
-                                      {renderInvoiceToggle(
-                                        order,
-                                        record,
-                                        nfStatus,
-                                        isSaving,
-                                        isConciliated && saldoDevedor <= 0.009
-                                      )}
-                                      <span className="hidden print:inline font-semibold text-xs">
-                                        {INVOICE_STATUS_LABELS[nfStatus]}
-                                      </span>
-                                    </td>
-                                  </>
-                                )}
-                              </tr>
-                            );
-                          });
+                                  <td
+                                    colSpan={visibleColumnCount}
+                                    className={`px-3 py-2.5 ${accentBorderClass}`}
+                                  >
+                                    {renderOrderItemsSummary(order)}
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          );
                         })}
                     </React.Fragment>
                   );
@@ -3821,33 +4121,455 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
       {isBillingReportModalOpen && (
         <div
           className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[70] flex items-center justify-center p-2 sm:p-4 overflow-y-auto print:hidden"
-          onClick={() => setIsBillingReportModalOpen(false)}
+          onClick={closeBillingReportModal}
         >
           <div
-            className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-2xl overflow-hidden flex flex-col max-h-[92vh]"
+            className={`bg-white rounded-2xl shadow-xl border border-slate-200 w-full min-w-0 max-w-full ${
+              billingReportStep === 'preview' ? 'sm:max-w-6xl' : 'max-w-2xl'
+            } overflow-hidden flex flex-col max-h-[92vh] transition-all`}
             onClick={e => e.stopPropagation()}
           >
             <div className="px-3.5 py-3 sm:px-6 sm:py-4 border-b border-slate-200 flex items-center justify-between gap-2 bg-slate-50 shrink-0">
               <div className="min-w-0">
                 <h2 className="text-sm sm:text-base font-bold text-slate-900 flex items-center gap-2">
-                  <FileSpreadsheet className="w-4 h-4 text-brand-600 shrink-0" />
-                  <span>Relatório de Faturamento</span>
+                  {billingReportStep === 'preview' ? (
+                    <Eye className="w-4 h-4 text-brand-600 shrink-0" />
+                  ) : (
+                    <FileSpreadsheet className="w-4 h-4 text-brand-600 shrink-0" />
+                  )}
+                  <span>
+                    {billingReportStep === 'preview'
+                      ? 'Prévia — Relatório de Faturamento'
+                      : 'Relatório de Faturamento'}
+                  </span>
                 </h2>
                 <p className="text-[11px] text-slate-500 truncate mt-0.5">
-                  Agrupado por Unidade e Conciliação • Classificado por Data do Extrato • PDF ou Excel (.xlsx)
+                  {billingReportStep === 'preview'
+                    ? 'Confira o relatório completo (PDF e abas do Excel) antes de baixar'
+                    : 'Agrupado por Unidade e Conciliação • Classificado por Data do Extrato • PDF ou Excel (.xlsx)'}
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setIsBillingReportModalOpen(false)}
-                aria-label="Fechar modal"
-                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200/70 rounded-lg cursor-pointer shrink-0"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {billingReportStep === 'preview' && (
+                  <button
+                    type="button"
+                    disabled={exportingBillingFormat !== null}
+                    onClick={() => {
+                      clearBillingPreview();
+                      setBillingReportStep('config');
+                    }}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg cursor-pointer"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Ajustar Filtros</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={closeBillingReportModal}
+                  aria-label="Fechar modal"
+                  className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200/70 rounded-lg cursor-pointer shrink-0"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
             <div className="p-3 sm:p-5 overflow-y-auto space-y-3 sm:space-y-4 text-xs flex-1">
+              {billingReportStep === 'preview' ? (
+                (() => {
+                  const renderFaturamentoTablePreview = () => (
+                    <div className="bg-white border border-slate-300 rounded-xl shadow-sm overflow-hidden">
+                      <div className="px-4 py-3 bg-slate-900 text-white flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <div className="text-sm font-extrabold tracking-tight">
+                            BEJU CARAMELOS — RELATÓRIO DE FATURAMENTO
+                          </div>
+                          <div className="text-[11px] text-slate-300">
+                            Agrupado por Unidade e Conciliação • Classificado por Data do Extrato
+                          </div>
+                        </div>
+                        <span className="text-[10px] font-mono text-slate-300">
+                          {billingReportData.totalOrders} ped. • Emitido em {billingReportData.generatedAtLabel}
+                        </span>
+                      </div>
+
+                      <div className="px-3 py-1.5 bg-blue-50 border-b border-blue-200 text-[10px] text-blue-900 font-semibold">
+                        Unidade: <strong>{billingReportData.unitLabel}</strong> • Situação:{' '}
+                        <strong>{billingReportData.filterLabel}</strong> • Período:{' '}
+                        <strong>{billingReportData.dateFilterLabel}</strong> • Extrato:{' '}
+                        <strong>{billingReportData.statementPeriodLabel}</strong>
+                      </div>
+
+                      <div className="overflow-x-auto max-w-full max-h-[54vh]">
+                        <table className="w-full min-w-[780px] text-left border-collapse text-[11px]">
+                          <thead className="sticky top-0 z-10 bg-emerald-700 text-white text-[10px] font-bold">
+                            <tr>
+                              <th className="py-2 px-2 text-center border border-emerald-800">Data Extrato</th>
+                              <th className="py-2 px-2 text-center border border-emerald-800">Pedido</th>
+                              <th className="py-2 px-2 text-left border border-emerald-800">Cliente</th>
+                              <th className="py-2 px-2 text-right border border-emerald-800">Valor</th>
+                              <th className="py-2 px-2 text-right border border-emerald-800">Valor Recebido</th>
+                              <th className="py-2 px-2 text-right border border-emerald-800">Saldo a Receber</th>
+                              <th className="py-2 px-2 text-center border border-emerald-800">Forma de Pagamento</th>
+                              <th className="py-2 px-2 text-center border border-emerald-800">Nota Fiscal</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {billingReportData.groups.length === 0 ? (
+                              <tr>
+                                <td colSpan={8} className="py-8 text-center text-slate-500 italic">
+                                  Nenhum pedido encontrado para os filtros do Relatório de Faturamento.
+                                </td>
+                              </tr>
+                            ) : (
+                              billingReportData.groups.map(group => (
+                                <React.Fragment key={`prev-${group.unidadeId}-${group.unidadeNome}`}>
+                                  <tr className="bg-emerald-100 text-emerald-950 font-bold text-[11px]">
+                                    <td colSpan={8} className="py-1.5 px-2.5 border border-emerald-200">
+                                      UNIDADE: {group.unidadeNome.toUpperCase()} ({group.rows.length} pedido(s))
+                                    </td>
+                                  </tr>
+                                  {group.subgroups.map(sg => {
+                                    const isSubConc = sg.key === 'CONCILIADO';
+                                    return (
+                                      <React.Fragment key={`prev-${group.unidadeId}-${group.unidadeNome}-${sg.key}`}>
+                                        <tr
+                                          className={
+                                            isSubConc
+                                              ? 'bg-emerald-50 text-emerald-800 font-bold text-[10.5px]'
+                                              : 'bg-amber-50 text-amber-800 font-bold text-[10.5px]'
+                                          }
+                                        >
+                                          <td colSpan={8} className="py-1 px-3 border border-slate-200">
+                                            {sg.label.toUpperCase()} ({sg.rows.length} pedido(s))
+                                          </td>
+                                        </tr>
+                                        {sg.rows.map((row, rIdx) => {
+                                          const hasOpen = Number(row.saldoAReceber) > 0.009;
+                                          const recVal = Number(row.valorRecebido) || 0;
+                                          const nfLabel =
+                                            row.nfStatusLabel ||
+                                            (row.nfStatus === 'EMITIDA'
+                                              ? 'Emitida'
+                                              : row.nfStatus === 'DISPENSADA'
+                                              ? 'Dispensada'
+                                              : 'A emitir');
+                                          return (
+                                            <tr
+                                              key={`${row.numeroPedido}-${rIdx}`}
+                                              className={rIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}
+                                            >
+                                              <td className="py-1.5 px-2 text-center font-mono text-slate-700 border border-slate-200 whitespace-nowrap">
+                                                {row.dataExtratoLabel || '—'}
+                                              </td>
+                                              <td className="py-1.5 px-2 text-center font-mono font-bold text-slate-900 border border-slate-200 whitespace-nowrap">
+                                                {formatPedidoWithPaymentMethod(
+                                                  row.numeroPedido,
+                                                  row.formaPagamentoPedido
+                                                )}
+                                              </td>
+                                              <td className="py-1.5 px-2 text-slate-900 border border-slate-200">
+                                                {row.clienteNome}
+                                              </td>
+                                              <td className="py-1.5 px-2 text-right font-mono font-bold text-slate-900 border border-slate-200 whitespace-nowrap">
+                                                R$ {formatCurrencyBR(row.valor)}
+                                              </td>
+                                              <td
+                                                className={`py-1.5 px-2 text-right font-mono border border-slate-200 whitespace-nowrap ${
+                                                  recVal > 0 ? 'font-bold text-emerald-700' : 'text-slate-500'
+                                                }`}
+                                              >
+                                                R$ {formatCurrencyBR(recVal)}
+                                              </td>
+                                              <td
+                                                className={`py-1.5 px-2 text-right font-mono border border-slate-200 whitespace-nowrap ${
+                                                  hasOpen
+                                                    ? 'bg-rose-50 font-bold text-rose-700'
+                                                    : 'text-emerald-700'
+                                                }`}
+                                              >
+                                                R$ {formatCurrencyBR(row.saldoAReceber)}
+                                              </td>
+                                              <td className="py-1.5 px-2 text-center font-semibold text-slate-700 border border-slate-200 whitespace-nowrap">
+                                                {row.formaPagamentoFinanceiro || '—'}
+                                              </td>
+                                              <td className="py-1.5 px-2 text-center border border-slate-200 whitespace-nowrap">
+                                                <span
+                                                  className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                                    INVOICE_STATUS_BADGES[row.nfStatus]
+                                                  }`}
+                                                >
+                                                  {nfLabel}
+                                                </span>
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
+                                        <tr
+                                          className={
+                                            isSubConc
+                                              ? 'bg-emerald-50/70 text-emerald-950 font-bold text-[10.5px]'
+                                              : 'bg-amber-100/70 text-amber-900 font-bold text-[10.5px]'
+                                          }
+                                        >
+                                          <td colSpan={3} className="py-1.5 px-2.5 border border-slate-200">
+                                            Subtotal {sg.label} ({sg.rows.length} pedido(s))
+                                          </td>
+                                          <td className="py-1.5 px-2 text-right font-mono border border-slate-200 whitespace-nowrap">
+                                            R$ {formatCurrencyBR(sg.totalValor)}
+                                          </td>
+                                          <td className="py-1.5 px-2 text-right font-mono border border-slate-200 whitespace-nowrap">
+                                            R$ {formatCurrencyBR(sg.totalRecebido)}
+                                          </td>
+                                          <td
+                                            className={`py-1.5 px-2 text-right font-mono border border-slate-200 whitespace-nowrap ${
+                                              sg.totalSaldo > 0.009 ? 'text-rose-700' : ''
+                                            }`}
+                                          >
+                                            R$ {formatCurrencyBR(sg.totalSaldo)}
+                                          </td>
+                                          <td colSpan={2} className="py-1.5 px-2 border border-slate-200" />
+                                        </tr>
+                                      </React.Fragment>
+                                    );
+                                  })}
+                                  <tr className="bg-emerald-100 text-emerald-950 font-bold text-[11px]">
+                                    <td colSpan={3} className="py-1.5 px-2.5 border border-emerald-200">
+                                      Subtotal Unidade — {group.unidadeNome} ({group.rows.length} pedido(s))
+                                    </td>
+                                    <td className="py-1.5 px-2 text-right font-mono border border-emerald-200 whitespace-nowrap">
+                                      R$ {formatCurrencyBR(group.totalValor)}
+                                    </td>
+                                    <td className="py-1.5 px-2 text-right font-mono border border-emerald-200 whitespace-nowrap">
+                                      R$ {formatCurrencyBR(group.totalRecebido)}
+                                    </td>
+                                    <td
+                                      className={`py-1.5 px-2 text-right font-mono border border-emerald-200 whitespace-nowrap ${
+                                        group.totalSaldo > 0.009 ? 'text-rose-700' : ''
+                                      }`}
+                                    >
+                                      R$ {formatCurrencyBR(group.totalSaldo)}
+                                    </td>
+                                    <td colSpan={2} className="py-1.5 px-2 border border-emerald-200" />
+                                  </tr>
+                                </React.Fragment>
+                              ))
+                            )}
+                          </tbody>
+                          <tfoot>
+                            <tr className="bg-emerald-800 text-white font-bold text-[11px]">
+                              <td colSpan={3} className="py-2 px-2.5 border border-emerald-900">
+                                TOTAL GERAL ({billingReportData.totalOrders} ped. • {billingReportData.groups.length} unid.)
+                              </td>
+                              <td className="py-2 px-2 text-right font-mono border border-emerald-900 whitespace-nowrap">
+                                R$ {formatCurrencyBR(billingReportData.grandTotalValor)}
+                              </td>
+                              <td className="py-2 px-2 text-right font-mono border border-emerald-900 whitespace-nowrap">
+                                R$ {formatCurrencyBR(billingReportData.grandTotalRecebido)}
+                              </td>
+                              <td className="py-2 px-2 text-right font-mono border border-emerald-900 whitespace-nowrap">
+                                R$ {formatCurrencyBR(billingReportData.grandTotalSaldo)}
+                              </td>
+                              <td colSpan={2} className="py-2 px-2 border border-emerald-900" />
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    </div>
+                  );
+
+                  const totalConcCount = billingReportData.groups.reduce(
+                    (s, g) => s + (g.subgroups.find(sg => sg.key === 'CONCILIADO')?.rows.length || 0),
+                    0
+                  );
+                  const totalNonConcCount = billingReportData.groups.reduce(
+                    (s, g) =>
+                      s + (g.subgroups.find(sg => sg.key === 'NAO_CONCILIADO')?.rows.length || 0),
+                    0
+                  );
+
+                  return (
+                    <div className="space-y-3">
+                      <div className="inline-flex flex-wrap rounded-lg border border-slate-300 bg-slate-100 p-0.5 gap-0.5">
+                        <button
+                          type="button"
+                          onClick={() => setBillingPreviewTab('pdf')}
+                          className={`px-3 py-1 rounded-md text-[11px] font-bold transition-colors cursor-pointer ${
+                            billingPreviewTab === 'pdf'
+                              ? 'bg-white text-rose-700 shadow-2xs'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          PDF (A4 Paisagem)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setBillingPreviewTab('faturamento')}
+                          className={`px-3 py-1 rounded-md text-[11px] font-bold transition-colors cursor-pointer ${
+                            billingPreviewTab === 'faturamento'
+                              ? 'bg-white text-emerald-800 shadow-2xs'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          Tabela / Aba 1: Relatorio_Faturamento
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setBillingPreviewTab('resumo')}
+                          className={`px-3 py-1 rounded-md text-[11px] font-bold transition-colors cursor-pointer ${
+                            billingPreviewTab === 'resumo'
+                              ? 'bg-white text-emerald-800 shadow-2xs'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          Aba 2: Resumo_Unidades
+                        </button>
+                      </div>
+
+                      {billingPreviewTab === 'pdf' && billingPdfPreviewUrl ? (
+                        <div className="space-y-3">
+                          <div className="hidden sm:block">
+                            <iframe
+                              src={billingPdfPreviewUrl}
+                              title="Prévia do Relatório de Faturamento PDF"
+                              className="w-full h-[64vh] rounded-xl border border-slate-300 bg-slate-100"
+                            />
+                          </div>
+                          <div className="sm:hidden space-y-2.5">
+                            <div className="flex items-center justify-between gap-2 bg-blue-50 border border-blue-200 rounded-xl p-2.5">
+                              <span className="text-[11px] font-semibold text-blue-900">
+                                Prévia do PDF pronta
+                              </span>
+                              <a
+                                href={billingPdfPreviewUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 px-2.5 py-1 bg-white border border-blue-300 rounded-lg text-[11px] font-bold text-blue-800"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                                <span>Abrir PDF</span>
+                              </a>
+                            </div>
+                            {renderFaturamentoTablePreview()}
+                          </div>
+                        </div>
+                      ) : billingPreviewTab === 'resumo' ? (
+                        <div className="bg-white border border-slate-300 rounded-xl shadow-sm overflow-hidden">
+                          <div className="px-4 py-3 bg-slate-900 text-white flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <div className="text-sm font-extrabold tracking-tight">
+                                BEJU CARAMELOS — RESUMO POR UNIDADE
+                              </div>
+                              <div className="text-[11px] text-slate-300">
+                                Consolidado de Faturamento, Conciliação e Saldo a Receber
+                              </div>
+                            </div>
+                            <span className="text-[10px] font-mono text-slate-300">
+                              {billingReportData.groups.length} unidade(s) • Emitido em {billingReportData.generatedAtLabel}
+                            </span>
+                          </div>
+                          <div className="overflow-x-auto max-w-full max-h-[54vh]">
+                            <table className="w-full min-w-[620px] text-left border-collapse text-[11px]">
+                              <thead className="sticky top-0 z-10 bg-emerald-700 text-white text-[10px] font-bold">
+                                <tr>
+                                  <th className="py-2 px-2.5 text-left border border-emerald-800">Unidade</th>
+                                  <th className="py-2 px-2 text-center border border-emerald-800">Pedidos</th>
+                                  <th className="py-2 px-2 text-center border border-emerald-800">Conciliados</th>
+                                  <th className="py-2 px-2 text-center border border-emerald-800">Não Conciliados</th>
+                                  <th className="py-2 px-2 text-right border border-emerald-800">Valor Total</th>
+                                  <th className="py-2 px-2 text-right border border-emerald-800">Valor Recebido</th>
+                                  <th className="py-2 px-2.5 text-right border border-emerald-800">Saldo a Receber</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {billingReportData.groups.length === 0 ? (
+                                  <tr>
+                                    <td colSpan={7} className="py-8 text-center text-slate-500 italic">
+                                      Nenhuma unidade encontrada nos filtros selecionados.
+                                    </td>
+                                  </tr>
+                                ) : (
+                                  billingReportData.groups.map((group, idx) => {
+                                    const cCount =
+                                      group.subgroups.find(sg => sg.key === 'CONCILIADO')?.rows
+                                        .length || 0;
+                                    const ncCount =
+                                      group.subgroups.find(sg => sg.key === 'NAO_CONCILIADO')?.rows
+                                        .length || 0;
+                                    return (
+                                      <tr
+                                        key={`sum-${group.unidadeId}-${group.unidadeNome}`}
+                                        className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}
+                                      >
+                                        <td className="py-1.5 px-2.5 font-bold text-slate-900 border border-slate-200">
+                                          {group.unidadeNome}
+                                        </td>
+                                        <td className="py-1.5 px-2 text-center font-mono text-slate-700 border border-slate-200">
+                                          {group.rows.length}
+                                        </td>
+                                        <td className="py-1.5 px-2 text-center font-mono font-bold text-emerald-700 border border-slate-200">
+                                          {cCount}
+                                        </td>
+                                        <td className="py-1.5 px-2 text-center font-mono font-bold text-amber-700 border border-slate-200">
+                                          {ncCount}
+                                        </td>
+                                        <td className="py-1.5 px-2 text-right font-mono font-bold text-slate-900 border border-slate-200 whitespace-nowrap">
+                                          R$ {formatCurrencyBR(group.totalValor)}
+                                        </td>
+                                        <td className="py-1.5 px-2 text-right font-mono font-bold text-emerald-700 border border-slate-200 whitespace-nowrap">
+                                          R$ {formatCurrencyBR(group.totalRecebido)}
+                                        </td>
+                                        <td
+                                          className={`py-1.5 px-2.5 text-right font-mono font-bold border border-slate-200 whitespace-nowrap ${
+                                            group.totalSaldo > 0.009
+                                              ? 'text-rose-700 bg-rose-50'
+                                              : 'text-emerald-700'
+                                          }`}
+                                        >
+                                          R$ {formatCurrencyBR(group.totalSaldo)}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })
+                                )}
+                              </tbody>
+                              <tfoot>
+                                <tr className="bg-emerald-800 text-white font-bold text-[11px]">
+                                  <td className="py-2 px-2.5 border border-emerald-900">
+                                    TOTAL GERAL ({billingReportData.groups.length} unid.)
+                                  </td>
+                                  <td className="py-2 px-2 text-center font-mono border border-emerald-900">
+                                    {billingReportData.totalOrders}
+                                  </td>
+                                  <td className="py-2 px-2 text-center font-mono border border-emerald-900">
+                                    {totalConcCount}
+                                  </td>
+                                  <td className="py-2 px-2 text-center font-mono border border-emerald-900">
+                                    {totalNonConcCount}
+                                  </td>
+                                  <td className="py-2 px-2 text-right font-mono border border-emerald-900 whitespace-nowrap">
+                                    R$ {formatCurrencyBR(billingReportData.grandTotalValor)}
+                                  </td>
+                                  <td className="py-2 px-2 text-right font-mono border border-emerald-900 whitespace-nowrap">
+                                    R$ {formatCurrencyBR(billingReportData.grandTotalRecebido)}
+                                  </td>
+                                  <td className="py-2 px-2.5 text-right font-mono border border-emerald-900 whitespace-nowrap">
+                                    R$ {formatCurrencyBR(billingReportData.grandTotalSaldo)}
+                                  </td>
+                                </tr>
+                              </tfoot>
+                            </table>
+                          </div>
+                        </div>
+                      ) : (
+                        renderFaturamentoTablePreview()
+                      )}
+                    </div>
+                  );
+                })()
+              ) : (
+                <>
               {/* Unidade/Situação + Período do Extrato */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 space-y-1.5">
@@ -4122,19 +4844,46 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
                   </div>
                 )}
               </div>
+                </>
+              )}
             </div>
 
             <div className="px-3.5 py-2.5 sm:px-6 sm:py-3.5 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-end gap-2 shrink-0">
+              {billingReportStep === 'preview' ? (
+                <button
+                  type="button"
+                  disabled={exportingBillingFormat !== null}
+                  onClick={() => {
+                    clearBillingPreview();
+                    setBillingReportStep('config');
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 text-xs font-bold rounded-lg cursor-pointer disabled:opacity-60"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Voltar</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={preparingBillingPreview || exportingBillingFormat !== null}
+                  onClick={() => void handleOpenBillingPreview()}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-xs font-bold rounded-lg shadow-xs transition-colors cursor-pointer"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>{preparingBillingPreview ? 'Preparando prévia...' : 'Pré-visualizar'}</span>
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => setIsBillingReportModalOpen(false)}
-                className="px-3.5 py-1.5 bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 text-xs font-bold rounded-lg cursor-pointer"
+                disabled={preparingBillingPreview || exportingBillingFormat !== null}
+                onClick={closeBillingReportModal}
+                className="px-3.5 py-1.5 bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 text-xs font-bold rounded-lg cursor-pointer disabled:opacity-60"
               >
                 Fechar
               </button>
               <button
                 type="button"
-                disabled={exportingBillingFormat !== null}
+                disabled={preparingBillingPreview || exportingBillingFormat !== null}
                 onClick={() => void handleExportBillingPdf()}
                 className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white text-xs font-bold rounded-lg shadow-xs transition-colors cursor-pointer"
               >
@@ -4143,7 +4892,7 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
               </button>
               <button
                 type="button"
-                disabled={exportingBillingFormat !== null}
+                disabled={preparingBillingPreview || exportingBillingFormat !== null}
                 onClick={() => void handleExportBillingExcel()}
                 className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-xs font-bold rounded-lg shadow-xs transition-colors cursor-pointer"
               >
@@ -4158,6 +4907,18 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
           </div>
         </div>
       )}
+
+      <FinanceiroReportModal
+        isOpen={isFinanceiroReportModalOpen}
+        onClose={() => setIsFinanceiroReportModalOpen(false)}
+        allRows={allEligibleFinancialRows}
+        filteredRows={filteredRows}
+        units={units}
+        channels={financialChannels}
+        activeUnitId={activeUnitId}
+        initialGroupBy={groupBy}
+        searchTerm={searchTerm}
+      />
     </div>
   );
 };

@@ -32,9 +32,11 @@ import {
   PaymentStatus,
   OrderItem,
   Customer,
+  SaveOrderOptions,
   StockItem
 } from '../types';
 import { 
+  AlarmClock,
   Plus, 
   FileSpreadsheet, 
   Download, 
@@ -52,6 +54,7 @@ import {
   Filter,
   Sparkles,
   AlertCircle,
+  AlertTriangle,
   Printer,
   LayoutGrid,
   Table as TableIcon,
@@ -89,7 +92,7 @@ interface PedidosScreenProps {
     nonce: number;
   } | null;
   onConsumeStatusFilterRequest?: () => void;
-  onSaveOrder: (order: Order) => void;
+  onSaveOrder: (order: Order, options?: SaveOrderOptions) => void;
   onDeleteOrder?: (orderId: string) => void;
   selectedOrderId?: string;
   onSelectOrder: (order: Order) => void;
@@ -111,6 +114,38 @@ function toLocalDateTimeInput(isoStr?: string): string {
   return new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
 }
 
+function formatDateKeyBR(dateKey?: string): string {
+  if (!dateKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return '—';
+  const [y, m, d] = dateKey.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+function combineOrderDateWithLocalTime(dateKey: string, existingIso?: string): string {
+  const localExisting = existingIso ? toLocalDateTimeInput(existingIso) : '';
+  const hhmm =
+    localExisting && localExisting.length >= 16 ? localExisting.slice(11, 16) : '12:00';
+  const parsed = new Date(`${dateKey}T${hhmm}:00`);
+  if (Number.isNaN(parsed.getTime())) {
+    return new Date().toISOString();
+  }
+  return parsed.toISOString();
+}
+
+type PedidosOrderDateFilter =
+  | 'TODOS'
+  | 'HOJE'
+  | 'ULTIMOS_7_DIAS'
+  | 'ULTIMOS_30_DIAS'
+  | 'MES_ATUAL';
+
+type PedidosDeliveryDateFilter =
+  | 'TODOS'
+  | 'ATRASADOS'
+  | 'HOJE'
+  | 'AMANHA'
+  | 'PROXIMOS_7_DIAS'
+  | 'MES_ATUAL';
+
 export const PedidosScreen: React.FC<PedidosScreenProps> = ({
   orders,
   products,
@@ -128,9 +163,19 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
   onSaveCustomer
 }) => {
   const [searchTerm, setSearchTerm] = useState(() => requestedStatusFilter?.searchTerm || '');
-  const [statusFilter, setStatusFilter] = useState<string>(() => requestedStatusFilter?.status || 'TODOS');
-  const [sortBy, setSortBy] = useState<'ENTREGA_ASC' | 'ENTREGA_DESC' | 'VALOR_DESC' | 'CLIENTE_ASC'>('ENTREGA_ASC');
-  const [groupBy, setGroupBy] = useState<'NENHUM' | 'MODALIDADE' | 'LOJA_ORIGEM'>('LOJA_ORIGEM');
+  const [statusFilter, setStatusFilter] = useState<string>(
+    () => requestedStatusFilter?.status || 'SEM_ENTREGUES'
+  );
+  const [orderDateFilter, setOrderDateFilter] = useState<PedidosOrderDateFilter>('TODOS');
+  const [deliveryDateFilter, setDeliveryDateFilter] = useState<PedidosDeliveryDateFilter>('TODOS');
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const [sortBy, setSortBy] = useState<'ENTREGA_ASC' | 'ENTREGA_DESC' | 'URGENCIA' | 'DATA_PEDIDO_DESC' | 'DATA_PEDIDO_ASC' | 'VALOR_DESC' | 'CLIENTE_ASC'>('ENTREGA_ASC');
+  const [groupBy, setGroupBy] = useState<'NENHUM' | 'MODALIDADE' | 'LOJA_ORIGEM' | 'DATA_ENTREGA' | 'STATUS' | 'PAGAMENTO'>('LOJA_ORIGEM');
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 60000);
+    return () => window.clearInterval(timer);
+  }, []);
   const { isGroupExpanded, toggleGroup, expandAll } = useExpandedGroups(groupBy);
   const [verifyingStatusPin, setVerifyingStatusPin] = useState(false);
   const [viewMode, setViewMode] = useState<'TABLE' | 'CARDS'>(() =>
@@ -172,6 +217,37 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
   };
   const [saveCustomerToBase, setSaveCustomerToBase] = useState<boolean>(true);
   const [showCustomerSuggestions, setShowCustomerSuggestions] = useState<boolean>(false);
+  const [skipStockMovement, setSkipStockMovement] = useState<boolean>(false);
+  const [skipWhatsAppNotification, setSkipWhatsAppNotification] = useState<boolean>(false);
+  const retroactiveOptionsTouchedRef = useRef<{ stock: boolean; whatsapp: boolean }>({
+    stock: false,
+    whatsapp: false,
+  });
+  const [pendingRetroactiveSave, setPendingRetroactiveSave] = useState<{
+    order: Order;
+    orderDateKey: string;
+    deliveryDateKey: string;
+    isOrderDatePast: boolean;
+    isDeliveryDatePast: boolean;
+    isOrderAfterDelivery: boolean;
+  } | null>(null);
+
+  const resetRetroactiveOptions = () => {
+    setSkipStockMovement(false);
+    setSkipWhatsAppNotification(false);
+    retroactiveOptionsTouchedRef.current = { stock: false, whatsapp: false };
+    setPendingRetroactiveSave(null);
+  };
+
+  const renderRetroactiveDateBadge = () => (
+    <span
+      className="inline-flex items-center gap-1 text-[11px] font-bold text-red-600 whitespace-nowrap"
+      role="alert"
+    >
+      <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+      <span>Data retroativa</span>
+    </span>
+  );
 
   // New Order Form State in Logical Order
   const [editingOrder, setEditingOrder] = useState<Partial<Order>>({
@@ -196,21 +272,132 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
     itens: []
   });
 
+  const todayDateKey = getCurrentLocalDateTime().slice(0, 10);
+  const editingOrderDateKey = editingOrder.dataPedido
+    ? toLocalDateTimeInput(editingOrder.dataPedido).slice(0, 10)
+    : todayDateKey;
+  const editingDeliveryDateKey = editingOrder.dataHoraEntrega
+    ? toLocalDateTimeInput(editingOrder.dataHoraEntrega).slice(0, 10)
+    : todayDateKey;
+  const isEditingOrderDatePast = Boolean(editingOrderDateKey && editingOrderDateKey < todayDateKey);
+  const isEditingDeliveryDatePast = Boolean(editingDeliveryDateKey && editingDeliveryDateKey < todayDateKey);
+  const hasEditingRetroactiveDate = isEditingOrderDatePast || isEditingDeliveryDatePast;
+  const isEditingOrderAfterDelivery = Boolean(
+    editingOrderDateKey && editingDeliveryDateKey && editingOrderDateKey > editingDeliveryDateKey
+  );
+
+  useEffect(() => {
+    if (!hasEditingRetroactiveDate) {
+      setSkipStockMovement(false);
+      setSkipWhatsAppNotification(false);
+      retroactiveOptionsTouchedRef.current = { stock: false, whatsapp: false };
+      return;
+    }
+    if (!retroactiveOptionsTouchedRef.current.stock) {
+      setSkipStockMovement(isEditingDeliveryDatePast);
+    }
+    if (!retroactiveOptionsTouchedRef.current.whatsapp) {
+      setSkipWhatsAppNotification(true);
+    }
+  }, [hasEditingRetroactiveDate, isEditingDeliveryDatePast]);
+
   const modalReservedMap = useMemo(
     () => computeReservedStockMap(orders, editingOrder.id),
     [orders, editingOrder.id]
   );
 
+  const productMap = useMemo(() => new Map(products.map(p => [p.id, p])), [products]);
+  const [expandedOrderIds, setExpandedOrderIds] = useState<Set<string>>(() => new Set());
+  const toggleOrderExpanded = (orderId: string) => {
+    setExpandedOrderIds(prev => {
+      const next = new Set(prev);
+      if (next.has(orderId)) next.delete(orderId);
+      else next.add(orderId);
+      return next;
+    });
+  };
+
+  const nowDate = new Date(nowMs);
+  const toLocalDateKeyFromDate = (d: Date): string => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+  const todayKey = toLocalDateKeyFromDate(nowDate);
+  const tomorrowKey = toLocalDateKeyFromDate(
+    new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate() + 1)
+  );
+  const next7EndKey = toLocalDateKeyFromDate(
+    new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate() + 7)
+  );
+  const days7AgoKey = toLocalDateKeyFromDate(
+    new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate() - 7)
+  );
+  const days30AgoKey = toLocalDateKeyFromDate(
+    new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate() - 30)
+  );
+  const currentMonthPrefix = todayKey.slice(0, 7);
+
+  const getOrderUrgencyState = (order: Order): 'OVERDUE' | 'TODAY' | 'NORMAL' => {
+    if (order.status === 'ENTREGUE' || order.status === 'CANCELADO') return 'NORMAL';
+    const deliveryKey = order.dataHoraEntrega
+      ? toLocalDateTimeInput(order.dataHoraEntrega).slice(0, 10)
+      : '';
+    if (!deliveryKey) return 'NORMAL';
+    const endTimeRef = order.dataHoraEntregaFim || order.dataHoraEntrega;
+    const endMs = endTimeRef ? new Date(endTimeRef).getTime() : NaN;
+    if (deliveryKey < todayKey || (!Number.isNaN(endMs) && endMs < nowMs)) {
+      return 'OVERDUE';
+    }
+    if (deliveryKey === todayKey) return 'TODAY';
+    return 'NORMAL';
+  };
+
   // Filtered & sorted orders
   const filteredOrders = orders
     .filter(o => {
       const matchesUnit = activeUnitId === 'all' || o.unidadeOrigemId === activeUnitId || o.unidadeRetiradaId === activeUnitId;
-      const matchesStatus = statusFilter === 'TODOS' || o.status === statusFilter;
+      const matchesStatus =
+        statusFilter === 'TODOS'
+          ? true
+          : statusFilter === 'SEM_ENTREGUES'
+          ? o.status !== 'ENTREGUE' && o.status !== 'CANCELADO'
+          : o.status === statusFilter;
+
+      const orderKey = o.dataPedido ? toLocalDateTimeInput(o.dataPedido).slice(0, 10) : '';
+      const matchesOrderDate =
+        orderDateFilter === 'TODOS'
+          ? true
+          : orderDateFilter === 'HOJE'
+          ? orderKey === todayKey
+          : orderDateFilter === 'ULTIMOS_7_DIAS'
+          ? Boolean(orderKey) && orderKey >= days7AgoKey && orderKey <= todayKey
+          : orderDateFilter === 'ULTIMOS_30_DIAS'
+          ? Boolean(orderKey) && orderKey >= days30AgoKey && orderKey <= todayKey
+          : orderKey.startsWith(currentMonthPrefix);
+
+      const deliveryKey = o.dataHoraEntrega
+        ? toLocalDateTimeInput(o.dataHoraEntrega).slice(0, 10)
+        : '';
+      const matchesDeliveryDate =
+        deliveryDateFilter === 'TODOS'
+          ? true
+          : deliveryDateFilter === 'ATRASADOS'
+          ? getOrderUrgencyState(o) === 'OVERDUE'
+          : deliveryDateFilter === 'HOJE'
+          ? deliveryKey === todayKey
+          : deliveryDateFilter === 'AMANHA'
+          ? deliveryKey === tomorrowKey
+          : deliveryDateFilter === 'PROXIMOS_7_DIAS'
+          ? Boolean(deliveryKey) && deliveryKey >= todayKey && deliveryKey <= next7EndKey
+          : deliveryKey.startsWith(currentMonthPrefix);
+
       const matchesSearch = 
         o.numeroPedido.toLowerCase().includes(searchTerm.toLowerCase()) ||
         o.clienteNome.toLowerCase().includes(searchTerm.toLowerCase()) ||
         o.clienteTelefone.includes(searchTerm);
-      return matchesUnit && matchesStatus && matchesSearch;
+      return matchesUnit && matchesStatus && matchesOrderDate && matchesDeliveryDate && matchesSearch;
     })
     .sort((a, b) => {
       if (sortBy === 'ENTREGA_ASC') {
@@ -218,6 +405,21 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
       }
       if (sortBy === 'ENTREGA_DESC') {
         return new Date(b.dataHoraEntrega).getTime() - new Date(a.dataHoraEntrega).getTime();
+      }
+      if (sortBy === 'URGENCIA') {
+        const rank = (o: Order) => {
+          const u = getOrderUrgencyState(o);
+          return u === 'OVERDUE' ? 0 : u === 'TODAY' ? 1 : 2;
+        };
+        const cmp = rank(a) - rank(b);
+        if (cmp !== 0) return cmp;
+        return new Date(a.dataHoraEntrega).getTime() - new Date(b.dataHoraEntrega).getTime();
+      }
+      if (sortBy === 'DATA_PEDIDO_DESC') {
+        return new Date(b.dataPedido || 0).getTime() - new Date(a.dataPedido || 0).getTime();
+      }
+      if (sortBy === 'DATA_PEDIDO_ASC') {
+        return new Date(a.dataPedido || 0).getTime() - new Date(b.dataPedido || 0).getTime();
       }
       if (sortBy === 'VALOR_DESC') {
         return b.valorTotal - a.valorTotal;
@@ -316,13 +518,35 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
     }));
   };
 
+  const commitOrderSave = (fullOrder: Order, options?: SaveOrderOptions) => {
+    // Save/link new customer to base if requested and not already registered
+    if (saveCustomerToBase) {
+      const normalizedPhone = fullOrder.clienteTelefone.replace(/\D/g, '');
+      const alreadyExists = customers.some(
+        c =>
+          c.telefone.replace(/\D/g, '') === normalizedPhone ||
+          c.nome.toLowerCase() === fullOrder.clienteNome.trim().toLowerCase()
+      );
+      if (!alreadyExists) {
+        onSaveCustomer({
+          id: `cli-${Date.now()}`,
+          nome: fullOrder.clienteNome.trim(),
+          telefone: fullOrder.clienteTelefone.trim(),
+          endereco: fullOrder.enderecoEntrega?.trim() || fullOrder.clienteEndereco?.trim() || '',
+          detalheEntrega: fullOrder.detalheEntrega?.trim() || undefined
+        });
+      }
+    }
+
+    onSaveOrder(fullOrder, options);
+    setPendingRetroactiveSave(null);
+    setIsModalOpen(false);
+    setImportBanner(null);
+  };
+
   const handleSave = () => {
     if (!editingOrder.dataHoraEntrega) {
       alert('O campo "Data/Hora Combinada" é obrigatório.');
-      return;
-    }
-    if (!editingOrder.id && new Date(editingOrder.dataHoraEntrega).getTime() < Date.now() - 60000) {
-      alert('A "Data/Hora Combinada" não pode estar no passado.');
       return;
     }
     if (!editingOrder.clienteNome || !editingOrder.clienteTelefone) {
@@ -332,23 +556,6 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
     if (!editingOrder.itens || editingOrder.itens.length === 0) {
       alert('Adicione ao menos um produto ao pedido.');
       return;
-    }
-
-    // Save/link new customer to base if requested and not already registered
-    if (saveCustomerToBase) {
-      const normalizedPhone = editingOrder.clienteTelefone.replace(/\D/g, '');
-      const alreadyExists = customers.some(
-        c => c.telefone.replace(/\D/g, '') === normalizedPhone || c.nome.toLowerCase() === editingOrder.clienteNome!.trim().toLowerCase()
-      );
-      if (!alreadyExists) {
-        onSaveCustomer({
-          id: `cli-${Date.now()}`,
-          nome: editingOrder.clienteNome.trim(),
-          telefone: editingOrder.clienteTelefone.trim(),
-          endereco: editingOrder.enderecoEntrega?.trim() || editingOrder.clienteEndereco?.trim() || '',
-          detalheEntrega: editingOrder.detalheEntrega?.trim() || undefined
-        });
-      }
     }
 
     const subtotalCalc = editingOrder.itens.reduce((acc, i) => acc + (i.quantidade * i.precoUnitario), 0);
@@ -401,15 +608,42 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
       itens: editingOrder.itens
     };
 
-    onSaveOrder(fullOrder);
-    setIsModalOpen(false);
-    setImportBanner(null);
+    const savedOrder = editingOrder.id ? orders.find(o => o.id === editingOrder.id) : undefined;
+    const savedOrderDateKey = savedOrder?.dataPedido
+      ? toLocalDateTimeInput(savedOrder.dataPedido).slice(0, 10)
+      : null;
+    const savedDeliveryDateKey = savedOrder?.dataHoraEntrega
+      ? toLocalDateTimeInput(savedOrder.dataHoraEntrega).slice(0, 10)
+      : null;
+    const isNewOrder = !editingOrder.id;
+    const orderDateNeedsConfirm =
+      isEditingOrderDatePast && (isNewOrder || editingOrderDateKey !== savedOrderDateKey);
+    const deliveryDateNeedsConfirm =
+      isEditingDeliveryDatePast && (isNewOrder || editingDeliveryDateKey !== savedDeliveryDateKey);
+
+    if (orderDateNeedsConfirm || deliveryDateNeedsConfirm) {
+      setPendingRetroactiveSave({
+        order: fullOrder,
+        orderDateKey: editingOrderDateKey,
+        deliveryDateKey: editingDeliveryDateKey,
+        isOrderDatePast: isEditingOrderDatePast,
+        isDeliveryDatePast: isEditingDeliveryDatePast,
+        isOrderAfterDelivery: isEditingOrderAfterDelivery,
+      });
+      return;
+    }
+
+    commitOrderSave(
+      fullOrder,
+      hasEditingRetroactiveDate ? { skipStockMovement, skipWhatsAppNotification } : undefined
+    );
   };
 
   const [routeCalcBadge, setRouteCalcBadge] = useState<string | null>(null);
 
   const handleOpenEditOrder = (order: Order) => {
     routeCalcRequestIdRef.current += 1;
+    resetRetroactiveOptions();
     setImportBanner(null);
     setRouteCalcBadge(null);
     updateDiscountConfig('R$', order.desconto || 0);
@@ -417,6 +651,7 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
     setSelectedQtyToAdd(1);
     setEditingOrder({
       ...order,
+      dataPedido: order.dataPedido || new Date().toISOString(),
       dataHoraEntrega: toLocalDateTimeInput(order.dataHoraEntrega),
       dataHoraEntregaFim: order.dataHoraEntregaFim
         ? toLocalDateTimeInput(order.dataHoraEntregaFim)
@@ -436,6 +671,8 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
     if (requestedStatusFilter.status) {
       setStatusFilter(requestedStatusFilter.status);
     }
+    setOrderDateFilter('TODOS');
+    setDeliveryDateFilter('TODOS');
     if (requestedStatusFilter.searchTerm !== undefined) {
       setSearchTerm(requestedStatusFilter.searchTerm);
     }
@@ -505,6 +742,7 @@ export const PedidosScreen: React.FC<PedidosScreenProps> = ({
 
   const handleWhatsAppOrderParsed = (parsed: ParsedWhatsAppOrder) => {
     routeCalcRequestIdRef.current += 1;
+    resetRetroactiveOptions();
     const defaultFee = getWhatsAppAutomationSettings().defaultDeliveryFee ?? 18.0;
     const hasExplicitTaxa = parsed.taxaEntrega !== undefined;
     const taxa =
@@ -672,19 +910,253 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
     );
   };
 
+  const renderOrderItemsSummary = (order: Order) => {
+    const items = order.itens || [];
+    const itemsSubtotal = items.reduce((sum, item) => {
+      const qty = Number(item.quantidade) || 0;
+      const unitPrice = Number(item.precoUnitario) || 0;
+      const lineTotal =
+        item.subtotal !== undefined && item.subtotal !== null
+          ? Number(item.subtotal) || 0
+          : qty * unitPrice;
+      return sum + lineTotal;
+    }, 0);
+    const subtotalProdutos =
+      Number(order.valorSubtotal) > 0 ? Number(order.valorSubtotal) : itemsSubtotal;
+    const frete = Number(order.taxaEntrega) || 0;
+    const desconto = Number(order.desconto) || 0;
+    const totalPedido = Number(order.valorTotal) || 0;
+
+    return (
+      <div className="bg-emerald-50 border border-emerald-200 rounded-lg overflow-hidden shadow-2xs">
+        <div className="bg-emerald-100/80 border-b border-emerald-200 px-3 py-1.5 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-bold text-slate-800">
+              Resumo do Pedido {order.numeroPedido}
+            </span>
+            <span className="px-1.5 py-0.5 rounded-full bg-emerald-200/70 text-emerald-900 text-[10px] font-mono font-semibold">
+              {items.length} {items.length === 1 ? 'item' : 'itens'}
+            </span>
+          </div>
+          <span
+            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+              order.tipoEntrega === 'DELIVERY'
+                ? 'bg-blue-50 text-blue-700 border-blue-200'
+                : 'bg-amber-50 text-amber-700 border-amber-200'
+            }`}
+          >
+            {order.tipoEntrega === 'DELIVERY' ? 'Delivery' : 'Retirada'}
+          </span>
+        </div>
+
+        <div className="overflow-x-auto max-w-full">
+          <table className="w-full text-left border-collapse text-[11px]">
+            <thead className="bg-emerald-100/50 border-b border-emerald-200 text-[10px] font-mono uppercase tracking-tight text-emerald-800">
+              <tr>
+                <th className="py-1.5 px-3 font-semibold">Produto</th>
+                <th className="py-1.5 px-2 font-semibold text-right whitespace-nowrap">Qtd.</th>
+                <th className="py-1.5 px-2 font-semibold text-right whitespace-nowrap">
+                  Valor Unit.
+                </th>
+                <th className="py-1.5 px-3 font-semibold text-right whitespace-nowrap">
+                  Valor Total
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-emerald-200/60">
+              {items.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="py-3 px-3 text-center text-slate-400 italic">
+                    Nenhum produto registrado neste pedido.
+                  </td>
+                </tr>
+              ) : (
+                items.map((item, idx) => {
+                  const prod = productMap.get(item.produtoId);
+                  const qty = Number(item.quantidade) || 0;
+                  const unitPrice = Number(item.precoUnitario) || 0;
+                  const lineTotal =
+                    item.subtotal !== undefined && item.subtotal !== null
+                      ? Number(item.subtotal) || 0
+                      : qty * unitPrice;
+
+                  return (
+                    <tr key={item.id || `${order.id}-item-${idx}`} className="bg-emerald-50/70">
+                      <td className="py-1.5 px-3 text-slate-800">
+                        <div className="font-semibold">
+                          {prod?.descricao || 'Produto não identificado'}
+                        </div>
+                        {item.observacoes && (
+                          <div className="text-[10px] text-slate-500">{item.observacoes}</div>
+                        )}
+                      </td>
+                      <td className="py-1.5 px-2 text-right font-mono text-slate-700 whitespace-nowrap">
+                        {qty}
+                        {prod?.unidade ? ` ${prod.unidade}` : ''}
+                      </td>
+                      <td className="py-1.5 px-2 text-right font-mono text-slate-700 whitespace-nowrap">
+                        R$ {formatCurrencyBR(unitPrice)}
+                      </td>
+                      <td className="py-1.5 px-3 text-right font-mono font-semibold text-slate-900 whitespace-nowrap">
+                        R$ {formatCurrencyBR(lineTotal)}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="px-3 py-2 bg-emerald-100/60 border-t border-emerald-200 flex flex-wrap items-center justify-end gap-x-5 gap-y-1 text-[11px] font-mono">
+          <span className="text-slate-600">
+            Subtotal Produtos:{' '}
+            <strong className="text-slate-800">R$ {formatCurrencyBR(subtotalProdutos)}</strong>
+          </span>
+          <span className="text-slate-600">
+            Frete:{' '}
+            <strong className="text-slate-800">R$ {formatCurrencyBR(frete)}</strong>
+            {order.tipoEntrega === 'RETIRADA' && frete <= 0 && (
+              <span className="text-[10px] font-sans text-slate-500 ml-1">(Retirada)</span>
+            )}
+          </span>
+          {desconto > 0 && (
+            <span className="text-rose-700">
+              Desconto:{' '}
+              <strong>- R$ {formatCurrencyBR(desconto)}</strong>
+            </span>
+          )}
+          <span className="text-slate-900 text-xs">
+            Total do Pedido:{' '}
+            <strong className="font-bold">R$ {formatCurrencyBR(totalPedido)}</strong>
+          </span>
+        </div>
+      </div>
+    );
+  };
+
   const hideModalidade = groupBy === 'MODALIDADE';
   const hideLojaOrigem = groupBy === 'LOJA_ORIGEM';
-  const visibleColumnCount = 9 - (hideModalidade ? 1 : 0) - (hideLojaOrigem ? 1 : 0);
+  const hideStatus = groupBy === 'STATUS';
+  const hidePagamento = groupBy === 'PAGAMENTO';
+  const visibleColumnCount =
+    9 -
+    (hideModalidade ? 1 : 0) -
+    (hideLojaOrigem ? 1 : 0) -
+    (hideStatus ? 1 : 0) -
+    (hidePagamento ? 1 : 0);
+
+  const groupedOrders = useMemo(() => {
+    if (groupBy === 'NENHUM') {
+      return [{ key: 'ALL', label: '', orders: filteredOrders }];
+    }
+    const statusLabels: Record<OrderStatus, string> = {
+      PENDENTE: 'Pendente',
+      CONFIRMADO: 'Confirmado',
+      EM_PRODUCAO: 'Em Produção',
+      PRONTO: 'Pronto',
+      EM_ROTA: 'Em Rota',
+      ENTREGUE: 'Entregue',
+      CANCELADO: 'Cancelado',
+    };
+    const map = new Map<string, { key: string; label: string; orders: Order[] }>();
+    filteredOrders.forEach(o => {
+      let key = '';
+      let label = '';
+      if (groupBy === 'MODALIDADE') {
+        key = o.tipoEntrega;
+        label = o.tipoEntrega === 'DELIVERY' ? 'Entrega (Delivery)' : 'Retirada em Loja';
+      } else if (groupBy === 'LOJA_ORIGEM') {
+        key = o.unidadeOrigemId;
+        label = units.find(u => u.id === o.unidadeOrigemId)?.nome || 'Unidade';
+      } else if (groupBy === 'DATA_ENTREGA') {
+        const dayKey = o.dataHoraEntrega ? toLocalDateTimeInput(o.dataHoraEntrega).slice(0, 10) : '9999-99-99';
+        key = dayKey;
+        label = dayKey === '9999-99-99' ? 'Sem Data Definida' : dayKey.split('-').reverse().join('/');
+      } else if (groupBy === 'STATUS') {
+        key = o.status;
+        label = statusLabels[o.status] || o.status;
+      } else if (groupBy === 'PAGAMENTO') {
+        const payStatus = getEffectivePaymentStatus(o);
+        key = payStatus;
+        label = PAYMENT_STATUS_LABELS[payStatus] || payStatus;
+      }
+      const cur = map.get(key) || { key, label, orders: [] };
+      cur.orders.push(o);
+      map.set(key, cur);
+    });
+    return Array.from(map.values()).sort((a, b) =>
+      groupBy === 'DATA_ENTREGA'
+        ? a.key.localeCompare(b.key)
+        : a.label.localeCompare(b.label, 'pt-BR')
+    );
+  }, [filteredOrders, groupBy, units]);
+
+  const hasActiveFilters =
+    statusFilter !== 'SEM_ENTREGUES' ||
+    orderDateFilter !== 'TODOS' ||
+    deliveryDateFilter !== 'TODOS' ||
+    searchTerm.trim() !== '';
+
+  const handleResetFilters = () => {
+    setStatusFilter('SEM_ENTREGUES');
+    setOrderDateFilter('TODOS');
+    setDeliveryDateFilter('TODOS');
+    setSearchTerm('');
+  };
+
+  const activeFilterBadgeText = (() => {
+    const statusLabels: Record<string, string> = {
+      SEM_ENTREGUES: 'Em Aberto',
+      TODOS: 'Todos os Status',
+      PENDENTE: 'Pendente',
+      CONFIRMADO: 'Confirmado',
+      EM_PRODUCAO: 'Em Produção',
+      PRONTO: 'Pronto',
+      EM_ROTA: 'Em Rota',
+      ENTREGUE: 'Entregue',
+      CANCELADO: 'Cancelado',
+    };
+    const orderDateLabels: Record<PedidosOrderDateFilter, string> = {
+      TODOS: '',
+      HOJE: 'Pedido: Hoje',
+      ULTIMOS_7_DIAS: 'Pedido: Últimos 7d',
+      ULTIMOS_30_DIAS: 'Pedido: Últimos 30d',
+      MES_ATUAL: 'Pedido: Mês Atual',
+    };
+    const deliveryDateLabels: Record<PedidosDeliveryDateFilter, string> = {
+      TODOS: '',
+      ATRASADOS: 'Entrega: Atrasados',
+      HOJE: 'Entrega: Hoje',
+      AMANHA: 'Entrega: Amanhã',
+      PROXIMOS_7_DIAS: 'Entrega: Próx. 7d',
+      MES_ATUAL: 'Entrega: Mês Atual',
+    };
+    const parts = [statusLabels[statusFilter] || statusFilter];
+    if (orderDateFilter !== 'TODOS') {
+      parts.push(orderDateLabels[orderDateFilter]);
+    }
+    if (deliveryDateFilter !== 'TODOS') {
+      parts.push(deliveryDateLabels[deliveryDateFilter]);
+    }
+    if (searchTerm.trim()) {
+      parts.push(`Busca: "${searchTerm.trim()}"`);
+    }
+    return `${filteredOrders.length} pedidos • ${parts.join(' • ')}`;
+  })();
 
   return (
     <div className="flex-1 min-w-0 flex flex-col h-full bg-[#f8f9ff] overflow-hidden">
       {/* Top Action Bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between md:bg-white md:border-b md:border-[#e2e8f0] md:px-6 md:py-4 md:gap-4 print:hidden">
-        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2.5 md:p-0 md:bg-transparent md:border-b-0">
-          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex flex-wrap items-center gap-2">
+        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2.5 md:p-0 md:bg-transparent md:border-b-0 min-w-0">
+          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex flex-wrap items-center gap-2 min-w-0">
             <span>Pedidos</span>
-            <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800">
-              {filteredOrders.length} pedidos
+            <span
+              className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 max-w-full truncate"
+              title={activeFilterBadgeText}
+            >
+              {activeFilterBadgeText}
             </span>
           </h1>
         </div>
@@ -719,8 +1191,8 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
           <button
             type="button"
             onClick={() => setIsExportReportModalOpen(true)}
-            title="Formatar e Exportar Relatório (PDF / XLSX)"
-            aria-label="Formatar e Exportar Relatório"
+            title="Exportar Relatório de Pedidos (PDF / XLSX)"
+            aria-label="Exportar Relatório de Pedidos (PDF / XLSX)"
             className="flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-xs cursor-pointer"
           >
             <Download className="w-4 h-4 text-slate-500" />
@@ -747,6 +1219,7 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
           <button
             onClick={() => {
               routeCalcRequestIdRef.current += 1;
+              resetRetroactiveOptions();
               setImportBanner(null);
               setRouteCalcBadge(null);
               updateDiscountConfig('R$', 0);
@@ -797,37 +1270,71 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
       </div>
 
       {/* Filters & Search */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between md:bg-white/70 md:border-b md:border-[#e2e8f0] md:px-6 md:py-2.5 md:gap-3 print:hidden">
-        <div className="bg-white/70 border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex items-center w-full md:w-auto min-w-0 overflow-hidden">
+      <div className="shrink-0 min-w-0 flex flex-col md:flex-row md:flex-wrap md:items-center justify-between md:bg-white/70 md:border-b md:border-[#e2e8f0] md:px-4 lg:px-5 md:py-2 md:gap-2 print:hidden">
+        <div className="bg-white/70 border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex items-center w-full md:w-auto md:max-w-full min-w-0 overflow-hidden">
           {/* Hybrid Status Filter & Sort */}
           <HybridFilterSort
+            dateLabel="Data do Pedido:"
+            dateValue={orderDateFilter}
+            onDateChange={(v) => setOrderDateFilter(v as PedidosOrderDateFilter)}
+            dateActive={orderDateFilter !== 'TODOS'}
+            dateOptions={[
+              { value: 'TODOS', label: 'Pedido: Todo o Período' },
+              { value: 'HOJE', label: 'Pedido: Hoje' },
+              { value: 'ULTIMOS_7_DIAS', label: 'Pedido: Últimos 7d' },
+              { value: 'ULTIMOS_30_DIAS', label: 'Pedido: Últimos 30d' },
+              { value: 'MES_ATUAL', label: 'Pedido: Mês Atual' },
+            ]}
+            secondDateLabel="Data da Entrega:"
+            secondDateValue={deliveryDateFilter}
+            onSecondDateChange={(v) => setDeliveryDateFilter(v as PedidosDeliveryDateFilter)}
+            secondDateActive={deliveryDateFilter !== 'TODOS'}
+            secondDateOptions={[
+              { value: 'TODOS', label: 'Entrega: Todo o Período' },
+              { value: 'ATRASADOS', label: 'Entrega: Atrasados' },
+              { value: 'HOJE', label: 'Entrega: Hoje' },
+              { value: 'AMANHA', label: 'Entrega: Amanhã' },
+              { value: 'PROXIMOS_7_DIAS', label: 'Entrega: Próx. 7 dias' },
+              { value: 'MES_ATUAL', label: 'Entrega: Mês Atual' },
+            ]}
             filterLabel="Status:"
             filterValue={statusFilter}
             onFilterChange={setStatusFilter}
+            filterActive={statusFilter !== 'SEM_ENTREGUES'}
             filterOptions={[
+              { value: 'SEM_ENTREGUES', label: 'Em Aberto' },
               { value: 'TODOS', label: 'Todos os Status' },
               { value: 'PENDENTE', label: 'Pendente' },
               { value: 'CONFIRMADO', label: 'Confirmado' },
               { value: 'EM_PRODUCAO', label: 'Em Produção' },
               { value: 'PRONTO', label: 'Pronto' },
               { value: 'EM_ROTA', label: 'Em Rota' },
-              { value: 'ENTREGUE', label: 'Entregue' }
+              { value: 'ENTREGUE', label: 'Entregue' },
+              { value: 'CANCELADO', label: 'Cancelado' },
             ]}
             sortValue={sortBy}
-            onSortChange={(v) => setSortBy(v as 'ENTREGA_ASC' | 'ENTREGA_DESC' | 'VALOR_DESC' | 'CLIENTE_ASC')}
+            onSortChange={(v) => setSortBy(v as 'ENTREGA_ASC' | 'ENTREGA_DESC' | 'URGENCIA' | 'DATA_PEDIDO_DESC' | 'DATA_PEDIDO_ASC' | 'VALOR_DESC' | 'CLIENTE_ASC')}
             sortOptions={[
               { value: 'ENTREGA_ASC', label: 'Data/Turno Entrega ↑' },
               { value: 'ENTREGA_DESC', label: 'Data/Turno Entrega ↓' },
+              { value: 'URGENCIA', label: 'Urgência / Atraso' },
+              { value: 'DATA_PEDIDO_DESC', label: 'Data do Pedido ↓' },
+              { value: 'DATA_PEDIDO_ASC', label: 'Data do Pedido ↑' },
               { value: 'VALOR_DESC', label: 'Maior Valor' },
               { value: 'CLIENTE_ASC', label: 'Cliente (A-Z)' }
             ]}
             groupValue={groupBy}
-            onGroupChange={(v) => setGroupBy(v as 'NENHUM' | 'MODALIDADE' | 'LOJA_ORIGEM')}
+            onGroupChange={(v) => setGroupBy(v as 'NENHUM' | 'MODALIDADE' | 'LOJA_ORIGEM' | 'DATA_ENTREGA' | 'STATUS' | 'PAGAMENTO')}
             groupOptions={[
               { value: 'LOJA_ORIGEM', label: 'Loja Origem' },
               { value: 'MODALIDADE', label: 'Entrega / Retirada' },
+              { value: 'DATA_ENTREGA', label: 'Data de Entrega' },
+              { value: 'STATUS', label: 'Status do Pedido' },
+              { value: 'PAGAMENTO', label: 'Status Pagamento' },
               { value: 'NENHUM', label: 'Sem Agrupamento' }
             ]}
+            hasActiveFilters={hasActiveFilters}
+            onResetFilters={handleResetFilters}
           />
         </div>
 
@@ -870,6 +1377,12 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                 ? `Agrupado por Entrega / Retirada • ${filteredOrders.length} pedido(s)`
                 : groupBy === 'LOJA_ORIGEM'
                 ? `Agrupado por Loja Origem • ${filteredOrders.length} pedido(s)`
+                : groupBy === 'DATA_ENTREGA'
+                ? `Agrupado por Data de Entrega • ${filteredOrders.length} pedido(s)`
+                : groupBy === 'STATUS'
+                ? `Agrupado por Status • ${filteredOrders.length} pedido(s)`
+                : groupBy === 'PAGAMENTO'
+                ? `Agrupado por Status de Pagamento • ${filteredOrders.length} pedido(s)`
                 : `${filteredOrders.length} pedido(s)`
             }
           />
@@ -881,9 +1394,9 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                 <th className="py-2 px-1.5">Cliente & WhatsApp</th>
                 {!hideModalidade && <th className="py-2 px-1.5">Modalidade</th>}
                 {!hideLojaOrigem && <th className="py-2 px-1.5">Loja Origem</th>}
-                <th className="py-2 px-1.5">Pagamento</th>
+                {!hidePagamento && <th className="py-2 px-1.5">Pagamento</th>}
                 <th className="py-2 px-1.5 text-right">Total (R$)</th>
-                <th className="py-2 px-1.5 text-center">Status</th>
+                {!hideStatus && <th className="py-2 px-1.5 text-center">Status</th>}
                 <th className="py-2 px-1.5 text-center print:hidden">Ações</th>
               </tr>
             </thead>
@@ -895,28 +1408,7 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                   </td>
                 </tr>
               ) : (
-                (() => {
-                  const groups = (() => {
-                    if (groupBy === 'NENHUM') {
-                      return [{ key: 'ALL', label: '', orders: filteredOrders }];
-                    }
-                    const map = new Map<string, { key: string; label: string; orders: Order[] }>();
-                    filteredOrders.forEach(o => {
-                      const key = groupBy === 'MODALIDADE' ? o.tipoEntrega : o.unidadeOrigemId;
-                      const label =
-                        groupBy === 'MODALIDADE'
-                          ? o.tipoEntrega === 'DELIVERY'
-                            ? 'Entrega (Delivery)'
-                            : 'Retirada em Loja'
-                          : units.find(u => u.id === o.unidadeOrigemId)?.nome || 'Unidade';
-                      const cur = map.get(key) || { key, label, orders: [] };
-                      cur.orders.push(o);
-                      map.set(key, cur);
-                    });
-                    return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
-                  })();
-
-                  return groups.map(group => {
+                groupedOrders.map(group => {
                     const expanded = isGroupExpanded(group.key, groupBy !== 'NENHUM');
                     return (
                     <React.Fragment key={group.key}>
@@ -965,38 +1457,110 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
 
                   const isRep = isReplenishmentOrder(order);
                   const isSelected = isModalOpen && editingOrder.id === order.id;
+                  const isOrderExpanded = expandedOrderIds.has(order.id);
+                  const urgency = getOrderUrgencyState(order);
+                  const isOverdue = urgency === 'OVERDUE';
+                  const isDueToday = urgency === 'TODAY';
+                  const rowAccentBorderClass = isOverdue
+                    ? 'border-l-4 border-l-red-500'
+                    : isDueToday
+                    ? 'border-l-4 border-l-blue-400'
+                    : isSelected
+                    ? isRep
+                      ? 'border-l-4 border-l-sky-500'
+                      : 'border-l-4 border-l-brand-600'
+                    : isRep
+                    ? 'border-l-4 border-l-sky-500'
+                    : '';
                   return (
+                    <React.Fragment key={order.id}>
                     <tr
-                      key={order.id}
                       onClick={() => {
                         onSelectOrder(order);
                         handleOpenEditOrder(order);
                       }}
                       className={`cursor-pointer transition-colors ${
                         isSelected
-                          ? `bg-brand-50/70 ring-1 ring-inset ring-brand-400 border-l-4 ${
-                              isRep ? 'border-l-sky-500' : 'border-l-brand-600'
+                          ? `ring-1 ring-inset ring-brand-400 ${
+                              isOverdue
+                                ? 'bg-red-100/90 border-l-4 border-l-red-500'
+                                : isDueToday
+                                ? 'bg-blue-100/90 border-l-4 border-l-blue-500'
+                                : isRep
+                                ? 'bg-brand-50/70 border-l-4 border-l-sky-500'
+                                : 'bg-brand-50/70 border-l-4 border-l-brand-600'
                             }`
+                          : isOverdue
+                          ? 'bg-red-100/80 hover:bg-red-100 border-l-4 border-l-red-500'
+                          : isDueToday
+                          ? 'bg-blue-100/75 hover:bg-blue-100 border-l-4 border-l-blue-400'
                           : isRep
                           ? 'bg-sky-50/90 hover:bg-sky-100/80 border-l-4 border-l-sky-500'
                           : 'hover:bg-slate-50/80'
                       }`}
                     >
                       <td className="py-2 px-1.5 font-mono text-[11px] font-bold text-slate-900 whitespace-nowrap">
-                        <div>{order.numeroPedido}</div>
-                        {isRep && (
-                          <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-sky-600 text-white text-[9px] font-sans font-bold uppercase tracking-wider">
-                            Reposição
-                          </span>
-                        )}
+                        <div className="flex items-start gap-1">
+                          <button
+                            type="button"
+                            aria-expanded={isOrderExpanded}
+                            aria-label={
+                              isOrderExpanded
+                                ? `Ocultar resumo do pedido ${order.numeroPedido}`
+                                : `Expandir resumo do pedido ${order.numeroPedido}`
+                            }
+                            title={
+                              isOrderExpanded
+                                ? 'Ocultar resumo do pedido'
+                                : 'Expandir resumo do pedido'
+                            }
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleOrderExpanded(order.id);
+                            }}
+                            className="mt-0.5 p-0.5 rounded hover:bg-slate-200/80 text-slate-500 hover:text-slate-900 transition-colors cursor-pointer shrink-0 print:hidden"
+                          >
+                            {isOrderExpanded ? (
+                              <ChevronDown className="w-3.5 h-3.5" />
+                            ) : (
+                              <ChevronRight className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                          <div>
+                            <div>{order.numeroPedido}</div>
+                            {isRep && (
+                              <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-sky-600 text-white text-[9px] font-sans font-bold uppercase tracking-wider">
+                                Reposição
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       </td>
                       <td className="py-2 px-1.5 font-mono text-[11px] text-slate-700 whitespace-nowrap">
-                        <div>
-                          {formatDeliveryTimeRange(order.dataHoraEntrega, order.dataHoraEntregaFim, {
-                            tipoEntrega: order.tipoEntrega,
-                            turnoEntrega: order.tipoEntrega === 'DELIVERY' ? order.turnoEntrega : undefined
-                          })}
-                        </div>
+                        {isOverdue ? (
+                          <div
+                            className="inline-flex items-center gap-1.5 text-red-800 font-semibold"
+                            title="Pedido atrasado"
+                          >
+                            <AlarmClock
+                              className="w-3.5 h-3.5 text-red-600 animate-slow-blink shrink-0"
+                              aria-label="Pedido atrasado"
+                            />
+                            <span>
+                              {formatDeliveryTimeRange(order.dataHoraEntrega, order.dataHoraEntregaFim, {
+                                tipoEntrega: order.tipoEntrega,
+                                turnoEntrega: order.tipoEntrega === 'DELIVERY' ? order.turnoEntrega : undefined
+                              })}
+                            </span>
+                          </div>
+                        ) : (
+                          <div className={isDueToday ? 'text-blue-900 font-semibold' : ''}>
+                            {formatDeliveryTimeRange(order.dataHoraEntrega, order.dataHoraEntregaFim, {
+                              tipoEntrega: order.tipoEntrega,
+                              turnoEntrega: order.tipoEntrega === 'DELIVERY' ? order.turnoEntrega : undefined
+                            })}
+                          </div>
+                        )}
                         {order.detalheEntrega && (
                           <div
                             className="text-[10px] font-sans font-medium text-blue-600 mt-0.5 max-w-[140px] truncate"
@@ -1046,6 +1610,7 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                         {unit?.nome || '-'}
                       </td>
                       )}
+                      {!hidePagamento && (
                       <td className="py-2 px-1.5 whitespace-nowrap">
                         {isRep ? (
                           <span className="text-[11px] font-semibold text-sky-700">—</span>
@@ -1066,15 +1631,18 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                           );
                         })()}
                       </td>
+                      )}
                       <td className="py-2 px-1.5 font-mono text-[11px] font-bold text-right text-slate-900 whitespace-nowrap">
                         R$ {formatCurrencyBR(order.valorTotal)}
                       </td>
+                      {!hideStatus && (
                       <td className="py-2 px-1.5 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                         {renderStatusControl(order)}
                         <span className={`hidden print:inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold border ${STATUS_BADGES[order.status]}`}>
                           {order.status}
                         </span>
                       </td>
+                      )}
                       <td
                         className="py-2 px-1.5 text-center print:hidden whitespace-nowrap"
                         onClick={(e) => e.stopPropagation()}
@@ -1111,12 +1679,25 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                         </div>
                       </td>
                     </tr>
+                    {isOrderExpanded && (
+                      <tr
+                        className="bg-emerald-50/60 border-t border-emerald-200/80 print:hidden"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <td
+                          colSpan={visibleColumnCount}
+                          className={`px-3 py-2.5 ${rowAccentBorderClass}`}
+                        >
+                          {renderOrderItemsSummary(order)}
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
                   );
                 })}
                     </React.Fragment>
                     );
-                  });
-                })()
+                  })
               )}
             </tbody>
           </table>
@@ -1129,30 +1710,7 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                 Nenhum pedido encontrado com os filtros atuais.
               </div>
             ) : (
-              (() => {
-                const map = new Map<string, { key: string; label: string; orders: Order[] }>();
-                filteredOrders.forEach(o => {
-                  const key =
-                    groupBy === 'NENHUM'
-                      ? 'ALL'
-                      : groupBy === 'MODALIDADE'
-                      ? o.tipoEntrega
-                      : o.unidadeOrigemId;
-                  const label =
-                    groupBy === 'NENHUM'
-                      ? ''
-                      : groupBy === 'MODALIDADE'
-                      ? o.tipoEntrega === 'DELIVERY'
-                        ? 'Entrega (Delivery)'
-                        : 'Retirada em Loja'
-                      : units.find(u => u.id === o.unidadeOrigemId)?.nome || 'Unidade';
-                  const cur = map.get(key) || { key, label, orders: [] };
-                  cur.orders.push(o);
-                  map.set(key, cur);
-                });
-                return Array.from(map.values())
-                  .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'))
-                  .map(group => {
+              groupedOrders.map(group => {
                   const expanded = isGroupExpanded(group.key, groupBy !== 'NENHUM');
                   return (
                   <div key={group.key} className="space-y-3">
@@ -1160,7 +1718,7 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                       <button
                         type="button"
                         onClick={() => toggleGroup(group.key)}
-                        className="w-full flex items-center justify-between px-3 py-2 bg-slate-100 hover:bg-slate-200/70 rounded-lg border border-slate-200 text-xs font-bold text-slate-800 cursor-pointer transition-colors"
+                        className="w-full flex items-center justify-between px-3 py-2 bg-emerald-50 hover:bg-emerald-100/80 rounded-lg border border-emerald-200/80 text-xs font-bold text-slate-800 cursor-pointer transition-colors"
                       >
                         <span className="inline-flex items-center gap-1.5">
                           {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
@@ -1177,6 +1735,10 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                         const unit = units.find(u => u.id === order.unidadeOrigemId);
                         const isRep = isReplenishmentOrder(order);
                         const isSelected = isModalOpen && editingOrder.id === order.id;
+                        const isOrderExpanded = expandedOrderIds.has(order.id);
+                        const urgency = getOrderUrgencyState(order);
+                        const isOverdue = urgency === 'OVERDUE';
+                        const isDueToday = urgency === 'TODAY';
                         return (
                           <div
                             key={order.id}
@@ -1185,13 +1747,28 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                               handleOpenEditOrder(order);
                             }}
                             className={`border rounded-xl p-4 shadow-xs transition-colors cursor-pointer flex flex-col justify-between gap-3 min-w-0 overflow-hidden ${
-                              isRep ? REPLENISHMENT_CARD_STYLE : ORDER_CARD_STATUS_STYLES[order.status]
+                              isOverdue
+                                ? 'bg-red-50 border-red-300 hover:border-red-400 ring-1 ring-red-200'
+                                : isDueToday
+                                ? 'bg-blue-50 border-blue-300 hover:border-blue-400 ring-1 ring-blue-200'
+                                : isRep
+                                ? REPLENISHMENT_CARD_STYLE
+                                : ORDER_CARD_STATUS_STYLES[order.status]
                             }${isSelected ? ' ring-2 ring-brand-500 shadow-md' : ''}`}
                           >
                             <div className="flex items-start justify-between border-b border-slate-100 pb-2">
                               <div>
-                                <div className="flex items-center gap-1.5">
+                                <div className="flex flex-wrap items-center gap-1.5">
                                   <span className="font-mono font-bold text-xs text-slate-900">{order.numeroPedido}</span>
+                                  {isOverdue && (
+                                    <span
+                                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-red-100 border border-red-300 text-red-700 text-[9px] font-bold uppercase"
+                                      title="Pedido atrasado"
+                                    >
+                                      <AlarmClock className="w-3 h-3 animate-slow-blink shrink-0" aria-hidden="true" />
+                                      <span>Atrasado</span>
+                                    </span>
+                                  )}
                                   {isRep && (
                                     <span className="px-1.5 py-0.5 rounded bg-sky-600 text-white text-[9px] font-bold uppercase">
                                       Reposição
@@ -1235,6 +1812,33 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                                   </>
                                 )}
                               </div>
+                            </div>
+                            <div
+                              className="space-y-2"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <button
+                                type="button"
+                                aria-expanded={isOrderExpanded}
+                                onClick={() => toggleOrderExpanded(order.id)}
+                                className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-[11px] font-semibold text-slate-700 cursor-pointer transition-colors"
+                              >
+                                <span className="inline-flex items-center gap-1.5">
+                                  {isOrderExpanded ? (
+                                    <ChevronDown className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                  ) : (
+                                    <ChevronRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                  )}
+                                  <span>
+                                    Resumo do pedido ({order.itens?.length || 0}{' '}
+                                    {(order.itens?.length || 0) === 1 ? 'item' : 'itens'})
+                                  </span>
+                                </span>
+                                <span className="text-[10px] font-mono text-slate-500">
+                                  {isOrderExpanded ? 'Ocultar' : 'Ver itens'}
+                                </span>
+                              </button>
+                              {isOrderExpanded && renderOrderItemsSummary(order)}
                             </div>
                             <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
                               <div className="flex flex-wrap items-center gap-1.5 min-w-0">
@@ -1289,8 +1893,7 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                     )}
                   </div>
                   );
-                });
-              })()
+                })
             )}
           </div>
         )}
@@ -1356,7 +1959,7 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                     {editingOrder.numeroPedido || ''}
                   </span>
                 </div>
-                <div className="grid grid-cols-2 gap-2 sm:gap-3 text-xs">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3 text-xs">
                   <div>
                     <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">Status</label>
                     <select
@@ -1418,6 +2021,33 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                         </option>
                       ))}
                     </select>
+                  </div>
+                  <div className="col-span-2 sm:col-span-1">
+                    <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">
+                      Data do Pedido
+                    </label>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <input
+                        type="date"
+                        aria-label="Data do pedido"
+                        max={todayDateKey}
+                        value={editingOrderDateKey}
+                        onChange={(e) => {
+                          const newDate = e.target.value;
+                          if (!newDate) return;
+                          setEditingOrder({
+                            ...editingOrder,
+                            dataPedido: combineOrderDateWithLocalTime(newDate, editingOrder.dataPedido),
+                          });
+                        }}
+                        className={`flex-1 min-w-[138px] border rounded-lg p-1.5 sm:p-2 font-mono text-xs ${
+                          isEditingOrderDatePast
+                            ? 'border-red-400 bg-red-50/40 text-red-900'
+                            : 'bg-white border-slate-300'
+                        }`}
+                      />
+                      {isEditingOrderDatePast && renderRetroactiveDateBadge()}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1577,30 +2207,36 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                   {editingOrder.tipoEntrega === 'DELIVERY' ? (
                     <div className="space-y-2">
                       <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-end gap-2 sm:gap-3">
-                        <div className="min-w-0 sm:w-[155px] sm:shrink-0">
+                        <div className={`${isEditingDeliveryDatePast ? 'col-span-2 sm:col-span-1 ' : ''}min-w-0 sm:w-auto sm:shrink-0`}>
                           <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">Data da Entrega *</label>
-                          <input
-                            type="date"
-                            required
-                            aria-label="Data da entrega"
-                            min={!editingOrder.id ? getCurrentLocalDateTime().slice(0, 10) : undefined}
-                            value={(editingOrder.dataHoraEntrega || getCurrentLocalDateTime()).slice(0, 10)}
-                            onChange={(e) => {
-                              const newDate = e.target.value;
-                              if (!newDate) return;
-                              const shift =
-                                editingOrder.turnoEntrega ||
-                                inferDeliveryShiftFromDateTime(editingOrder.dataHoraEntrega);
-                              const { start, end } = applyDeliveryShiftToDate(newDate, shift);
-                              setEditingOrder({
-                                ...editingOrder,
-                                turnoEntrega: shift,
-                                dataHoraEntrega: start,
-                                dataHoraEntregaFim: end
-                              });
-                            }}
-                            className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-mono text-xs"
-                          />
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <input
+                              type="date"
+                              required
+                              aria-label="Data da entrega"
+                              value={(editingOrder.dataHoraEntrega || getCurrentLocalDateTime()).slice(0, 10)}
+                              onChange={(e) => {
+                                const newDate = e.target.value;
+                                if (!newDate) return;
+                                const shift =
+                                  editingOrder.turnoEntrega ||
+                                  inferDeliveryShiftFromDateTime(editingOrder.dataHoraEntrega);
+                                const { start, end } = applyDeliveryShiftToDate(newDate, shift);
+                                setEditingOrder({
+                                  ...editingOrder,
+                                  turnoEntrega: shift,
+                                  dataHoraEntrega: start,
+                                  dataHoraEntregaFim: end
+                                });
+                              }}
+                              className={`w-full sm:w-[150px] border rounded-lg p-1.5 sm:p-2 font-mono text-xs ${
+                                isEditingDeliveryDatePast
+                                  ? 'border-red-400 bg-red-50/40 text-red-900'
+                                  : 'bg-white border-slate-300'
+                              }`}
+                            />
+                            {isEditingDeliveryDatePast && renderRetroactiveDateBadge()}
+                          </div>
                         </div>
                         <div className="min-w-0 sm:w-[130px] sm:shrink-0">
                           <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">Turno *</label>
@@ -1695,30 +2331,36 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                   ) : (
                     <div className="space-y-2">
                       <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-end gap-2 sm:gap-3">
-                        <div className="col-span-2 sm:w-[155px] sm:shrink-0">
+                        <div className="col-span-2 sm:w-auto sm:shrink-0">
                           <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">Data da Retirada *</label>
-                          <input
-                            type="date"
-                            required
-                            aria-label="Data da retirada"
-                            min={!editingOrder.id ? getCurrentLocalDateTime().slice(0, 10) : undefined}
-                            value={(editingOrder.dataHoraEntrega || getCurrentLocalDateTime()).slice(0, 10)}
-                            onChange={(e) => {
-                              const newDate = e.target.value;
-                              if (!newDate) return;
-                              const startTime = extractTimeHHmm(editingOrder.dataHoraEntrega) || '12:00';
-                              const endTime = extractTimeHHmm(
-                                editingOrder.dataHoraEntregaFim ||
-                                  addHoursToDateTime(editingOrder.dataHoraEntrega || getCurrentLocalDateTime(), 1)
-                              ) || '13:00';
-                              setEditingOrder({
-                                ...editingOrder,
-                                dataHoraEntrega: `${newDate}T${startTime}`,
-                                dataHoraEntregaFim: `${newDate}T${endTime}`
-                              });
-                            }}
-                            className="w-full bg-white border border-slate-300 rounded-lg p-1.5 sm:p-2 font-mono text-xs"
-                          />
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <input
+                              type="date"
+                              required
+                              aria-label="Data da retirada"
+                              value={(editingOrder.dataHoraEntrega || getCurrentLocalDateTime()).slice(0, 10)}
+                              onChange={(e) => {
+                                const newDate = e.target.value;
+                                if (!newDate) return;
+                                const startTime = extractTimeHHmm(editingOrder.dataHoraEntrega) || '12:00';
+                                const endTime = extractTimeHHmm(
+                                  editingOrder.dataHoraEntregaFim ||
+                                    addHoursToDateTime(editingOrder.dataHoraEntrega || getCurrentLocalDateTime(), 1)
+                                ) || '13:00';
+                                setEditingOrder({
+                                  ...editingOrder,
+                                  dataHoraEntrega: `${newDate}T${startTime}`,
+                                  dataHoraEntregaFim: `${newDate}T${endTime}`
+                                });
+                              }}
+                              className={`w-full sm:w-[150px] border rounded-lg p-1.5 sm:p-2 font-mono text-xs ${
+                                isEditingDeliveryDatePast
+                                  ? 'border-red-400 bg-red-50/40 text-red-900'
+                                  : 'bg-white border-slate-300'
+                              }`}
+                            />
+                            {isEditingDeliveryDatePast && renderRetroactiveDateBadge()}
+                          </div>
                         </div>
                         <div className="min-w-0">
                           <label className="font-semibold text-slate-700 block mb-0.5 sm:mb-1">Das *</label>
@@ -1780,6 +2422,87 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                   )}
                 </div>
               </div>
+
+              {(hasEditingRetroactiveDate || isEditingOrderAfterDelivery) && (
+                <div className="bg-amber-50 border border-amber-300 rounded-xl p-2.5 sm:p-3 space-y-2 text-xs">
+                  <div className="flex items-start gap-2 text-amber-900">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="space-y-0.5">
+                      <p className="font-bold">
+                        {hasEditingRetroactiveDate
+                          ? 'Lançamento com data retroativa detectado'
+                          : 'Atenção às datas informadas'}
+                      </p>
+                      {hasEditingRetroactiveDate && (
+                        <p className="text-[11px] text-amber-800">
+                          {isEditingOrderDatePast && (
+                            <span>
+                              Data do Pedido: <strong className="font-mono">{formatDateKeyBR(editingOrderDateKey)}</strong>
+                              {isEditingDeliveryDatePast ? ' • ' : ''}
+                            </span>
+                          )}
+                          {isEditingDeliveryDatePast && (
+                            <span>
+                              Data da {editingOrder.tipoEntrega === 'RETIRADA' ? 'Retirada' : 'Entrega'}:{' '}
+                              <strong className="font-mono">{formatDateKeyBR(editingDeliveryDateKey)}</strong>
+                            </span>
+                          )}
+                        </p>
+                      )}
+                      {isEditingOrderAfterDelivery && (
+                        <p className="text-[11px] font-semibold text-rose-700">
+                          Atenção: a Data do Pedido está posterior à Data da{' '}
+                          {editingOrder.tipoEntrega === 'RETIRADA' ? 'Retirada' : 'Entrega'}.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {hasEditingRetroactiveDate && (
+                    <div className="space-y-1.5 pt-1 border-t border-amber-200/80">
+                      <label className="flex items-start gap-2 cursor-pointer text-[11px] text-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={skipStockMovement}
+                          onChange={(e) => {
+                            retroactiveOptionsTouchedRef.current.stock = true;
+                            setSkipStockMovement(e.target.checked);
+                          }}
+                          className="mt-0.5 rounded text-amber-600 focus:ring-amber-500"
+                        />
+                        <span>
+                          <strong className="block font-semibold">
+                            Não baixar / movimentar estoque ao salvar
+                          </strong>
+                          <span className="text-slate-600">
+                            Recomendado para pedidos passados já entregues cujo estoque físico atual já foi ajustado.
+                          </span>
+                        </span>
+                      </label>
+
+                      <label className="flex items-start gap-2 cursor-pointer text-[11px] text-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={skipWhatsAppNotification}
+                          onChange={(e) => {
+                            retroactiveOptionsTouchedRef.current.whatsapp = true;
+                            setSkipWhatsAppNotification(e.target.checked);
+                          }}
+                          className="mt-0.5 rounded text-amber-600 focus:ring-amber-500"
+                        />
+                        <span>
+                          <strong className="block font-semibold">
+                            Não notificar cliente no WhatsApp
+                          </strong>
+                          <span className="text-slate-600">
+                            Evita disparo de mensagem retroativa ao cliente.
+                          </span>
+                        </span>
+                      </label>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* PASSO 4: ITENS DO PEDIDO */}
               <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-2.5 sm:p-3.5">
@@ -2450,6 +3173,151 @@ ${order.formaPagamento === 'pix' && payStatus !== 'PAGO' ? `*Chave PIX:* ${origi
                 className="px-4 py-1.5 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-lg cursor-pointer"
               >
                 Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Retroactive Order/Delivery Date Confirmation Modal */}
+      {pendingRetroactiveSave && (
+        <div
+          onClick={() => setPendingRetroactiveSave(null)}
+          className="fixed inset-0 bg-slate-900/55 backdrop-blur-xs flex items-center justify-center z-[70] p-3 sm:p-4"
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full p-4 sm:p-5 space-y-3.5"
+          >
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 border border-amber-300 text-amber-700 flex items-center justify-center shrink-0">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">
+                  Confirmar Registro com Data Retroativa
+                </h3>
+                <p className="text-xs text-slate-600 mt-1">
+                  Você está salvando o pedido{' '}
+                  <strong className="font-mono text-slate-900">
+                    {pendingRetroactiveSave.order.numeroPedido}
+                  </strong>{' '}
+                  com data no passado. Confira os dados abaixo antes de confirmar:
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1.5 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-slate-600">Data do Pedido:</span>
+                <span className="inline-flex items-center gap-1.5 font-mono font-bold text-slate-900">
+                  <span>{formatDateKeyBR(pendingRetroactiveSave.orderDateKey)}</span>
+                  {pendingRetroactiveSave.isOrderDatePast && (
+                    <span className="px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 text-[10px] font-sans font-semibold">
+                      Retroativa
+                    </span>
+                  )}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-slate-600">
+                  Data da {pendingRetroactiveSave.order.tipoEntrega === 'RETIRADA' ? 'Retirada' : 'Entrega'}:
+                </span>
+                <span className="inline-flex items-center gap-1.5 font-mono font-bold text-slate-900">
+                  <span>{formatDateKeyBR(pendingRetroactiveSave.deliveryDateKey)}</span>
+                  {pendingRetroactiveSave.isDeliveryDatePast && (
+                    <span className="px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 text-[10px] font-sans font-semibold">
+                      Retroativa
+                    </span>
+                  )}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-slate-600">Status do Pedido:</span>
+                <span className="font-semibold text-slate-900">
+                  {pendingRetroactiveSave.order.status.replace('_', ' ')}
+                </span>
+              </div>
+            </div>
+
+            {pendingRetroactiveSave.isOrderAfterDelivery && (
+              <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl px-3 py-2 text-[11px] font-semibold">
+                Atenção: a Data do Pedido é posterior à Data da{' '}
+                {pendingRetroactiveSave.order.tipoEntrega === 'RETIRADA' ? 'Retirada' : 'Entrega'}.
+              </div>
+            )}
+
+            {pendingRetroactiveSave.isDeliveryDatePast &&
+              pendingRetroactiveSave.order.status !== 'ENTREGUE' &&
+              pendingRetroactiveSave.order.status !== 'CANCELADO' && (
+                <div className="bg-blue-50 border border-blue-200 text-blue-900 rounded-xl px-3 py-2 text-[11px] leading-relaxed">
+                  Dica: pedidos retroativos em status aberto entram na reserva de estoque e no
+                  contador de Produção. Se já foi concluído, considere salvar com status{' '}
+                  <strong>ENTREGUE</strong>.
+                </div>
+              )}
+
+            <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3 space-y-2 text-[11px]">
+              <label className="flex items-start gap-2 cursor-pointer text-slate-800">
+                <input
+                  type="checkbox"
+                  checked={skipStockMovement}
+                  onChange={(e) => {
+                    retroactiveOptionsTouchedRef.current.stock = true;
+                    setSkipStockMovement(e.target.checked);
+                  }}
+                  className="mt-0.5 rounded text-amber-600 focus:ring-amber-500"
+                />
+                <span>
+                  <strong className="block font-semibold">
+                    Não baixar / movimentar estoque ao salvar
+                  </strong>
+                  <span className="text-slate-600">
+                    Recomendado para pedidos passados já entregues cujo estoque físico atual já foi ajustado.
+                  </span>
+                </span>
+              </label>
+
+              <label className="flex items-start gap-2 cursor-pointer text-slate-800">
+                <input
+                  type="checkbox"
+                  checked={skipWhatsAppNotification}
+                  onChange={(e) => {
+                    retroactiveOptionsTouchedRef.current.whatsapp = true;
+                    setSkipWhatsAppNotification(e.target.checked);
+                  }}
+                  className="mt-0.5 rounded text-amber-600 focus:ring-amber-500"
+                />
+                <span>
+                  <strong className="block font-semibold">
+                    Não notificar cliente no WhatsApp
+                  </strong>
+                  <span className="text-slate-600">
+                    Evita disparo de mensagem retroativa ao cliente.
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setPendingRetroactiveSave(null)}
+                className="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+              >
+                Voltar e Revisar
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  commitOrderSave(pendingRetroactiveSave.order, {
+                    skipStockMovement,
+                    skipWhatsAppNotification,
+                  })
+                }
+                className="px-4 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl cursor-pointer shadow-xs"
+              >
+                Confirmar e Salvar
               </button>
             </div>
           </div>

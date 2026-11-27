@@ -22,6 +22,7 @@ import {
 import { ExcelService } from '../services/excelService';
 import { PrintReportHeader } from '../components/PrintReportHeader';
 import { HybridFilterSort } from '../components/HybridFilterSort';
+import { ProdutosReportModal } from '../components/ProdutosReportModal';
 import { useExpandedGroups } from '../hooks/useExpandedGroups';
 import { CurrencyInput, formatCurrencyBR } from '../components/CurrencyInput';
 import { canEditProducts, UserRole } from '../utils/permissions';
@@ -50,12 +51,14 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
   const canEdit = canEditProducts(userRole);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('TODAS');
-  const [sortBy, setSortBy] = useState<'NOME_ASC' | 'PRECO_ASC' | 'PRECO_DESC' | 'TEMPO_ASC'>('NOME_ASC');
+  const [statusFilter, setStatusFilter] = useState<'TODOS' | 'ATIVOS' | 'INATIVOS'>('TODOS');
+  const [sortBy, setSortBy] = useState<'NOME_ASC' | 'SKU_ASC' | 'PRECO_ASC' | 'PRECO_DESC' | 'TEMPO_ASC'>('NOME_ASC');
   const [viewMode, setViewMode] = useState<'GRID' | 'TABLE'>('GRID');
   const [groupBy, setGroupBy] = useState<'CATEGORIA' | 'STATUS' | 'UNIDADE' | 'NENHUM'>('CATEGORIA');
   const { isGroupExpanded, toggleGroup } = useExpandedGroups(groupBy);
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const productImageFileRef = useRef<HTMLInputElement>(null);
@@ -114,12 +117,19 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
   const filteredProducts = products
     .filter(p => {
       const matchesCategory = selectedCategory === 'TODAS' || p.categoriaId === selectedCategory;
+      const matchesStatus =
+        statusFilter === 'TODOS'
+          ? true
+          : statusFilter === 'ATIVOS'
+          ? p.ativo
+          : !p.ativo;
       const matchesSearch = 
         p.descricao.toLowerCase().includes(searchTerm.toLowerCase()) ||
         p.sku.toLowerCase().includes(searchTerm.toLowerCase());
-      return matchesCategory && matchesSearch;
+      return matchesCategory && matchesStatus && matchesSearch;
     })
     .sort((a, b) => {
+      if (sortBy === 'SKU_ASC') return a.sku.localeCompare(b.sku, 'pt-BR');
       if (sortBy === 'PRECO_ASC') return a.precoUnitario - b.precoUnitario;
       if (sortBy === 'PRECO_DESC') return b.precoUnitario - a.precoUnitario;
       if (sortBy === 'TEMPO_ASC') return a.tempoProducaoMinutos - b.tempoProducaoMinutos;
@@ -153,6 +163,17 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
   const hideStatus = groupBy === 'STATUS';
   const hideUnidade = groupBy === 'UNIDADE';
   const visibleColumnCount = 7 - (hideCategoria ? 1 : 0) - (hideStatus ? 1 : 0);
+
+  const hasActiveFilters =
+    selectedCategory !== 'TODAS' ||
+    statusFilter !== 'TODOS' ||
+    searchTerm.trim() !== '';
+
+  const handleResetFilters = () => {
+    setSelectedCategory('TODAS');
+    setStatusFilter('TODOS');
+    setSearchTerm('');
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -220,12 +241,31 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
     <div className="flex-1 min-w-0 flex flex-col h-full bg-[#f8f9ff] overflow-hidden">
       {/* Top Action Bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between md:bg-white md:border-b md:border-[#e2e8f0] md:px-6 md:py-4 md:gap-4 print:hidden">
-        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2.5 md:p-0 md:bg-transparent md:border-b-0">
-          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex flex-wrap items-center gap-2">
+        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2.5 md:p-0 md:bg-transparent md:border-b-0 min-w-0">
+          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex flex-wrap items-center gap-2 min-w-0">
             <span>Produtos</span>
-            <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800">
-              {filteredProducts.length} itens
-            </span>
+            {(() => {
+              const catLabel =
+                selectedCategory === 'TODAS'
+                  ? 'Todas as Categorias'
+                  : categories.find(c => c.id === selectedCategory)?.nome || 'Categoria';
+              const parts = [catLabel];
+              if (statusFilter !== 'TODOS') {
+                parts.push(statusFilter === 'ATIVOS' ? 'Ativos' : 'Inativos');
+              }
+              if (searchTerm.trim()) {
+                parts.push(`Busca: "${searchTerm.trim()}"`);
+              }
+              const badgeText = `${filteredProducts.length} itens • ${parts.join(' • ')}`;
+              return (
+                <span
+                  className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 max-w-full truncate"
+                  title={badgeText}
+                >
+                  {badgeText}
+                </span>
+              );
+            })()}
           </h1>
         </div>
 
@@ -275,10 +315,11 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
           )}
 
           <button
-            onClick={() => ExcelService.exportProducts(products, categories)}
-            title="Exportar"
-            aria-label="Exportar"
-            className="flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-xs"
+            type="button"
+            onClick={() => setIsReportModalOpen(true)}
+            title="Exportar Relatório de Produtos (PDF / XLSX)"
+            aria-label="Exportar Relatório de Produtos (PDF / XLSX)"
+            className="flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-xs cursor-pointer"
           >
             <Download className="w-4 h-4 text-slate-500" />
           </button>
@@ -331,20 +372,31 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
       </div>
 
       {/* Filter & Sort + Search */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between md:bg-white/70 md:border-b md:border-[#e2e8f0] md:px-6 md:py-2.5 md:gap-3 print:hidden">
+      <div className="shrink-0 min-w-0 flex flex-col md:flex-row md:flex-wrap md:items-center justify-between md:bg-white/70 md:border-b md:border-[#e2e8f0] md:px-6 md:py-2.5 md:gap-3 print:hidden">
         <div className="bg-white/70 border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex items-center w-full md:w-auto min-w-0 overflow-hidden">
           <HybridFilterSort
             filterLabel="Categoria:"
             filterValue={selectedCategory}
             onFilterChange={setSelectedCategory}
+            filterActive={selectedCategory !== 'TODAS'}
             filterOptions={[
               { value: 'TODAS', label: 'Todas as Categorias' },
               ...categories.filter(c => c.ativo).map(cat => ({ value: cat.id, label: cat.nome }))
             ]}
+            secondFilterLabel="Status:"
+            secondFilterValue={statusFilter}
+            onSecondFilterChange={(v) => setStatusFilter(v as 'TODOS' | 'ATIVOS' | 'INATIVOS')}
+            secondFilterActive={statusFilter !== 'TODOS'}
+            secondFilterOptions={[
+              { value: 'TODOS', label: 'Todos Status' },
+              { value: 'ATIVOS', label: 'Ativos' },
+              { value: 'INATIVOS', label: 'Inativos' }
+            ]}
             sortValue={sortBy}
-            onSortChange={(v) => setSortBy(v as 'NOME_ASC' | 'PRECO_ASC' | 'PRECO_DESC' | 'TEMPO_ASC')}
+            onSortChange={(v) => setSortBy(v as 'NOME_ASC' | 'SKU_ASC' | 'PRECO_ASC' | 'PRECO_DESC' | 'TEMPO_ASC')}
             sortOptions={[
               { value: 'NOME_ASC', label: 'Nome (A-Z)' },
+              { value: 'SKU_ASC', label: 'SKU (A-Z)' },
               { value: 'PRECO_ASC', label: 'Menor Preço' },
               { value: 'PRECO_DESC', label: 'Maior Preço' },
               { value: 'TEMPO_ASC', label: 'Menor Tempo Prep.' }
@@ -357,6 +409,8 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
               { value: 'UNIDADE', label: 'Unidade' },
               { value: 'NENHUM', label: 'Sem Agrupamento' }
             ]}
+            hasActiveFilters={hasActiveFilters}
+            onResetFilters={handleResetFilters}
           />
         </div>
 
@@ -375,12 +429,18 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
       </div>
 
       {/* Products Grid or Table */}
-      <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-3 sm:p-6">
+      <div
+        className={
+          viewMode === 'TABLE'
+            ? 'flex-1 min-h-0 min-w-0 flex flex-col p-3 sm:p-6 overflow-hidden'
+            : 'flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-3 sm:p-6'
+        }
+      >
         <div
           id="print-report-area"
           className={
             viewMode === 'TABLE'
-              ? 'bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-x-auto max-w-full'
+              ? 'bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-auto max-w-full max-h-full min-h-0 print:overflow-visible print:max-h-none'
               : 'hidden print:block bg-white'
           }
         >
@@ -398,8 +458,8 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
             subtitle={`${filteredProducts.length} produto(s)`}
           />
           <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-50/90 border-b border-slate-200 text-[11px] font-mono uppercase tracking-wider text-slate-500">
+              <thead className="sticky top-0 z-10 bg-slate-50/95 border-b border-slate-200 text-[11px] font-mono uppercase tracking-wider text-slate-500">
+                <tr>
                   <th className="py-3 px-4 font-semibold">SKU</th>
                   <th className="py-3 px-4 font-semibold">Produto</th>
                   {!hideCategoria && <th className="py-3 px-4 font-semibold">Categoria</th>}
@@ -539,13 +599,13 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
                 <button
                   type="button"
                   onClick={() => toggleGroup(group.label)}
-                  className="w-full flex items-center justify-between border-b border-slate-200 pb-1.5 hover:text-slate-900 cursor-pointer"
+                  className="w-full flex items-center justify-between px-3 py-2 bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200/80 rounded-lg cursor-pointer transition-colors"
                 >
                   <h2 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
                     {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                     <span>{group.label}</span>
                   </h2>
-                  <span className="text-[11px] font-mono font-semibold text-slate-500">
+                  <span className="text-[11px] font-mono font-semibold text-slate-600">
                     {group.items.length} item(ns)
                   </span>
                 </button>
@@ -936,6 +996,18 @@ export const ProdutosScreen: React.FC<ProdutosScreenProps> = ({
           </div>
         </div>
       )}
+
+      <ProdutosReportModal
+        isOpen={isReportModalOpen}
+        onClose={() => setIsReportModalOpen(false)}
+        allProducts={products}
+        filteredProducts={filteredProducts}
+        categories={categories}
+        initialCategoryFilter={selectedCategory}
+        initialStatusFilter={statusFilter}
+        initialGroupBy={groupBy}
+        searchTerm={searchTerm}
+      />
     </div>
   );
 };

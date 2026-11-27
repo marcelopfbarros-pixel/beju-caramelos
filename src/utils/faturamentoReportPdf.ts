@@ -629,6 +629,23 @@ export function buildFaturamentoPdfDocument(data: FaturamentoReportData): jsPDF 
   return doc;
 }
 
+export function buildFaturamentoPdfBlob(data: FaturamentoReportData): Blob {
+  const doc = buildFaturamentoPdfDocument(data);
+  return doc.output('blob');
+}
+
+export function downloadFaturamentoPdfBlob(blob: Blob): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const dateSuffix = toLocalDateInput() || new Date().toISOString().slice(0, 10);
+  link.href = url;
+  link.download = `Beju_Caramelos_Relatorio_Faturamento_${dateSuffix}.pdf`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export function exportFaturamentoPdf(data: FaturamentoReportData): void {
   const doc = buildFaturamentoPdfDocument(data);
   const dateSuffix = toLocalDateInput() || new Date().toISOString().slice(0, 10);

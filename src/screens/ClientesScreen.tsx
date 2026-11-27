@@ -1,12 +1,14 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Customer, Order, OrderStatus, Product, StoreUnit } from '../types';
-import { Users, Plus, Search, Phone, MapPin, Trash2, X, Save, Printer, LayoutGrid, List, Loader2, ChevronDown, ChevronRight, ShoppingBag, Truck, Store, Clock, ExternalLink } from 'lucide-react';
+import { Users, Plus, Search, Phone, MapPin, Trash2, X, Save, Printer, Download, LayoutGrid, List, Loader2, ChevronDown, ChevronRight, ShoppingBag, Truck, Store, Clock, ExternalLink, DollarSign } from 'lucide-react';
 import { PrintReportHeader } from '../components/PrintReportHeader';
 import { HybridFilterSort } from '../components/HybridFilterSort';
+import { ClientesReportModal } from '../components/ClientesReportModal';
 import { formatCurrencyBR } from '../components/CurrencyInput';
 import { useExpandedGroups } from '../hooks/useExpandedGroups';
 import { normalizePhoneForWhatsApp, resolveOrderUnit } from '../services/whatsappAutomationService';
 import { formatDeliveryTimeRange } from '../utils/deliveryTimeRange';
+import { extractNeighborhoodFromAddress } from '../utils/orderRegion';
 import {
   PAYMENT_STATUS_BADGE_CLASSES,
   PAYMENT_STATUS_LABELS,
@@ -53,6 +55,19 @@ const ORDER_STATUS_BADGES: Record<OrderStatus, string> = {
   CANCELADO: 'bg-red-100 text-red-800 border-red-300',
 };
 
+function formatOrderDateTimeBR(iso?: string): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 export const ClientesScreen: React.FC<ClientesScreenProps> = ({
   customers,
   orders = [],
@@ -67,12 +82,22 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
   const [viewMode, setViewMode] = useState<'TABLE' | 'CARDS'>(() =>
     typeof window !== 'undefined' && window.innerWidth < 768 ? 'CARDS' : 'TABLE'
   );
-  const [groupBy, setGroupBy] = useState<'PENDENCIA' | 'INICIAL' | 'NENHUM'>('PENDENCIA');
+  const [groupBy, setGroupBy] = useState<'PENDENCIA' | 'REGIAO' | 'INICIAL' | 'NENHUM'>('PENDENCIA');
   const { isGroupExpanded, toggleGroup } = useExpandedGroups(groupBy);
-  const [openOrdersFilter, setOpenOrdersFilter] = useState<'TODOS' | 'COM_ABERTOS' | 'SEM_ABERTOS'>('TODOS');
-  const [sortBy, setSortBy] = useState<'PROXIMA_ENTREGA' | 'ABERTOS_DESC' | 'NOME_ASC'>('PROXIMA_ENTREGA');
+  const [openOrdersFilter, setOpenOrdersFilter] = useState<'TODOS' | 'COM_ABERTOS' | 'COM_SALDO' | 'SEM_ABERTOS' | 'RECORRENTES'>('TODOS');
+  const [sortBy, setSortBy] = useState<'PROXIMA_ENTREGA' | 'ABERTOS_DESC' | 'FATURAMENTO_DESC' | 'ULTIMO_PEDIDO_DESC' | 'NOME_ASC'>('PROXIMA_ENTREGA');
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [viewingOrdersCustomer, setViewingOrdersCustomer] = useState<Customer | null>(null);
+  const [expandedCustomerIds, setExpandedCustomerIds] = useState<Set<string>>(() => new Set());
+  const toggleCustomerExpanded = (customerId: string) => {
+    setExpandedCustomerIds(prev => {
+      const next = new Set(prev);
+      if (next.has(customerId)) next.delete(customerId);
+      else next.add(customerId);
+      return next;
+    });
+  };
   const [editingCustomer, setEditingCustomer] = useState<Partial<Customer>>({
     nome: '',
     telefone: '',
@@ -98,55 +123,139 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
 
   const productMap = useMemo(() => new Map(products.map(p => [p.id, p])), [products]);
 
-  const openOrdersByCustomerId = useMemo(() => {
-    const byNormTel = new Map<string, Order[]>();
-    const byRawTel = new Map<string, Order[]>();
-    const byName = new Map<string, Order[]>();
+  const { openOrdersByCustomerId, allOrdersByCustomerId, customerStatsById } = useMemo(() => {
+    const openByNormTel = new Map<string, Order[]>();
+    const openByRawTel = new Map<string, Order[]>();
+    const openByName = new Map<string, Order[]>();
+    const allByNormTel = new Map<string, Order[]>();
+    const allByRawTel = new Map<string, Order[]>();
+    const allByName = new Map<string, Order[]>();
+    const historyByNormTel = new Map<string, Order[]>();
+    const historyByRawTel = new Map<string, Order[]>();
+    const historyByName = new Map<string, Order[]>();
 
     orders.forEach(o => {
-      if (o.status === 'ENTREGUE' || o.status === 'CANCELADO') return;
       const normTel = normalizePhoneForWhatsApp(o.clienteTelefone || '');
       const rawTel = (o.clienteTelefone || '').trim();
       const nameKey = (o.clienteNome || '').trim().toLowerCase();
 
       if (normTel) {
-        const list = byNormTel.get(normTel) || [];
+        const list = historyByNormTel.get(normTel) || [];
         list.push(o);
-        byNormTel.set(normTel, list);
+        historyByNormTel.set(normTel, list);
       }
       if (rawTel) {
-        const list = byRawTel.get(rawTel) || [];
+        const list = historyByRawTel.get(rawTel) || [];
         list.push(o);
-        byRawTel.set(rawTel, list);
+        historyByRawTel.set(rawTel, list);
       }
       if (nameKey) {
-        const list = byName.get(nameKey) || [];
+        const list = historyByName.get(nameKey) || [];
         list.push(o);
-        byName.set(nameKey, list);
+        historyByName.set(nameKey, list);
+      }
+
+      if (o.status === 'CANCELADO') return;
+
+      if (normTel) {
+        const list = allByNormTel.get(normTel) || [];
+        list.push(o);
+        allByNormTel.set(normTel, list);
+      }
+      if (rawTel) {
+        const list = allByRawTel.get(rawTel) || [];
+        list.push(o);
+        allByRawTel.set(rawTel, list);
+      }
+      if (nameKey) {
+        const list = allByName.get(nameKey) || [];
+        list.push(o);
+        allByName.set(nameKey, list);
+      }
+
+      if (o.status !== 'ENTREGUE') {
+        if (normTel) {
+          const list = openByNormTel.get(normTel) || [];
+          list.push(o);
+          openByNormTel.set(normTel, list);
+        }
+        if (rawTel) {
+          const list = openByRawTel.get(rawTel) || [];
+          list.push(o);
+          openByRawTel.set(rawTel, list);
+        }
+        if (nameKey) {
+          const list = openByName.get(nameKey) || [];
+          list.push(o);
+          openByName.set(nameKey, list);
+        }
       }
     });
 
-    const result = new Map<string, Order[]>();
+    const openResult = new Map<string, Order[]>();
+    const allHistoryResult = new Map<string, Order[]>();
+    const statsResult = new Map<string, { orderCount: number; totalRevenue: number; lastOrderTs: number; pendingBalance: number }>();
     customers.forEach(c => {
       const normTel = normalizePhoneForWhatsApp(c.telefone || '');
       const rawTel = (c.telefone || '').trim();
       const nameKey = (c.nome || '').trim().toLowerCase();
 
-      const matched =
-        (normTel && byNormTel.get(normTel)) ||
-        (rawTel && byRawTel.get(rawTel)) ||
-        (nameKey && byName.get(nameKey)) ||
+      const matchedOpen =
+        (normTel && openByNormTel.get(normTel)) ||
+        (rawTel && openByRawTel.get(rawTel)) ||
+        (nameKey && openByName.get(nameKey)) ||
         [];
 
-      const sorted = [...matched].sort(
+      const sorted = [...matchedOpen].sort(
         (a, b) =>
           new Date(a.dataHoraEntrega || a.dataPedido).getTime() -
           new Date(b.dataHoraEntrega || b.dataPedido).getTime()
       );
-      result.set(c.id, sorted);
+      openResult.set(c.id, sorted);
+
+      const matchedHistoryRaw =
+        (normTel && historyByNormTel.get(normTel)) ||
+        (rawTel && historyByRawTel.get(rawTel)) ||
+        (nameKey && historyByName.get(nameKey)) ||
+        [];
+      const seenOrderIds = new Set<string>();
+      const matchedHistory = matchedHistoryRaw
+        .filter(o => {
+          if (seenOrderIds.has(o.id)) return false;
+          seenOrderIds.add(o.id);
+          return true;
+        })
+        .sort((a, b) => {
+          const ta = new Date(a.dataPedido || a.dataHoraEntrega).getTime() || 0;
+          const tb = new Date(b.dataPedido || b.dataHoraEntrega).getTime() || 0;
+          if (tb !== ta) return tb - ta;
+          return (b.numeroPedido || '').localeCompare(a.numeroPedido || '', 'pt-BR');
+        });
+      allHistoryResult.set(c.id, matchedHistory);
+
+      const matchedAll =
+        (normTel && allByNormTel.get(normTel)) ||
+        (rawTel && allByRawTel.get(rawTel)) ||
+        (nameKey && allByName.get(nameKey)) ||
+        [];
+      let totalRevenue = 0;
+      let lastOrderTs = 0;
+      let pendingBalance = 0;
+      for (const o of matchedAll) {
+        totalRevenue += Number(o.valorTotal) || 0;
+        pendingBalance += getOrderRemainingAmount(o);
+        const ts = new Date(o.dataPedido || o.dataHoraEntrega).getTime();
+        if (Number.isFinite(ts) && ts > lastOrderTs) lastOrderTs = ts;
+      }
+      statsResult.set(c.id, {
+        orderCount: matchedAll.length,
+        totalRevenue,
+        lastOrderTs,
+        pendingBalance: Number(pendingBalance.toFixed(2)),
+      });
     });
 
-    return result;
+    return { openOrdersByCustomerId: openResult, allOrdersByCustomerId: allHistoryResult, customerStatsById: statsResult };
   }, [customers, orders]);
 
   const getOpenOrders = (customer: Customer): Order[] => {
@@ -173,8 +282,12 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
           c.endereco.toLowerCase().includes(searchTerm.toLowerCase());
         if (!matchSearch) return false;
         const openCount = getOpenOrdersCount(c);
+        const totalCount = customerStatsById.get(c.id)?.orderCount || 0;
+        const pendingBalance = customerStatsById.get(c.id)?.pendingBalance || 0;
         if (openOrdersFilter === 'COM_ABERTOS' && openCount === 0) return false;
+        if (openOrdersFilter === 'COM_SALDO' && pendingBalance <= 0) return false;
         if (openOrdersFilter === 'SEM_ABERTOS' && openCount > 0) return false;
+        if (openOrdersFilter === 'RECORRENTES' && totalCount < 2) return false;
         return true;
       })
       .sort((a, b) => {
@@ -189,9 +302,21 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
           if (diff !== 0) return diff;
           return a.nome.localeCompare(b.nome, 'pt-BR');
         }
+        if (sortBy === 'FATURAMENTO_DESC') {
+          const revA = customerStatsById.get(a.id)?.totalRevenue || 0;
+          const revB = customerStatsById.get(b.id)?.totalRevenue || 0;
+          if (revB !== revA) return revB - revA;
+          return a.nome.localeCompare(b.nome, 'pt-BR');
+        }
+        if (sortBy === 'ULTIMO_PEDIDO_DESC') {
+          const tsA = customerStatsById.get(a.id)?.lastOrderTs || 0;
+          const tsB = customerStatsById.get(b.id)?.lastOrderTs || 0;
+          if (tsB !== tsA) return tsB - tsA;
+          return a.nome.localeCompare(b.nome, 'pt-BR');
+        }
         return a.nome.localeCompare(b.nome, 'pt-BR');
       });
-  }, [customers, searchTerm, openOrdersFilter, sortBy, openOrdersByCustomerId]);
+  }, [customers, searchTerm, openOrdersFilter, sortBy, openOrdersByCustomerId, customerStatsById]);
 
   const groupedCustomers = useMemo(() => {
     if (groupBy === 'NENHUM') {
@@ -202,6 +327,8 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
       let key = '';
       if (groupBy === 'PENDENCIA') {
         key = getOpenOrdersCount(c) > 0 ? 'Com Pedidos em Aberto' : 'Sem Pedidos em Aberto';
+      } else if (groupBy === 'REGIAO') {
+        key = extractNeighborhoodFromAddress(c.endereco) || 'Região Não Informada';
       } else {
         key = (c.nome.trim().charAt(0) || '#').toUpperCase();
       }
@@ -214,6 +341,11 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
   }, [filtered, groupBy, openOrdersByCustomerId]);
 
   const visibleColumnCount = 6;
+  const hasActiveFilters = openOrdersFilter !== 'TODOS' || searchTerm.trim() !== '';
+  const handleResetFilters = () => {
+    setOpenOrdersFilter('TODOS');
+    setSearchTerm('');
+  };
 
   const handleOpenNew = () => {
     setEditingCustomer({
@@ -331,16 +463,237 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
     setIsModalOpen(false);
   };
 
+  const renderCustomerOrdersHistory = (customer: Customer, mode: 'TABLE' | 'CARDS') => {
+    const customerOrders = allOrdersByCustomerId.get(customer.id) || [];
+    const activeOrdersTotal = customerOrders
+      .filter(o => o.status !== 'CANCELADO')
+      .reduce((sum, o) => sum + (Number(o.valorTotal) || 0), 0);
+    const activeRemainingTotal = customerOrders
+      .filter(o => o.status !== 'CANCELADO')
+      .reduce((sum, o) => sum + getOrderRemainingAmount(o), 0);
+
+    return (
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-full min-w-0 bg-emerald-50/70 border border-emerald-200/80 rounded-lg p-2.5 sm:p-3 space-y-2 print:hidden"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-mono font-bold uppercase tracking-wider text-emerald-950">
+              <ShoppingBag className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+              <span>Pedidos ({customerOrders.length})</span>
+            </span>
+            {customerOrders.length > 0 && (
+              <span className="text-[11px] font-mono font-semibold text-emerald-800 bg-white/80 border border-emerald-200 px-2 py-0.5 rounded-full">
+                Total ativo: R$ {formatCurrencyBR(activeOrdersTotal)}
+              </span>
+            )}
+            {activeRemainingTotal > 0 && (
+              <span className="text-[11px] font-mono font-semibold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full">
+                Saldo a pagar: R$ {formatCurrencyBR(activeRemainingTotal)}
+              </span>
+            )}
+          </div>
+          {customerOrders.length > 0 && onOpenCustomerOrdersInPedidos && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenCustomerOrdersInPedidos(customer);
+              }}
+              className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-800 hover:text-emerald-950 hover:underline cursor-pointer"
+            >
+              <ExternalLink className="w-3 h-3" />
+              <span>Ver em Pedidos</span>
+            </button>
+          )}
+        </div>
+
+        {customerOrders.length === 0 ? (
+          <p className="text-xs text-slate-500 italic py-1">
+            Nenhum pedido registrado para este cliente.
+          </p>
+        ) : mode === 'TABLE' ? (
+          <div className="overflow-x-auto max-w-full bg-white rounded-lg border border-emerald-200/80">
+            <table className="w-full text-left border-collapse text-[11px]">
+              <thead className="bg-emerald-50/90 border-b border-emerald-200/80 text-[10px] font-mono uppercase tracking-wider text-slate-600">
+                <tr>
+                  <th className="py-2 px-2.5 font-semibold">Pedido</th>
+                  <th className="py-2 px-2.5 font-semibold">Data do Pedido</th>
+                  <th className="py-2 px-2.5 font-semibold">Data da Entrega</th>
+                  <th className="py-2 px-2.5 font-semibold text-center">Status</th>
+                  <th className="py-2 px-2.5 font-semibold text-center">Qtd. Itens</th>
+                  <th className="py-2 px-2.5 font-semibold text-right">Valor Total</th>
+                  <th className="py-2 px-2.5 font-semibold text-right">Saldo a Pagar</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {customerOrders.map(order => {
+                  const totalQty = order.itens.reduce(
+                    (sum, item) => sum + (Number(item.quantidade) || 0),
+                    0
+                  );
+                  const remainingAmount =
+                    order.status === 'CANCELADO' ? 0 : getOrderRemainingAmount(order);
+                  const deliveryLabel = formatDeliveryTimeRange(
+                    order.dataHoraEntrega,
+                    order.dataHoraEntregaFim,
+                    {
+                      tipoEntrega: order.tipoEntrega,
+                      turnoEntrega: order.tipoEntrega === 'DELIVERY' ? order.turnoEntrega : undefined,
+                    }
+                  );
+                  return (
+                    <tr
+                      key={order.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenOrderInPedidos?.(order);
+                      }}
+                      className={`transition-colors ${
+                        onOpenOrderInPedidos
+                          ? 'hover:bg-emerald-50/40 cursor-pointer'
+                          : 'hover:bg-slate-50/60'
+                      }`}
+                    >
+                      <td className="py-2 px-2.5 font-mono font-bold text-slate-900 whitespace-nowrap">
+                        {order.numeroPedido}
+                      </td>
+                      <td className="py-2 px-2.5 font-mono text-slate-600 whitespace-nowrap">
+                        {formatOrderDateTimeBR(order.dataPedido)}
+                      </td>
+                      <td className="py-2 px-2.5 font-mono text-slate-700 whitespace-nowrap">
+                        {deliveryLabel || '—'}
+                      </td>
+                      <td className="py-2 px-2.5 text-center whitespace-nowrap">
+                        <span
+                          className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold border ${ORDER_STATUS_BADGES[order.status]}`}
+                        >
+                          {ORDER_STATUS_LABELS[order.status]}
+                        </span>
+                      </td>
+                      <td className="py-2 px-2.5 text-center font-mono font-semibold text-slate-700 whitespace-nowrap">
+                        {totalQty} un.
+                      </td>
+                      <td className="py-2 px-2.5 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
+                        R$ {formatCurrencyBR(order.valorTotal)}
+                      </td>
+                      <td
+                        className={`py-2 px-2.5 text-right font-mono whitespace-nowrap ${
+                          order.status === 'CANCELADO'
+                            ? 'text-slate-400'
+                            : remainingAmount > 0
+                            ? 'font-bold text-rose-700'
+                            : 'font-semibold text-emerald-700'
+                        }`}
+                      >
+                        R$ {formatCurrencyBR(remainingAmount)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="space-y-2 max-h-72 overflow-y-auto pr-0.5">
+            {customerOrders.map(order => {
+              const totalQty = order.itens.reduce(
+                (sum, item) => sum + (Number(item.quantidade) || 0),
+                0
+              );
+              const remainingAmount =
+                order.status === 'CANCELADO' ? 0 : getOrderRemainingAmount(order);
+              const deliveryLabel = formatDeliveryTimeRange(
+                order.dataHoraEntrega,
+                order.dataHoraEntregaFim,
+                {
+                  tipoEntrega: order.tipoEntrega,
+                  turnoEntrega: order.tipoEntrega === 'DELIVERY' ? order.turnoEntrega : undefined,
+                }
+              );
+              return (
+                <div
+                  key={order.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenOrderInPedidos?.(order);
+                  }}
+                  className={`bg-white border border-emerald-200/70 rounded-lg p-2 space-y-1 text-[11px] min-w-0 ${
+                    onOpenOrderInPedidos ? 'hover:border-emerald-400 cursor-pointer' : ''
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono font-bold text-slate-900 truncate">
+                      {order.numeroPedido}
+                    </span>
+                    <span
+                      className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0 ${ORDER_STATUS_BADGES[order.status]}`}
+                    >
+                      {ORDER_STATUS_LABELS[order.status]}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[10.5px] text-slate-600 font-mono">
+                    <span>Pedido: {formatOrderDateTimeBR(order.dataPedido)}</span>
+                    <span>Entrega: {deliveryLabel || '—'}</span>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 pt-0.5 border-t border-slate-100 text-[11px] font-mono">
+                    <span className="text-slate-700 font-semibold">{totalQty} un.</span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-slate-900">
+                        R$ {formatCurrencyBR(order.valorTotal)}
+                      </span>
+                      <span
+                        className={
+                          order.status === 'CANCELADO'
+                            ? 'text-slate-400'
+                            : remainingAmount > 0
+                            ? 'font-bold text-rose-700'
+                            : 'font-semibold text-emerald-700'
+                        }
+                      >
+                        A pagar: R$ {formatCurrencyBR(remainingAmount)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="flex-1 min-w-0 flex flex-col h-full bg-[#f8f9ff] overflow-hidden">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between md:bg-white md:border-b md:border-[#e2e8f0] md:px-6 md:py-4 md:gap-4 print:hidden">
-        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2.5 md:p-0 md:bg-transparent md:border-b-0">
-          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex flex-wrap items-center gap-2">
+        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2.5 md:p-0 md:bg-transparent md:border-b-0 min-w-0">
+          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex flex-wrap items-center gap-2 min-w-0">
             <span>Clientes</span>
-            <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800">
-              {filtered.length} clientes
-            </span>
+            {(() => {
+              const filterLabels: Record<string, string> = {
+                TODOS: 'Todos',
+                COM_ABERTOS: 'Com Pedidos Abertos',
+                COM_SALDO: 'Com Saldo a Pagar',
+                SEM_ABERTOS: 'Sem Pedidos Abertos',
+                RECORRENTES: 'Recorrentes (2+ pedidos)',
+              };
+              const parts = [filterLabels[openOrdersFilter] || openOrdersFilter];
+              if (searchTerm.trim()) {
+                parts.push(`Busca: "${searchTerm.trim()}"`);
+              }
+              const badgeText = `${filtered.length} clientes • ${parts.join(' • ')}`;
+              return (
+                <span
+                  className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 max-w-full truncate"
+                  title={badgeText}
+                >
+                  {badgeText}
+                </span>
+              );
+            })()}
           </h1>
         </div>
 
@@ -371,6 +724,16 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
           </div>
 
           <button
+            type="button"
+            onClick={() => setIsReportModalOpen(true)}
+            title="Exportar Relatório de Clientes (PDF / XLSX)"
+            aria-label="Exportar Relatório de Clientes (PDF / XLSX)"
+            className="flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-xs cursor-pointer"
+          >
+            <Download className="w-4 h-4 text-slate-500" />
+          </button>
+
+          <button
             onClick={handleOpenNew}
             title="Novo Cliente"
             aria-label="Novo Cliente"
@@ -392,31 +755,39 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
       </div>
 
       {/* Search & Filter Bar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between md:bg-white/70 md:border-b md:border-[#e2e8f0] md:px-6 md:py-2.5 md:gap-3 print:hidden">
+      <div className="shrink-0 min-w-0 flex flex-col md:flex-row md:flex-wrap md:items-center justify-between md:bg-white/70 md:border-b md:border-[#e2e8f0] md:px-6 md:py-2.5 md:gap-3 print:hidden">
         <div className="bg-white/70 border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex items-center w-full md:w-auto min-w-0 overflow-hidden">
           <HybridFilterSort
-            filterLabel="Pedidos Abertos:"
+            filterLabel="Pedidos:"
             filterValue={openOrdersFilter}
-            onFilterChange={(v) => setOpenOrdersFilter(v as 'TODOS' | 'COM_ABERTOS' | 'SEM_ABERTOS')}
+            onFilterChange={(v) => setOpenOrdersFilter(v as 'TODOS' | 'COM_ABERTOS' | 'COM_SALDO' | 'SEM_ABERTOS' | 'RECORRENTES')}
+            filterActive={openOrdersFilter !== 'TODOS'}
             filterOptions={[
               { value: 'TODOS', label: 'Todos' },
               { value: 'COM_ABERTOS', label: 'Com Pedidos Abertos' },
-              { value: 'SEM_ABERTOS', label: 'Sem Pedidos Abertos' }
+              { value: 'COM_SALDO', label: 'Com Saldo a Pagar' },
+              { value: 'SEM_ABERTOS', label: 'Sem Pedidos Abertos' },
+              { value: 'RECORRENTES', label: 'Recorrentes (2+ pedidos)' }
             ]}
             sortValue={sortBy}
-            onSortChange={(v) => setSortBy(v as 'PROXIMA_ENTREGA' | 'ABERTOS_DESC' | 'NOME_ASC')}
+            onSortChange={(v) => setSortBy(v as 'PROXIMA_ENTREGA' | 'ABERTOS_DESC' | 'FATURAMENTO_DESC' | 'ULTIMO_PEDIDO_DESC' | 'NOME_ASC')}
             sortOptions={[
               { value: 'PROXIMA_ENTREGA', label: 'Data/Turno Entrega ↑' },
               { value: 'ABERTOS_DESC', label: 'Mais Pedidos Abertos' },
+              { value: 'FATURAMENTO_DESC', label: 'Maior Faturamento' },
+              { value: 'ULTIMO_PEDIDO_DESC', label: 'Último Pedido ↓' },
               { value: 'NOME_ASC', label: 'Nome (A-Z)' }
             ]}
             groupValue={groupBy}
-            onGroupChange={(v) => setGroupBy(v as 'PENDENCIA' | 'INICIAL' | 'NENHUM')}
+            onGroupChange={(v) => setGroupBy(v as 'PENDENCIA' | 'REGIAO' | 'INICIAL' | 'NENHUM')}
             groupOptions={[
               { value: 'PENDENCIA', label: 'Pedidos em Aberto' },
+              { value: 'REGIAO', label: 'Bairro / Região' },
               { value: 'INICIAL', label: 'Letra Inicial' },
               { value: 'NENHUM', label: 'Sem Agrupamento' }
             ]}
+            hasActiveFilters={hasActiveFilters}
+            onResetFilters={handleResetFilters}
           />
         </div>
 
@@ -435,7 +806,13 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
       </div>
 
       {/* Content */}
-      <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-3 sm:p-6">
+      <div
+        className={
+          viewMode === 'TABLE'
+            ? 'flex-1 min-h-0 min-w-0 flex flex-col p-3 sm:p-6 overflow-hidden'
+            : 'flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-3 sm:p-6'
+        }
+      >
         {viewMode === 'CARDS' && (
           <div className="space-y-6 print:hidden">
             {filtered.length === 0 ? (
@@ -452,13 +829,13 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
                     <button
                       type="button"
                       onClick={() => toggleGroup(group.label)}
-                      className="w-full flex items-center justify-between border-b border-slate-200 pb-1.5 hover:text-slate-900 cursor-pointer"
+                      className="w-full flex items-center justify-between px-3 py-2 bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200/80 rounded-lg cursor-pointer transition-colors"
                     >
                       <h2 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
                         {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                         <span>{group.label}</span>
                       </h2>
-                      <span className="text-[11px] font-mono font-semibold text-slate-500">
+                      <span className="text-[11px] font-mono font-semibold text-slate-600">
                         {group.items.length} cliente(s)
                       </span>
                     </button>
@@ -467,6 +844,9 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {group.items.map(customer => {
                       const openOrdersCount = getOpenOrdersCount(customer);
+                      const pendingBalance = customerStatsById.get(customer.id)?.pendingBalance || 0;
+                      const hasPendingBalance = pendingBalance > 0;
+                      const isCustomerExpanded = expandedCustomerIds.has(customer.id);
                       const isEditingCard =
                         (isModalOpen && editingCustomer.id === customer.id) ||
                         viewingOrdersCustomer?.id === customer.id;
@@ -477,12 +857,52 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
                           className={`border rounded-xl p-4 shadow-xs flex flex-col justify-between gap-3 min-w-0 overflow-hidden cursor-pointer transition-colors ${
                             isEditingCard
                               ? 'bg-brand-50/70 border-brand-400 ring-2 ring-brand-500 shadow-md'
+                              : hasPendingBalance
+                              ? 'bg-rose-50 border-rose-300 hover:border-rose-400'
                               : 'bg-white border-[#e2e8f0] hover:border-brand-400'
                           }`}
                         >
                           <div className="space-y-2">
                             <div className="flex items-start justify-between gap-2">
-                              <h3 className="text-sm font-bold text-slate-900">{customer.nome}</h3>
+                              <div className="flex items-start gap-1.5 min-w-0">
+                                <button
+                                  type="button"
+                                  aria-expanded={isCustomerExpanded}
+                                  aria-label={
+                                    isCustomerExpanded
+                                      ? `Ocultar pedidos de ${customer.nome}`
+                                      : `Expandir pedidos de ${customer.nome}`
+                                  }
+                                  title={
+                                    isCustomerExpanded
+                                      ? 'Ocultar lista de pedidos'
+                                      : 'Expandir lista de pedidos'
+                                  }
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleCustomerExpanded(customer.id);
+                                  }}
+                                  className="mt-0.5 p-0.5 rounded hover:bg-slate-200/80 text-slate-500 hover:text-slate-900 transition-colors cursor-pointer shrink-0"
+                                >
+                                  {isCustomerExpanded ? (
+                                    <ChevronDown className="w-4 h-4" />
+                                  ) : (
+                                    <ChevronRight className="w-4 h-4" />
+                                  )}
+                                </button>
+                                <h3 className="text-sm font-bold text-slate-900 min-w-0 break-words flex items-center gap-1.5 flex-wrap">
+                                  <span>{customer.nome}</span>
+                                  {hasPendingBalance && (
+                                    <span
+                                      title={`Saldo a pagar: R$ ${formatCurrencyBR(pendingBalance)}`}
+                                      aria-label={`Saldo a pagar: R$ ${formatCurrencyBR(pendingBalance)}`}
+                                      className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-rose-600 text-white shadow-2xs animate-pulse shrink-0"
+                                    >
+                                      <DollarSign className="w-3.5 h-3.5 stroke-[2.5]" />
+                                    </span>
+                                  )}
+                                </h3>
+                              </div>
                               {openOrdersCount > 0 ? (
                                 <button
                                   type="button"
@@ -536,6 +956,7 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
                               <p className="text-[11px] text-slate-500 italic">{customer.observacoes}</p>
                             )}
                           </div>
+                          {isCustomerExpanded && renderCustomerOrdersHistory(customer, 'CARDS')}
                           <div className="pt-2 border-t border-slate-100 flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
                             <button
                               onClick={() => {
@@ -561,15 +982,30 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
           </div>
         )}
 
-        <div id="print-report-area" className={`${viewMode === 'CARDS' ? 'hidden print:block' : ''} bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-x-auto max-w-full`}>
+        <div
+          id="print-report-area"
+          className={`${
+            viewMode === 'CARDS'
+              ? 'hidden print:block'
+              : 'bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-auto max-w-full max-h-full min-h-0 print:overflow-visible print:max-h-none'
+          } ${viewMode === 'CARDS' ? 'bg-white' : ''}`}
+        >
           <PrintReportHeader
             title="Clientes"
-            badge={groupBy === 'NENHUM' ? 'Geral' : groupBy === 'PENDENCIA' ? 'Por Pedidos em Aberto' : 'Por Inicial'}
+            badge={
+              groupBy === 'NENHUM'
+                ? 'Geral'
+                : groupBy === 'PENDENCIA'
+                ? 'Por Pedidos em Aberto'
+                : groupBy === 'REGIAO'
+                ? 'Por Bairro / Região'
+                : 'Por Inicial'
+            }
             subtitle={`${filtered.length} cliente(s)`}
           />
           <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50/90 border-b border-slate-200 text-[11px] font-mono uppercase tracking-wider text-slate-500">
+            <thead className="sticky top-0 z-10 bg-slate-50/95 border-b border-slate-200 text-[11px] font-mono uppercase tracking-wider text-slate-500">
+              <tr>
                 <th className="py-3 px-4 font-semibold">Nome</th>
                 <th className="py-3 px-4 font-semibold">Telefone / WhatsApp</th>
                 <th className="py-3 px-4 font-semibold">Endereço Padrão</th>
@@ -606,20 +1042,63 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
                     )}
                     {expanded && group.items.map(customer => {
                       const openOrdersCount = getOpenOrdersCount(customer);
+                      const pendingBalance = customerStatsById.get(customer.id)?.pendingBalance || 0;
+                      const hasPendingBalance = pendingBalance > 0;
+                      const isCustomerExpanded = expandedCustomerIds.has(customer.id);
                       const isEditingRow =
                         (isModalOpen && editingCustomer.id === customer.id) ||
                         viewingOrdersCustomer?.id === customer.id;
                       return (
+                      <React.Fragment key={customer.id}>
                       <tr
-                        key={customer.id}
                         onClick={() => handleOpenEdit(customer)}
                         className={`cursor-pointer transition-colors ${
                           isEditingRow
                             ? 'bg-brand-50/70 ring-1 ring-inset ring-brand-400 border-l-4 border-l-brand-600'
+                            : hasPendingBalance
+                            ? 'bg-rose-50 hover:bg-rose-100/80 border-l-4 border-l-rose-500'
                             : 'hover:bg-slate-50/70'
                         }`}
                       >
-                        <td className="py-3.5 px-4 font-bold text-slate-900">{customer.nome}</td>
+                        <td className="py-3.5 px-4 font-bold text-slate-900">
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              aria-expanded={isCustomerExpanded}
+                              aria-label={
+                                isCustomerExpanded
+                                  ? `Ocultar pedidos de ${customer.nome}`
+                                  : `Expandir pedidos de ${customer.nome}`
+                              }
+                              title={
+                                isCustomerExpanded
+                                  ? 'Ocultar lista de pedidos'
+                                  : 'Expandir lista de pedidos'
+                              }
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleCustomerExpanded(customer.id);
+                              }}
+                              className="p-0.5 rounded hover:bg-slate-200/80 text-slate-500 hover:text-slate-900 transition-colors cursor-pointer shrink-0 print:hidden"
+                            >
+                              {isCustomerExpanded ? (
+                                <ChevronDown className="w-3.5 h-3.5" />
+                              ) : (
+                                <ChevronRight className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                            <span>{customer.nome}</span>
+                            {hasPendingBalance && (
+                              <span
+                                title={`Saldo a pagar: R$ ${formatCurrencyBR(pendingBalance)}`}
+                                aria-label={`Saldo a pagar: R$ ${formatCurrencyBR(pendingBalance)}`}
+                                className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-rose-600 text-white shadow-2xs animate-pulse shrink-0"
+                              >
+                                <DollarSign className="w-3.5 h-3.5 stroke-[2.5]" />
+                              </span>
+                            )}
+                          </div>
+                        </td>
                         <td className="py-3.5 px-4 font-mono text-slate-700">
                           {normalizePhoneForWhatsApp(customer.telefone) ? (
                             <a
@@ -689,6 +1168,17 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
                           </button>
                         </td>
                       </tr>
+                      {isCustomerExpanded && (
+                        <tr
+                          className="bg-emerald-50/60 border-t border-emerald-200/80 print:hidden"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <td colSpan={visibleColumnCount} className="px-4 py-3">
+                            {renderCustomerOrdersHistory(customer, 'TABLE')}
+                          </td>
+                        </tr>
+                      )}
+                      </React.Fragment>
                       );
                     })}
                   </React.Fragment>
@@ -1116,6 +1606,17 @@ export const ClientesScreen: React.FC<ClientesScreenProps> = ({
           </div>
         );
       })()}
+
+      <ClientesReportModal
+        isOpen={isReportModalOpen}
+        onClose={() => setIsReportModalOpen(false)}
+        allCustomers={customers}
+        filteredCustomers={filtered}
+        orders={orders}
+        initialOpenOrdersFilter={openOrdersFilter}
+        initialGroupBy={groupBy}
+        searchTerm={searchTerm}
+      />
     </div>
   );
 };

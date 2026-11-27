@@ -184,3 +184,16 @@
   color: transparent;
   animation: cardapio-rainbow-shift 2.2s linear infinite;
 }
+
+@keyframes slow-blink {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.2;
+  }
+}
+
+.animate-slow-blink {
+  animation: slow-blink 2.2s ease-in-out infinite;
+}

@@ -595,7 +595,7 @@ export function buildPedidosReportWorkbook(data: PedidosReportData): PedidosExce
   // Sheet 2: Resumo Consolidado de Itens
   const ws2: WorkSheet = {};
   const merges2: Range[] = [];
-  const maxColIdx2 = 5;
+  const maxColIdx2 = 4;
 
   applyMergedRange(
     ws2,
@@ -618,7 +618,7 @@ export function buildPedidosReportWorkbook(data: PedidosReportData): PedidosExce
     metaStyle
   );
 
-  const summaryHeaders = ['SKU', 'Produto', 'Unidade', 'Pedidos', 'Qtd. Total', 'Valor Total'];
+  const summaryHeaders = ['SKU', 'Produto', 'Unidade', 'Pedidos', 'Qtd. Total'];
   const sumHeaderRow = 3;
   summaryHeaders.forEach((h, colIdx) => {
     setCell(ws2, sumHeaderRow, colIdx, {
@@ -717,18 +717,6 @@ export function buildPedidosReportWorkbook(data: PedidosReportData): PedidosExce
           numFmt: '#,##0',
         },
       });
-      setCell(ws2, r, 5, {
-        t: 'n',
-        v: item.totalValor,
-        z: 'R$ #,##0.00',
-        s: {
-          font: { name: 'Calibri', sz: 9.5, bold: true, color: { rgb: COLORS.slate900 } },
-          fill: { patternType: 'solid', fgColor: { rgb: rowBg } },
-          alignment: { horizontal: 'right', vertical: 'center' },
-          border: THIN_SLATE_BORDER,
-          numFmt: 'R$ #,##0.00',
-        },
-      });
       rowHeights2.push({ hpt: 21 });
     });
   }
@@ -748,10 +736,6 @@ export function buildPedidosReportWorkbook(data: PedidosReportData): PedidosExce
   );
 
   const colSumQtyLetter = XLSX.utils.encode_col(4);
-  const colSumValLetter = XLSX.utils.encode_col(5);
-  const totalProductValor = Number(
-    data.productSummary.reduce((s, p) => s + p.totalValor, 0).toFixed(2)
-  );
 
   if (data.productSummary.length > 0) {
     const excelStart2 = sumStartRow + 1;
@@ -763,21 +747,8 @@ export function buildPedidosReportWorkbook(data: PedidosReportData): PedidosExce
       z: '#,##0',
       s: grandTotalCountStyle,
     });
-    setCell(ws2, sumTotalRow, 5, {
-      t: 'n',
-      f: `SUM(${colSumValLetter}${excelStart2}:${colSumValLetter}${excelEnd2})`,
-      v: totalProductValor,
-      z: 'R$ #,##0.00',
-      s: grandTotalCurrencyStyle,
-    });
   } else {
     setCell(ws2, sumTotalRow, 4, { t: 'n', v: 0, z: '#,##0', s: grandTotalCountStyle });
-    setCell(ws2, sumTotalRow, 5, {
-      t: 'n',
-      v: 0,
-      z: 'R$ #,##0.00',
-      s: grandTotalCurrencyStyle,
-    });
   }
   rowHeights2.push({ hpt: 24 });
 
@@ -788,11 +759,10 @@ export function buildPedidosReportWorkbook(data: PedidosReportData): PedidosExce
   ws2['!merges'] = merges2;
   ws2['!cols'] = [
     { wch: 14 },
-    { wch: 40 },
+    { wch: 44 },
     { wch: 12 },
     { wch: 12 },
     { wch: 14 },
-    { wch: 18 },
   ];
   ws2['!rows'] = rowHeights2;
   ws2['!margins'] = { left: 0.25, right: 0.25, top: 0.35, bottom: 0.35, header: 0.2, footer: 0.2 };

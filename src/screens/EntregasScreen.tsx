@@ -9,11 +9,13 @@ import {
   getOrderPaidAmount,
   getOrderRemainingAmount,
 } from '../utils/paymentStatus';
-import { Printer, Clock, MapPin, Phone, CheckCircle, Calendar, Tag, LayoutGrid, List, Layers, MessageSquare, ChevronDown, ChevronRight, X } from 'lucide-react';
+import { Printer, Clock, MapPin, Phone, CheckCircle, Tag, LayoutGrid, List, Layers, MessageSquare, ChevronDown, ChevronRight, X, Search, Download } from 'lucide-react';
 import { PrintReportHeader } from '../components/PrintReportHeader';
 import { HybridFilterSort } from '../components/HybridFilterSort';
+import { EntregasReportModal } from '../components/EntregasReportModal';
 import { formatCurrencyBR } from '../components/CurrencyInput';
 import { useExpandedGroups } from '../hooks/useExpandedGroups';
+import { resolveOrderRegion } from '../utils/orderRegion';
 import {
   formatStatusNotificationMessage,
   dispatchWhatsAppMessage
@@ -68,12 +70,14 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
   const [printMode, setPrintMode] = useState<'receipt' | 'label' | 'batch_labels' | 'report'>('receipt');
   const [labelFormat, setLabelFormat] = useState<'A4361' | '6181'>('A4361');
   const [labelColorMode, setLabelColorMode] = useState<'COLOR' | 'BW'>('COLOR');
-  const [dateFilterMode, setDateFilterMode] = useState<'TODAS' | 'HOJE' | 'AMANHA' | 'DATA'>('TODAS');
+  const [dateFilterMode, setDateFilterMode] = useState<'TODAS' | 'ATRASADOS' | 'HOJE' | 'AMANHA' | 'PROXIMOS_7_DIAS' | 'DATA'>('TODAS');
   const [statusFilter, setStatusFilter] = useState<'SEM_ENTREGUES' | 'SO_ENTREGUES' | 'SEM_FILTRO'>('SEM_ENTREGUES');
   const [sortBy, setSortBy] = useState<'ENTREGA_ASC' | 'ENTREGA_DESC' | 'VALOR_DESC' | 'CLIENTE_ASC'>('ENTREGA_ASC');
+  const [searchTerm, setSearchTerm] = useState('');
   const [customDate, setCustomDate] = useState<string>(getLocalDateKey(new Date().toISOString()));
   const [viewMode, setViewMode] = useState<'CARDS' | 'TABLE'>('CARDS');
-  const [groupBy, setGroupBy] = useState<'LOJA_DATA_TURNO' | 'LOJA' | 'STATUS' | 'NENHUM'>('LOJA_DATA_TURNO');
+  const [groupBy, setGroupBy] = useState<'LOJA_DATA_TURNO' | 'LOJA' | 'REGIAO' | 'STATUS' | 'NENHUM'>('LOJA_DATA_TURNO');
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const { isGroupExpanded, toggleGroup } = useExpandedGroups(groupBy);
 
   const getDeliveryDetail = (order: Order) => {
@@ -88,6 +92,11 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
   const tomorrowKey = useMemo(() => {
     const t = new Date();
     t.setDate(t.getDate() + 1);
+    return getLocalDateKey(t.toISOString());
+  }, []);
+  const next7DaysEndKey = useMemo(() => {
+    const t = new Date();
+    t.setDate(t.getDate() + 6);
     return getLocalDateKey(t.toISOString());
   }, []);
 
@@ -106,9 +115,29 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
         if (o.status !== 'ENTREGUE') return false;
       }
       const orderDate = getLocalDateKey(o.dataHoraEntrega);
-      if (dateFilterMode === 'HOJE') return orderDate === todayKey;
-      if (dateFilterMode === 'AMANHA') return orderDate === tomorrowKey;
-      if (dateFilterMode === 'DATA') return orderDate === customDate;
+      if (dateFilterMode === 'ATRASADOS') {
+        if (o.status === 'ENTREGUE') return false;
+        const deadlineMs = new Date(o.dataHoraEntregaFim || o.dataHoraEntrega).getTime();
+        if (!(Number.isFinite(deadlineMs) && deadlineMs < Date.now())) return false;
+      } else if (dateFilterMode === 'HOJE') {
+        if (orderDate !== todayKey) return false;
+      } else if (dateFilterMode === 'AMANHA') {
+        if (orderDate !== tomorrowKey) return false;
+      } else if (dateFilterMode === 'PROXIMOS_7_DIAS') {
+        if (!(orderDate && orderDate >= todayKey && orderDate <= next7DaysEndKey)) return false;
+      } else if (dateFilterMode === 'DATA') {
+        if (orderDate !== customDate) return false;
+      }
+      const term = searchTerm.trim().toLowerCase();
+      if (term) {
+        const match =
+          o.numeroPedido.toLowerCase().includes(term) ||
+          o.clienteNome.toLowerCase().includes(term) ||
+          o.clienteTelefone.toLowerCase().includes(term) ||
+          (o.enderecoEntrega || '').toLowerCase().includes(term) ||
+          getDeliveryDetail(o).toLowerCase().includes(term);
+        if (!match) return false;
+      }
       return true;
     })
     .sort((a, b) => {
@@ -174,14 +203,21 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
         })
         .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
     }
+    const deliveryStatusLabels: Record<string, string> = {
+      PRONTO: 'Pronto',
+      EM_ROTA: 'Em Rota',
+      ENTREGUE: 'Entregue',
+    };
     const map = new Map<string, Order[]>();
     for (const order of pendingDeliveries) {
       let key = '';
       if (groupBy === 'LOJA') {
         const unit = unitMap.get(order.unidadeOrigemId);
         key = unit ? `${unit.tipo === 'CENTRAL' ? '🏭 ' : '🏪 '}${unit.nome}` : 'Unidade não informada';
+      } else if (groupBy === 'REGIAO') {
+        key = resolveOrderRegion(order, customers, units).label;
       } else {
-        key = order.status;
+        key = deliveryStatusLabels[order.status] || order.status;
       }
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(order);
@@ -199,7 +235,7 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
             a.label.localeCompare(b.label, 'pt-BR')
           : a.label.localeCompare(b.label, 'pt-BR')
       );
-  }, [pendingDeliveries, groupBy, unitMap]);
+  }, [pendingDeliveries, groupBy, unitMap, customers, units]);
 
   const hideEntrega = groupBy === 'LOJA_DATA_TURNO';
   const hideStatus = groupBy === 'STATUS';
@@ -232,15 +268,54 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
     }, 150);
   };
 
+  const hasActiveFilters =
+    statusFilter !== 'SEM_ENTREGUES' ||
+    dateFilterMode !== 'TODAS' ||
+    searchTerm.trim() !== '';
+
+  const handleResetFilters = () => {
+    setStatusFilter('SEM_ENTREGUES');
+    setDateFilterMode('TODAS');
+    setSearchTerm('');
+  };
+
+  const activeFilterBadgeText = (() => {
+    const statusLabels: Record<string, string> = {
+      SEM_ENTREGUES: 'Sem Entregues',
+      SO_ENTREGUES: 'Só Entregues',
+      SEM_FILTRO: 'Todas',
+    };
+    const parts = [statusLabels[statusFilter] || statusFilter];
+    if (dateFilterMode === 'ATRASADOS') {
+      parts.push('Atrasadas');
+    } else if (dateFilterMode === 'HOJE') {
+      parts.push('Hoje');
+    } else if (dateFilterMode === 'AMANHA') {
+      parts.push('Amanhã');
+    } else if (dateFilterMode === 'PROXIMOS_7_DIAS') {
+      parts.push('Próx. 7 dias');
+    } else if (dateFilterMode === 'DATA' && customDate) {
+      const [y, m, d] = customDate.split('-');
+      parts.push(y && m && d ? `${d}/${m}/${y}` : customDate);
+    }
+    if (searchTerm.trim()) {
+      parts.push(`Busca: "${searchTerm.trim()}"`);
+    }
+    return `${pendingDeliveries.length} entrega(s) • ${parts.join(' • ')}`;
+  })();
+
   return (
     <div className="flex-1 min-w-0 flex flex-col h-full bg-[#f8f9ff] overflow-hidden">
       {/* Top Bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between md:bg-white md:border-b md:border-[#e2e8f0] md:px-6 md:py-4 md:gap-4 print:hidden">
-        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2.5 md:p-0 md:bg-transparent md:border-b-0">
-          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex flex-wrap items-center gap-2">
+        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2.5 md:p-0 md:bg-transparent md:border-b-0 min-w-0">
+          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex flex-wrap items-center gap-2 min-w-0">
             <span>Entregas</span>
-            <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800">
-              {pendingDeliveries.length} entrega(s)
+            <span
+              className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 max-w-full truncate"
+              title={activeFilterBadgeText}
+            >
+              {activeFilterBadgeText}
             </span>
           </h1>
         </div>
@@ -314,6 +389,16 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
             </button>
           )}
 
+          <button
+            type="button"
+            onClick={() => setIsReportModalOpen(true)}
+            title="Exportar Relatório de Entregas (PDF / XLSX)"
+            aria-label="Exportar Relatório de Entregas (PDF / XLSX)"
+            className="flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-xs cursor-pointer shrink-0"
+          >
+            <Download className="w-4 h-4 text-slate-500" />
+          </button>
+
           {/* Print + Batch Labels (Desktop only) */}
           <div className="hidden md:flex items-center gap-2 flex-wrap">
           <select
@@ -362,17 +447,30 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
         </div>
       </div>
 
-      {/* Filter, Sort, Group & View Bar */}
-      <div className="flex flex-col md:flex-row md:items-center md:bg-white/70 md:border-b md:border-[#e2e8f0] md:px-6 md:py-2.5 md:gap-2.5 print:hidden">
-        <div className="bg-white/70 border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex items-center w-full md:w-auto min-w-0 overflow-hidden">
+      {/* Filter, Sort, Group & Search Bar */}
+      <div className="shrink-0 min-w-0 flex flex-col md:flex-row md:flex-wrap md:items-center justify-between md:bg-white/70 md:border-b md:border-[#e2e8f0] md:px-6 md:py-2.5 md:gap-2.5 print:hidden">
+        <div className="bg-white/70 border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex flex-wrap items-center gap-2 w-full md:w-auto min-w-0 overflow-hidden">
           <HybridFilterSort
+            dateLabel="Data da Entrega:"
+            dateValue={dateFilterMode}
+            onDateChange={(v) => setDateFilterMode(v as 'TODAS' | 'ATRASADOS' | 'HOJE' | 'AMANHA' | 'PROXIMOS_7_DIAS' | 'DATA')}
+            dateActive={dateFilterMode !== 'TODAS'}
+            dateOptions={[
+              { value: 'TODAS', label: 'Todo o Período' },
+              { value: 'ATRASADOS', label: 'Atrasados' },
+              { value: 'HOJE', label: 'Hoje' },
+              { value: 'AMANHA', label: 'Amanhã' },
+              { value: 'PROXIMOS_7_DIAS', label: 'Próx. 7 dias' },
+              { value: 'DATA', label: 'Data Específica' }
+            ]}
             filterLabel="Status:"
             filterValue={statusFilter}
             onFilterChange={(v) => setStatusFilter(v as 'SEM_ENTREGUES' | 'SO_ENTREGUES' | 'SEM_FILTRO')}
+            filterActive={statusFilter !== 'SEM_ENTREGUES'}
             filterOptions={[
               { value: 'SEM_ENTREGUES', label: 'Sem Entregues' },
-              { value: 'SO_ENTREGUES', label: 'Só entregues' },
-              { value: 'SEM_FILTRO', label: 'Sem filtro' }
+              { value: 'SO_ENTREGUES', label: 'Só Entregues' },
+              { value: 'SEM_FILTRO', label: 'Todas' }
             ]}
             sortValue={sortBy}
             onSortChange={(v) => setSortBy(v as 'ENTREGA_ASC' | 'ENTREGA_DESC' | 'VALOR_DESC' | 'CLIENTE_ASC')}
@@ -383,52 +481,53 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
               { value: 'CLIENTE_ASC', label: 'Cliente (A-Z)' }
             ]}
             groupValue={groupBy}
-            onGroupChange={(v) => setGroupBy(v as 'LOJA_DATA_TURNO' | 'LOJA' | 'STATUS' | 'NENHUM')}
+            onGroupChange={(v) => setGroupBy(v as 'LOJA_DATA_TURNO' | 'LOJA' | 'REGIAO' | 'STATUS' | 'NENHUM')}
             groupOptions={[
               { value: 'LOJA_DATA_TURNO', label: 'Loja/Unidade → Data/Turno' },
               { value: 'LOJA', label: 'Loja / Unidade' },
+              { value: 'REGIAO', label: 'Bairro / Região' },
               { value: 'STATUS', label: 'Status' },
               { value: 'NENHUM', label: 'Sem Agrupamento' }
             ]}
+            hasActiveFilters={hasActiveFilters}
+            onResetFilters={handleResetFilters}
           />
+          {dateFilterMode === 'DATA' && (
+            <input
+              type="date"
+              value={customDate}
+              onChange={(e) => {
+                setCustomDate(e.target.value);
+                setDateFilterMode('DATA');
+              }}
+              aria-label="Selecionar data de entrega"
+              className="h-9 px-2 py-0 leading-normal rounded-lg text-xs font-mono border border-blue-500 bg-blue-50 text-blue-900 font-bold"
+            />
+          )}
         </div>
 
-        <div className="bg-white/70 border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex items-center gap-1 sm:gap-1.5 w-full md:w-auto min-w-0 overflow-hidden">
-          <div className="h-9 flex items-center justify-center text-xs font-semibold text-slate-600 shrink-0" title="Data">
-            <Calendar className="w-3.5 h-3.5 text-slate-400" />
+        <div className="bg-white/70 border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 w-full md:flex-1 md:min-w-[140px] md:max-w-xs">
+          <div className="relative w-full">
+            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Buscar pedido, cliente ou endereço..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full h-9 pl-9 pr-3 py-0 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:border-brand-500 shadow-2xs"
+            />
           </div>
-          {(['TODAS', 'HOJE', 'AMANHA'] as const).map(mode => (
-            <button
-              key={mode}
-              type="button"
-              onClick={() => setDateFilterMode(mode)}
-              className={`h-9 px-2 sm:px-2.5 inline-flex items-center justify-center leading-normal rounded-lg text-[11px] sm:text-xs font-semibold border transition-all shrink-0 ${
-                dateFilterMode === mode
-                  ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
-                  : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
-              }`}
-            >
-              {mode === 'TODAS' ? 'Todas' : mode === 'HOJE' ? 'Hoje' : 'Amanhã'}
-            </button>
-          ))}
-          <input
-            type="date"
-            value={customDate}
-            onChange={(e) => {
-              setCustomDate(e.target.value);
-              setDateFilterMode('DATA');
-            }}
-            className={`h-9 flex-1 sm:flex-initial min-w-0 px-1.5 sm:px-2 py-0 leading-normal rounded-lg text-xs font-mono border transition-all ${
-              dateFilterMode === 'DATA'
-                ? 'border-brand-600 bg-brand-50 text-brand-900 font-bold'
-                : 'border-slate-300 bg-white text-slate-700'
-            }`}
-          />
         </div>
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-3 sm:p-6 print:hidden">
+      <div
+        className={
+          viewMode === 'TABLE'
+            ? 'flex-1 min-h-0 min-w-0 flex flex-col p-3 sm:p-6 overflow-hidden print:hidden'
+            : 'flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-3 sm:p-6 print:hidden'
+        }
+      >
         {pendingDeliveries.length === 0 ? (
           <div className="py-16 text-center text-slate-400 bg-white rounded-xl border border-slate-200">
             <CheckCircle className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
@@ -445,13 +544,13 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                   <button
                     type="button"
                     onClick={() => toggleGroup(`g:${group.label}`)}
-                    className="w-full flex items-center justify-between border-b border-slate-200 pb-1.5 hover:text-slate-900 cursor-pointer"
+                    className="w-full flex items-center justify-between px-3 py-2 bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200/80 rounded-lg cursor-pointer transition-colors"
                   >
                     <h2 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
                       {groupExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                       <span>{group.label}</span>
                     </h2>
-                    <span className="text-[11px] font-mono font-semibold text-slate-500">
+                    <span className="text-[11px] font-mono font-semibold text-slate-600">
                       {group.totalCount} entrega(s)
                     </span>
                   </button>
@@ -466,13 +565,13 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
                       <button
                         type="button"
                         onClick={() => toggleGroup(subKey)}
-                        className="w-full flex items-center justify-between bg-slate-100/80 hover:bg-slate-200/70 px-3 py-1.5 rounded-lg border border-slate-200 cursor-pointer transition-colors"
+                        className="w-full flex items-center justify-between bg-emerald-50/60 hover:bg-emerald-100/60 px-3 py-1.5 rounded-lg border border-emerald-200/60 cursor-pointer transition-colors"
                       >
                         <span className="text-[11px] font-mono font-bold text-slate-700 inline-flex items-center gap-1.5">
                           {subExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                           <span>{sub.subLabel}</span>
                         </span>
-                        <span className="text-[11px] font-mono font-semibold text-slate-500">
+                        <span className="text-[11px] font-mono font-semibold text-slate-600">
                           {sub.items.length} entrega(s)
                         </span>
                       </button>
@@ -689,9 +788,9 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
             })}
           </div>
         ) : (
-          <div className="bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-x-auto max-w-full">
+          <div className="bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-auto max-w-full max-h-full min-h-0">
             <table className="w-full text-left text-xs border-collapse">
-              <thead className="bg-[#f8f9ff] border-b border-[#e2e8f0] text-[11px] font-mono font-semibold uppercase text-slate-500 tracking-wider">
+              <thead className="sticky top-0 z-10 bg-[#f8f9ff] border-b border-[#e2e8f0] text-[11px] font-mono font-semibold uppercase text-slate-500 tracking-wider">
                 <tr>
                   <th className="py-3 px-3 w-8 text-center">Rota</th>
                   <th className="py-3 px-4">Pedido</th>
@@ -1177,6 +1276,21 @@ export const EntregasScreen: React.FC<EntregasScreenProps> = ({
           </div>
         </div>
       )}
+
+      <EntregasReportModal
+        isOpen={isReportModalOpen}
+        onClose={() => setIsReportModalOpen(false)}
+        allDeliveries={deliveryOrders}
+        filteredDeliveries={pendingDeliveries}
+        products={products}
+        units={units}
+        customers={customers}
+        initialDateFilter={dateFilterMode}
+        initialCustomDate={customDate}
+        initialStatusFilter={statusFilter}
+        initialGroupBy={groupBy}
+        searchTerm={searchTerm}
+      />
     </div>
   );
 };

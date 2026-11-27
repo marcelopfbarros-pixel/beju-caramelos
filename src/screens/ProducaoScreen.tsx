@@ -9,13 +9,14 @@ import {
   ProductionShift, 
   ProductionStatus 
 } from '../types';
-import { ChefHat, Clock, Download, ArrowRight, ChevronRight, ChevronDown, Plus, X, Save, Trash2, Printer, LayoutGrid, Table as TableIcon } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import { ChefHat, Clock, Download, ArrowRight, ChevronRight, ChevronDown, Plus, X, Save, Trash2, Printer, LayoutGrid, Table as TableIcon, Search } from 'lucide-react';
 import { PrintReportHeader } from '../components/PrintReportHeader';
 import { HybridFilterSort } from '../components/HybridFilterSort';
+import { ProducaoReportModal } from '../components/ProducaoReportModal';
 import { useExpandedGroups } from '../hooks/useExpandedGroups';
 import { isReplenishmentOrder } from '../utils/orderStatusStyles';
 import { canEditProduction, UserRole } from '../utils/permissions';
+import type { ConsolidatedProductionItem } from '../utils/producaoReportData';
 
 interface ProducaoScreenProps {
   orders: Order[];
@@ -26,21 +27,6 @@ interface ProducaoScreenProps {
   userRole?: UserRole;
   onSaveProductionOrder: (po: ProductionOrder) => void;
   onUpdateOrderStatus: (orderId: string, status: OrderStatus) => void;
-}
-
-interface ConsolidatedProductionItem {
-  key: string; // YYYY-MM-DD|TURNO|produtoId
-  dataProducao: string;
-  turno: ProductionShift;
-  produtoId: string;
-  sku: string;
-  descricao: string;
-  categoriaNome: string;
-  unidadeMedida: string;
-  quantidadeTotal: number;
-  pedidosVinculados: Order[];
-  lojasDestino: string[];
-  status: ProductionStatus;
 }
 
 function getShiftFromDate(isoDate: string): ProductionShift {
@@ -72,12 +58,15 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
   const canEdit = canEditProduction(userRole);
   const [selectedDateFilter, setSelectedDateFilter] = useState<'PROXIMOS_7_DIAS' | 'TODAS' | 'HOJE' | 'AMANHA'>('PROXIMOS_7_DIAS');
   const [selectedShift, setSelectedShift] = useState<'TODOS' | ProductionShift>('TODOS');
+  const [stageFilter, setStageFilter] = useState<'TODOS' | ProductionStatus>('TODOS');
+  const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<'DATA_TURNO_ASC' | 'DATA_TURNO_DESC' | 'QTD_DESC' | 'PRODUTO_ASC'>('DATA_TURNO_ASC');
-  const [groupBy, setGroupBy] = useState<'NENHUM' | 'TURNO_DATA' | 'PRODUTO'>('TURNO_DATA');
+  const [groupBy, setGroupBy] = useState<'NENHUM' | 'TURNO_DATA' | 'PRODUTO' | 'CATEGORIA' | 'LOJA_DESTINO'>('TURNO_DATA');
   const { isGroupExpanded, toggleGroup } = useExpandedGroups(groupBy);
   const [viewMode, setViewMode] = useState<'TABLE' | 'CARDS'>(() =>
     typeof window !== 'undefined' && window.innerWidth < 768 ? 'CARDS' : 'TABLE'
   );
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
 
   // Manual / Advance Production Order Modal
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
@@ -219,12 +208,14 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
     return Array.from(consolidatedMap.values());
   }, [activeOrders, productionOrders, prodMap, catMap, unitMap, persistedStatusMap]);
 
-  // Apply Date, Shift Filters and Sort
+  // Apply Date, Shift, Stage & Search Filters and Sort
   const productionList = useMemo(() => {
     const shiftOrder: Record<ProductionShift, number> = { MANHA: 0, TARDE: 1, NOITE: 2 };
+    const term = searchTerm.trim().toLowerCase();
     return allConsolidatedItems
       .filter(item => {
         const matchesShift = selectedShift === 'TODOS' || item.turno === selectedShift;
+        const matchesStage = stageFilter === 'TODOS' || item.status === stageFilter;
         const matchesDate =
           selectedDateFilter === 'TODAS' ||
           (selectedDateFilter === 'PROXIMOS_7_DIAS' &&
@@ -232,7 +223,14 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
             item.dataProducao <= next7DaysEndKey) ||
           (selectedDateFilter === 'HOJE' && item.dataProducao === todayKey) ||
           (selectedDateFilter === 'AMANHA' && item.dataProducao === tomorrowKey);
-        return matchesShift && matchesDate;
+        const matchesSearch =
+          !term ||
+          item.descricao.toLowerCase().includes(term) ||
+          item.sku.toLowerCase().includes(term) ||
+          item.categoriaNome.toLowerCase().includes(term) ||
+          item.lojasDestino.some(l => l.toLowerCase().includes(term)) ||
+          item.pedidosVinculados.some(o => o.numeroPedido.toLowerCase().includes(term));
+        return matchesShift && matchesStage && matchesDate && matchesSearch;
       })
       .sort((a, b) => {
         if (sortBy === 'DATA_TURNO_ASC') {
@@ -250,7 +248,7 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
         }
         return a.descricao.localeCompare(b.descricao, 'pt-BR');
       });
-  }, [allConsolidatedItems, selectedShift, selectedDateFilter, sortBy, todayKey, tomorrowKey, next7DaysEndKey]);
+  }, [allConsolidatedItems, selectedShift, stageFilter, selectedDateFilter, searchTerm, sortBy, todayKey, tomorrowKey, next7DaysEndKey]);
 
   const [editingItem, setEditingItem] = useState<ConsolidatedProductionItem | null>(null);
   const [editForm, setEditForm] = useState<{
@@ -559,30 +557,6 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
     setIsManualModalOpen(false);
   };
 
-  const handleExportProductionPlan = () => {
-    const rows = productionList.map(item => ({
-      'Data Produção': item.dataProducao,
-      'Turno': item.turno,
-      'SKU': item.sku,
-      'Produto / Receita': item.descricao,
-      'Categoria': item.categoriaNome,
-      'Qtd Consolidada': item.quantidadeTotal,
-      'Unidade': item.unidadeMedida,
-      'Lojas Destino': item.lojasDestino.join(', '),
-      'Pedidos Vinculados': item.pedidosVinculados.map(o => o.numeroPedido).join(', '),
-      'Status Cozinha': item.status
-    }));
-
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(rows);
-    ws['!cols'] = [
-      { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 40 }, { wch: 20 },
-      { wch: 15 }, { wch: 10 }, { wch: 30 }, { wch: 30 }, { wch: 15 }
-    ];
-    XLSX.utils.book_append_sheet(wb, ws, 'Ordem de Producao');
-    XLSX.writeFile(wb, `Ordem_Producao_Beju_Caramelos_${new Date().toISOString().slice(0, 10)}.xlsx`);
-  };
-
   const statusConfig: Record<ProductionStatus, { label: string; color: string }> = {
     PLANEJADA: { label: 'Planejada', color: 'bg-slate-100 text-slate-700 border-slate-300' },
     EM_PREPARO: { label: 'Em Preparo', color: 'bg-amber-100 text-amber-800 border-amber-300' },
@@ -658,14 +632,22 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
     }
     const map = new Map<string, { key: string; label: string; totalQty: number; items: ConsolidatedProductionItem[] }>();
     productionList.forEach(item => {
-      const key =
-        groupBy === 'TURNO_DATA'
-          ? `${item.dataProducao}|${item.turno}`
-          : item.produtoId;
-      const label =
-        groupBy === 'TURNO_DATA'
-          ? `${item.dataProducao.split('-').reverse().join('/')} — Turno ${item.turno}`
-          : `${item.descricao} (${item.sku})`;
+      let key = '';
+      let label = '';
+      if (groupBy === 'TURNO_DATA') {
+        key = `${item.dataProducao}|${item.turno}`;
+        label = `${item.dataProducao.split('-').reverse().join('/')} — Turno ${item.turno}`;
+      } else if (groupBy === 'PRODUTO') {
+        key = item.produtoId;
+        label = `${item.descricao} (${item.sku})`;
+      } else if (groupBy === 'CATEGORIA') {
+        key = item.categoriaNome || 'Sem Categoria';
+        label = key;
+      } else {
+        const destLabel = [...item.lojasDestino].sort((a, b) => a.localeCompare(b, 'pt-BR')).join(' + ') || 'Sem Destino';
+        key = destLabel;
+        label = destLabel;
+      }
       const cur = map.get(key) || { key, label, totalQty: 0, items: [] };
       cur.totalQty += item.status === 'CANCELADA' ? 0 : item.quantidadeTotal;
       cur.items.push(item);
@@ -685,17 +667,65 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
 
   const hideTurnoData = groupBy === 'TURNO_DATA';
   const hideProduto = groupBy === 'PRODUTO';
-  const visibleColumnCount = 7 - (hideTurnoData ? 1 : 0) - (hideProduto ? 1 : 0);
+  const hideCategoria = groupBy === 'CATEGORIA';
+  const hideDestino = groupBy === 'LOJA_DESTINO';
+  const visibleColumnCount =
+    7 -
+    (hideTurnoData ? 1 : 0) -
+    (hideProduto ? 1 : 0) -
+    (hideCategoria ? 1 : 0) -
+    (hideDestino ? 1 : 0);
+
+  const hasActiveFilters =
+    selectedDateFilter !== 'PROXIMOS_7_DIAS' ||
+    selectedShift !== 'TODOS' ||
+    stageFilter !== 'TODOS' ||
+    searchTerm.trim() !== '';
+
+  const handleResetFilters = () => {
+    setSelectedDateFilter('PROXIMOS_7_DIAS');
+    setSelectedShift('TODOS');
+    setStageFilter('TODOS');
+    setSearchTerm('');
+  };
+
+  const activeFilterBadgeText = (() => {
+    const dateLabels: Record<string, string> = {
+      PROXIMOS_7_DIAS: 'Próximos 7 dias',
+      HOJE: 'Hoje',
+      AMANHA: 'Amanhã',
+      TODAS: 'Todas as Datas',
+    };
+    const shiftLabels: Record<string, string> = {
+      MANHA: 'Manhã',
+      TARDE: 'Tarde',
+      NOITE: 'Noite',
+    };
+    const parts = [dateLabels[selectedDateFilter] || selectedDateFilter];
+    if (selectedShift !== 'TODOS') {
+      parts.push(shiftLabels[selectedShift] || selectedShift);
+    }
+    if (stageFilter !== 'TODOS') {
+      parts.push(statusConfig[stageFilter]?.label || stageFilter);
+    }
+    if (searchTerm.trim()) {
+      parts.push(`Busca: "${searchTerm.trim()}"`);
+    }
+    return `${totalUnitsToProduce} itens na fila • ${parts.join(' • ')}`;
+  })();
 
   return (
     <div className="flex-1 min-w-0 flex flex-col h-full bg-[#f8f9ff] overflow-hidden">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between md:bg-white md:border-b md:border-[#e2e8f0] md:px-6 md:py-4 md:gap-4 print:hidden">
-        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2.5 md:p-0 md:bg-transparent md:border-b-0">
-          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex flex-wrap items-center gap-2">
+        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2.5 md:p-0 md:bg-transparent md:border-b-0 min-w-0">
+          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex flex-wrap items-center gap-2 min-w-0">
             <span>Produção</span>
-            <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800">
-              {totalUnitsToProduce} itens na fila
+            <span
+              className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 max-w-full truncate"
+              title={activeFilterBadgeText}
+            >
+              {activeFilterBadgeText}
             </span>
           </h1>
         </div>
@@ -727,10 +757,11 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
           </div>
 
           <button
-            onClick={handleExportProductionPlan}
-            title="Exportar"
-            aria-label="Exportar"
-            className="flex items-center justify-center h-8 w-8 p-0 text-xs font-bold text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg transition-colors shadow-xs"
+            type="button"
+            onClick={() => setIsReportModalOpen(true)}
+            title="Exportar Relatório de Produção (PDF / XLSX)"
+            aria-label="Exportar Relatório de Produção (PDF / XLSX)"
+            className="flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-xs cursor-pointer"
           >
             <Download className="w-4 h-4 text-slate-500" />
           </button>
@@ -766,13 +797,14 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
         </div>
       </div>
 
-      {/* Date & Shift Hybrid Filter + Sort Bar */}
-      <div className="px-3 sm:px-6 py-2 sm:py-2.5 bg-white/70 border-b border-[#e2e8f0] flex flex-nowrap items-center justify-between gap-2 sm:gap-3 print:hidden">
-        <div className="flex items-center w-full sm:w-auto min-w-0 max-w-full overflow-hidden">
+      {/* Date, Shift, Stage Hybrid Filter + Sort + Search Bar */}
+      <div className="shrink-0 min-w-0 flex flex-col md:flex-row md:flex-wrap md:items-center justify-between md:bg-white/70 md:border-b md:border-[#e2e8f0] md:px-4 lg:px-5 md:py-2 md:gap-2 print:hidden">
+        <div className="bg-white/70 border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex items-center w-full md:w-auto md:max-w-full min-w-0 overflow-hidden">
           <HybridFilterSort
             dateLabel="Data:"
             dateValue={selectedDateFilter}
             onDateChange={(v) => setSelectedDateFilter(v as 'PROXIMOS_7_DIAS' | 'TODAS' | 'HOJE' | 'AMANHA')}
+            dateActive={selectedDateFilter !== 'PROXIMOS_7_DIAS'}
             dateOptions={[
               { value: 'PROXIMOS_7_DIAS', label: 'Próximos 7 dias' },
               { value: 'HOJE', label: 'Hoje' },
@@ -782,11 +814,23 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
             filterLabel="Turno:"
             filterValue={selectedShift}
             onFilterChange={(v) => setSelectedShift(v as 'TODOS' | ProductionShift)}
+            filterActive={selectedShift !== 'TODOS'}
             filterOptions={[
               { value: 'TODOS', label: 'Todos os Turnos' },
               { value: 'MANHA', label: 'Manhã' },
               { value: 'TARDE', label: 'Tarde' },
               { value: 'NOITE', label: 'Noite' }
+            ]}
+            secondFilterLabel="Estágio Cozinha:"
+            secondFilterValue={stageFilter}
+            onSecondFilterChange={(v) => setStageFilter(v as 'TODOS' | ProductionStatus)}
+            secondFilterActive={stageFilter !== 'TODOS'}
+            secondFilterOptions={[
+              { value: 'TODOS', label: 'Todos Estágios' },
+              { value: 'PLANEJADA', label: 'Planejada' },
+              { value: 'EM_PREPARO', label: 'Em Preparo' },
+              { value: 'CONCLUIDA', label: 'Concluída' },
+              { value: 'CANCELADA', label: 'Cancelada' }
             ]}
             sortValue={sortBy}
             onSortChange={(v) => setSortBy(v as 'DATA_TURNO_ASC' | 'DATA_TURNO_DESC' | 'QTD_DESC' | 'PRODUTO_ASC')}
@@ -797,13 +841,30 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
               { value: 'PRODUTO_ASC', label: 'Produto (A-Z)' }
             ]}
             groupValue={groupBy}
-            onGroupChange={(v) => setGroupBy(v as 'NENHUM' | 'TURNO_DATA' | 'PRODUTO')}
+            onGroupChange={(v) => setGroupBy(v as 'NENHUM' | 'TURNO_DATA' | 'PRODUTO' | 'CATEGORIA' | 'LOJA_DESTINO')}
             groupOptions={[
               { value: 'TURNO_DATA', label: 'Turno / Data' },
               { value: 'PRODUTO', label: 'Produto' },
+              { value: 'CATEGORIA', label: 'Categoria' },
+              { value: 'LOJA_DESTINO', label: 'Loja Destino' },
               { value: 'NENHUM', label: 'Sem Agrupamento' }
             ]}
+            hasActiveFilters={hasActiveFilters}
+            onResetFilters={handleResetFilters}
           />
+        </div>
+
+        <div className="bg-white/70 border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 w-full md:flex-1 md:min-w-[140px] md:max-w-xs">
+          <div className="relative w-full">
+            <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Buscar produto, SKU, loja ou Nº pedido..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full h-9 pl-9 pr-3 py-0 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:border-brand-500 shadow-2xs"
+            />
+          </div>
         </div>
       </div>
 
@@ -831,6 +892,10 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
                 ? `Agrupado por Turno / Data • ${productionList.length} lote(s)`
                 : groupBy === 'PRODUTO'
                 ? `Agrupado por Produto • ${productionList.length} lote(s)`
+                : groupBy === 'CATEGORIA'
+                ? `Agrupado por Categoria • ${productionList.length} lote(s)`
+                : groupBy === 'LOJA_DESTINO'
+                ? `Agrupado por Loja Destino • ${productionList.length} lote(s)`
                 : `${productionList.length} lote(s)`
             }
           />
@@ -839,9 +904,9 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
               <tr>
                 {!hideTurnoData && <th className="py-2 px-2 font-semibold">Turno / Data</th>}
                 {!hideProduto && <th className="py-2 px-2 font-semibold">Produto & SKU</th>}
-                <th className="py-2 px-2 font-semibold">Categoria</th>
+                {!hideCategoria && <th className="py-2 px-2 font-semibold">Categoria</th>}
                 <th className="py-2 px-2 font-semibold text-center">Quantidade Total</th>
-                <th className="py-2 px-2 font-semibold">Destino</th>
+                {!hideDestino && <th className="py-2 px-2 font-semibold">Destino</th>}
                 <th className="py-2 px-2 font-semibold">Pedidos Origem</th>
                 <th className="py-2 px-2 font-semibold text-center">Estágio Cozinha</th>
               </tr>
@@ -925,16 +990,19 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
                         </div>
                       </td>
                       )}
+                      {!hideCategoria && (
                       <td className="py-2 px-2">
                         <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-medium whitespace-nowrap">
                           {item.categoriaNome}
                         </span>
                       </td>
+                      )}
                       <td className="py-2 px-2 text-center whitespace-nowrap">
                         <span className="text-xs font-bold font-mono text-brand-700 bg-brand-50 px-2.5 py-1 rounded-lg border border-brand-200">
                           {item.quantidadeTotal} {item.unidadeMedida}
                         </span>
                       </td>
+                      {!hideDestino && (
                       <td className="py-2 px-2 max-w-[170px]">
                         <div className="flex flex-wrap gap-1">
                           {item.lojasDestino.map((loja, i) => (
@@ -948,6 +1016,7 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
                           ))}
                         </div>
                       </td>
+                      )}
                       <td
                         className="py-2 px-2 font-mono text-[10px] text-slate-600 max-w-[170px] truncate"
                         title={item.pedidosVinculados.map(o => o.numeroPedido).join(', ')}
@@ -986,7 +1055,7 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
                     <button
                       type="button"
                       onClick={() => toggleGroup(group.key)}
-                      className="w-full flex items-center justify-between gap-2 px-3 py-2 bg-slate-100 hover:bg-slate-200/70 rounded-lg border border-slate-200 text-xs font-bold text-slate-800 cursor-pointer transition-colors"
+                      className="w-full flex items-center justify-between gap-2 px-3 py-2 bg-emerald-50 hover:bg-emerald-100/80 rounded-lg border border-emerald-200/80 text-xs font-bold text-slate-800 cursor-pointer transition-colors"
                     >
                       <span className="inline-flex items-center gap-1.5">
                         {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
@@ -1321,6 +1390,21 @@ export const ProducaoScreen: React.FC<ProducaoScreenProps> = ({
           </form>
         </div>
       )}
+
+      <ProducaoReportModal
+        isOpen={isReportModalOpen}
+        onClose={() => setIsReportModalOpen(false)}
+        allItems={allConsolidatedItems}
+        filteredItems={productionList}
+        products={products}
+        categories={categories}
+        units={units}
+        initialDateFilter={selectedDateFilter}
+        initialShift={selectedShift}
+        initialStageFilter={stageFilter}
+        initialGroupBy={groupBy}
+        searchTerm={searchTerm}
+      />
     </div>
   );
 };

@@ -87,6 +87,11 @@ export interface Order {
   itens: OrderItem[];
 }
 
+export interface SaveOrderOptions {
+  skipStockMovement?: boolean;
+  skipWhatsAppNotification?: boolean;
+}
+
 export interface StockItem {
   id: string;
   unidadeId: string;

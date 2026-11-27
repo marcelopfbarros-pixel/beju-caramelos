@@ -29,6 +29,8 @@ interface SidebarProps {
   pendingDeliveriesCount: number;
   pendingFinancialCount?: number;
   pendingCustomersCount: number;
+  activeProductsCount?: number;
+  activeUnitsCount?: number;
   selectedDeliveriesCount?: number;
 }
 
@@ -42,6 +44,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   pendingDeliveriesCount,
   pendingFinancialCount = 0,
   pendingCustomersCount,
+  activeProductsCount = 0,
+  activeUnitsCount = 0,
   selectedDeliveriesCount = 0
 }) => {
   const [isCollapsed, setIsCollapsed] = useState<boolean>(
@@ -97,7 +101,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     {
       id: 'produtos' as ScreenId,
       label: 'Produtos',
-      icon: CakeSlice
+      icon: CakeSlice,
+      badge: activeProductsCount,
+      badgeColor: 'bg-pink-100 text-pink-800 border-pink-200'
     },
     {
       id: 'financeiro' as ScreenId,
@@ -109,7 +115,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     {
       id: 'lojas' as ScreenId,
       label: 'Unidades',
-      icon: Building2
+      icon: Building2,
+      badge: activeUnitsCount,
+      badgeColor: 'bg-sky-100 text-sky-800 border-sky-200'
     },
     {
       id: 'painel' as ScreenId,

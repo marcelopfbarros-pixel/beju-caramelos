@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { StockItem, StockMovement, StockMovementType, Product, StoreUnit, Order } from '../types';
+import { StockItem, StockMovement, StockMovementType, Product, StoreUnit, Order, Category } from '../types';
 import { computeReservedStockMap, isLowStockItem, stockReservationKey } from '../utils/stockAvailability';
 import { 
   ArrowLeftRight, 
@@ -18,9 +18,9 @@ import {
   Filter,
   History
 } from 'lucide-react';
-import { ExcelService } from '../services/excelService';
 import { PrintReportHeader } from '../components/PrintReportHeader';
 import { HybridFilterSort } from '../components/HybridFilterSort';
+import { EstoqueReportModal } from '../components/EstoqueReportModal';
 import { useExpandedGroups } from '../hooks/useExpandedGroups';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { canEditStock, UserRole } from '../utils/permissions';
@@ -30,6 +30,7 @@ interface EstoqueScreenProps {
   stockMovements?: StockMovement[];
   orders?: Order[];
   products: Product[];
+  categories?: Category[];
   units: StoreUnit[];
   activeUnitId: string;
   userRole?: UserRole;
@@ -43,6 +44,7 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
   stockMovements = [],
   orders = [],
   products,
+  categories = [],
   units,
   activeUnitId,
   userRole = 'ADMIN',
@@ -51,6 +53,7 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
   onRecordStockMovements
 }) => {
   const reservedMap = useMemo(() => computeReservedStockMap(orders), [orders]);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [historyTypeFilter, setHistoryTypeFilter] = useState<'TODOS' | StockMovementType>('TODOS');
   const [historySearchTerm, setHistorySearchTerm] = useState('');
@@ -73,14 +76,15 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
   const [viewMode, setViewMode] = useState<'TABLE' | 'CARDS'>(() =>
     typeof window !== 'undefined' && window.innerWidth < 768 ? 'CARDS' : 'TABLE'
   );
-  const [groupBy, setGroupBy] = useState<'LOJA' | 'SITUACAO' | 'NENHUM'>('LOJA');
+  const [groupBy, setGroupBy] = useState<'LOJA' | 'CATEGORIA' | 'SITUACAO' | 'NENHUM'>('LOJA');
   const { isGroupExpanded, toggleGroup } = useExpandedGroups(groupBy);
-  const [statusFilter, setStatusFilter] = useState<'TODOS' | 'CRITICO' | 'OK'>('TODOS');
-  const [sortBy, setSortBy] = useState<'PRODUTO_ASC' | 'SALDO_ASC' | 'SALDO_DESC' | 'ATUALIZACAO_DESC'>('PRODUTO_ASC');
+  const [statusFilter, setStatusFilter] = useState<'TODOS' | 'CRITICO' | 'OK' | 'COM_RESERVA'>('TODOS');
+  const [sortBy, setSortBy] = useState<'PRODUTO_ASC' | 'DISPONIVEL_ASC' | 'SALDO_ASC' | 'SALDO_DESC' | 'ATUALIZACAO_DESC'>('PRODUTO_ASC');
   const [searchTerm, setSearchTerm] = useState('');
 
-  const prodMap = new Map(products.map(p => [p.id, p]));
-  const unitMap = new Map(units.map(u => [u.id, u]));
+  const prodMap = useMemo(() => new Map(products.map(p => [p.id, p])), [products]);
+  const catMap = useMemo(() => new Map(categories.map(c => [c.id, c])), [categories]);
+  const unitMap = useMemo(() => new Map(units.map(u => [u.id, u])), [units]);
 
   // Filter & sort stock for the active store, status and search
   const filteredStock = useMemo(() => {
@@ -89,20 +93,30 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
       .filter(s => {
         if (activeUnitId !== 'all' && s.unidadeId !== activeUnitId) return false;
         const isLow = isLowStockItem(s);
+        const reserved = reservedMap.get(stockReservationKey(s.unidadeId, s.produtoId)) || 0;
         if (statusFilter === 'CRITICO' && !isLow) return false;
         if (statusFilter === 'OK' && isLow) return false;
+        if (statusFilter === 'COM_RESERVA' && reserved <= 0) return false;
         if (q) {
           const prod = prodMap.get(s.produtoId);
+          const cat = prod ? catMap.get(prod.categoriaId) : undefined;
           const unit = unitMap.get(s.unidadeId);
           const match =
             (prod?.descricao || '').toLowerCase().includes(q) ||
             (prod?.sku || '').toLowerCase().includes(q) ||
+            (cat?.nome || '').toLowerCase().includes(q) ||
             (unit?.nome || '').toLowerCase().includes(q);
           if (!match) return false;
         }
         return true;
       })
       .sort((a, b) => {
+        if (sortBy === 'DISPONIVEL_ASC') {
+          const dispA = Math.max(0, a.quantidadeAtual - (reservedMap.get(stockReservationKey(a.unidadeId, a.produtoId)) || 0));
+          const dispB = Math.max(0, b.quantidadeAtual - (reservedMap.get(stockReservationKey(b.unidadeId, b.produtoId)) || 0));
+          if (dispA !== dispB) return dispA - dispB;
+          return (prodMap.get(a.produtoId)?.descricao || '').localeCompare(prodMap.get(b.produtoId)?.descricao || '', 'pt-BR');
+        }
         if (sortBy === 'SALDO_ASC') return a.quantidadeAtual - b.quantidadeAtual;
         if (sortBy === 'SALDO_DESC') return b.quantidadeAtual - a.quantidadeAtual;
         if (sortBy === 'ATUALIZACAO_DESC') {
@@ -112,7 +126,7 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
         const pb = prodMap.get(b.produtoId)?.descricao || '';
         return pa.localeCompare(pb, 'pt-BR');
       });
-  }, [stock, activeUnitId, statusFilter, sortBy, searchTerm, prodMap, unitMap]);
+  }, [stock, activeUnitId, statusFilter, sortBy, searchTerm, prodMap, catMap, unitMap, reservedMap]);
 
   const groupedStock = useMemo(() => {
     if (groupBy === 'NENHUM') {
@@ -124,6 +138,9 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
       if (groupBy === 'LOJA') {
         const unit = unitMap.get(item.unidadeId);
         key = unit ? `${unit.tipo === 'CENTRAL' ? '🏭 ' : '🏪 '}${unit.nome}` : item.unidadeId;
+      } else if (groupBy === 'CATEGORIA') {
+        const prod = prodMap.get(item.produtoId);
+        key = (prod && catMap.get(prod.categoriaId)?.nome) || 'Sem Categoria';
       } else {
         key = isLowStockItem(item) ? 'Reposição Necessária' : 'Abastecido';
       }
@@ -133,11 +150,18 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
     return Array.from(map.entries())
       .map(([label, items]) => ({ label, items }))
       .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
-  }, [filteredStock, groupBy, unitMap]);
+  }, [filteredStock, groupBy, unitMap, prodMap, catMap]);
 
   const hideLoja = groupBy === 'LOJA';
+  const hideCategoria = groupBy === 'CATEGORIA';
   const hideSituacao = groupBy === 'SITUACAO';
-  const visibleColumnCount = 7 - (hideLoja ? 1 : 0) - (hideSituacao ? 1 : 0);
+  const visibleColumnCount = 8 - (hideLoja ? 1 : 0) - (hideCategoria ? 1 : 0) - (hideSituacao ? 1 : 0);
+
+  const hasActiveFilters = statusFilter !== 'TODOS' || searchTerm.trim() !== '';
+  const handleResetFilters = () => {
+    setStatusFilter('TODOS');
+    setSearchTerm('');
+  };
 
   const handleExecuteTransfer = () => {
     if (transferOrigin === transferDestination) {
@@ -360,15 +384,32 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
     if (onDeleteStockItem) onDeleteStockItem(item.id);
   };
 
+  const activeFilterBadgeText = (() => {
+    const statusLabels: Record<string, string> = {
+      TODOS: 'Todas',
+      CRITICO: 'Reposição Necessária',
+      OK: 'Abastecido',
+      COM_RESERVA: 'Com Reserva',
+    };
+    const parts = [statusLabels[statusFilter] || statusFilter];
+    if (searchTerm.trim()) {
+      parts.push(`Busca: "${searchTerm.trim()}"`);
+    }
+    return `${filteredStock.length} registros • ${parts.join(' • ')}`;
+  })();
+
   return (
     <div className="flex-1 min-w-0 flex flex-col h-full bg-[#f8f9ff] overflow-hidden">
       {/* Top Bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between md:bg-white md:border-b md:border-[#e2e8f0] md:px-6 md:py-4 md:gap-4 print:hidden">
-        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2.5 md:p-0 md:bg-transparent md:border-b-0">
-          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex flex-wrap items-center gap-2">
+        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2.5 md:p-0 md:bg-transparent md:border-b-0 min-w-0">
+          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex flex-wrap items-center gap-2 min-w-0">
             <span>Estoque</span>
-            <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800">
-              {filteredStock.length} registros
+            <span
+              className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 max-w-full truncate"
+              title={activeFilterBadgeText}
+            >
+              {activeFilterBadgeText}
             </span>
           </h1>
         </div>
@@ -415,10 +456,11 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
           </button>
 
           <button
-            onClick={() => ExcelService.exportStock(stock, products, units)}
-            title="Exportar"
-            aria-label="Exportar"
-            className="flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-xs"
+            type="button"
+            onClick={() => setIsReportModalOpen(true)}
+            title="Exportar Relatório de Estoque (PDF / XLSX)"
+            aria-label="Exportar Relatório de Estoque (PDF / XLSX)"
+            className="flex items-center justify-center h-8 w-8 p-0 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors shadow-xs cursor-pointer"
           >
             <Download className="w-4 h-4 text-slate-500" />
           </button>
@@ -458,32 +500,38 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
       </div>
 
       {/* Filter & Grouping Bar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between md:bg-white/70 md:border-b md:border-[#e2e8f0] md:px-6 md:py-2.5 md:gap-3 print:hidden">
+      <div className="shrink-0 min-w-0 flex flex-col md:flex-row md:flex-wrap md:items-center justify-between md:bg-white/70 md:border-b md:border-[#e2e8f0] md:px-6 md:py-2.5 md:gap-3 print:hidden">
         <div className="bg-white/70 border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex items-center w-full md:w-auto min-w-0 overflow-hidden">
           <HybridFilterSort
             filterLabel="Situação:"
             filterValue={statusFilter}
-            onFilterChange={(v) => setStatusFilter(v as 'TODOS' | 'CRITICO' | 'OK')}
+            onFilterChange={(v) => setStatusFilter(v as 'TODOS' | 'CRITICO' | 'OK' | 'COM_RESERVA')}
+            filterActive={statusFilter !== 'TODOS'}
             filterOptions={[
               { value: 'TODOS', label: 'Todas' },
               { value: 'CRITICO', label: 'Reposição Necessária' },
-              { value: 'OK', label: 'Abastecido' }
+              { value: 'OK', label: 'Abastecido' },
+              { value: 'COM_RESERVA', label: 'Com Reserva' }
             ]}
             sortValue={sortBy}
-            onSortChange={(v) => setSortBy(v as 'PRODUTO_ASC' | 'SALDO_ASC' | 'SALDO_DESC' | 'ATUALIZACAO_DESC')}
+            onSortChange={(v) => setSortBy(v as 'PRODUTO_ASC' | 'DISPONIVEL_ASC' | 'SALDO_ASC' | 'SALDO_DESC' | 'ATUALIZACAO_DESC')}
             sortOptions={[
               { value: 'PRODUTO_ASC', label: 'Produto (A-Z)' },
+              { value: 'DISPONIVEL_ASC', label: 'Menor Disponível' },
               { value: 'SALDO_ASC', label: 'Menor Saldo' },
               { value: 'SALDO_DESC', label: 'Maior Saldo' },
               { value: 'ATUALIZACAO_DESC', label: 'Atualização Recente' }
             ]}
             groupValue={groupBy}
-            onGroupChange={(v) => setGroupBy(v as 'LOJA' | 'SITUACAO' | 'NENHUM')}
+            onGroupChange={(v) => setGroupBy(v as 'LOJA' | 'CATEGORIA' | 'SITUACAO' | 'NENHUM')}
             groupOptions={[
               { value: 'LOJA', label: 'Loja / Unidade' },
+              { value: 'CATEGORIA', label: 'Categoria' },
               { value: 'SITUACAO', label: 'Situação' },
               { value: 'NENHUM', label: 'Sem Agrupamento' }
             ]}
+            hasActiveFilters={hasActiveFilters}
+            onResetFilters={handleResetFilters}
           />
         </div>
 
@@ -502,7 +550,13 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
       </div>
 
       {/* Stock Content */}
-      <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-3 sm:p-6">
+      <div
+        className={
+          viewMode === 'TABLE'
+            ? 'flex-1 min-h-0 min-w-0 flex flex-col p-3 sm:p-6 overflow-hidden'
+            : 'flex-1 min-h-0 min-w-0 overflow-y-auto overflow-x-hidden p-3 sm:p-6'
+        }
+      >
         {viewMode === 'CARDS' && (
           <div className="space-y-6 print:hidden">
             {groupedStock.map(group => {
@@ -513,13 +567,13 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
                   <button
                     type="button"
                     onClick={() => toggleGroup(group.label)}
-                    className="w-full flex items-center justify-between border-b border-slate-200 pb-1.5 hover:text-slate-900 cursor-pointer"
+                    className="w-full flex items-center justify-between px-3 py-2 bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200/80 rounded-lg cursor-pointer transition-colors"
                   >
                     <h2 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
                       {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                       <span>{group.label}</span>
                     </h2>
-                    <span className="text-[11px] font-mono font-semibold text-slate-500">
+                    <span className="text-[11px] font-mono font-semibold text-slate-600">
                       {group.items.length} item(ns)
                     </span>
                   </button>
@@ -656,18 +710,34 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
           </div>
         )}
 
-        <div id="print-report-area" className={`${viewMode === 'CARDS' ? 'hidden print:block' : ''} bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-x-auto max-w-full`}>
+        <div
+          id="print-report-area"
+          className={`${
+            viewMode === 'CARDS'
+              ? 'hidden print:block'
+              : 'bg-white border border-[#e2e8f0] rounded-xl shadow-xs overflow-auto max-w-full max-h-full min-h-0 print:overflow-visible print:max-h-none'
+          } ${viewMode === 'CARDS' ? 'bg-white' : ''}`}
+        >
           <PrintReportHeader
             title="Estoque"
-            badge={groupBy === 'NENHUM' ? 'Geral' : groupBy === 'LOJA' ? 'Por Loja / Unidade' : 'Por Situação'}
+            badge={
+              groupBy === 'NENHUM'
+                ? 'Geral'
+                : groupBy === 'LOJA'
+                ? 'Por Loja / Unidade'
+                : groupBy === 'CATEGORIA'
+                ? 'Por Categoria'
+                : 'Por Situação'
+            }
             subtitle={`${filteredStock.length} registro(s)`}
           />
           <table className="w-full text-left text-xs border-collapse">
-            <thead className="bg-[#f8f9ff] border-b border-[#e2e8f0] text-[11px] font-mono font-semibold uppercase text-slate-500 tracking-wider">
+            <thead className="sticky top-0 z-10 bg-[#f8f9ff] border-b border-[#e2e8f0] text-[11px] font-mono font-semibold uppercase text-slate-500 tracking-wider">
               <tr>
                 {!hideLoja && <th className="py-3 px-4">Loja / Unidade</th>}
                 <th className="py-3 px-4">SKU</th>
                 <th className="py-3 px-4">Produto</th>
+                {!hideCategoria && <th className="py-3 px-4">Categoria</th>}
                 <th className="py-3 px-4 text-center">Saldo Atual</th>
                 <th className="py-3 px-4 text-center">Estoque Mínimo</th>
                 {!hideSituacao && <th className="py-3 px-4 text-center">Situação</th>}
@@ -724,6 +794,13 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
                         <td className="py-3 px-4 font-medium text-slate-800">
                           {prod?.descricao || 'Produto não encontrado'}
                         </td>
+                        {!hideCategoria && (
+                        <td className="py-3 px-4 text-slate-600">
+                          <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-medium whitespace-nowrap">
+                            {(prod && catMap.get(prod.categoriaId)?.nome) || 'Sem Categoria'}
+                          </span>
+                        </td>
+                        )}
                         <td className="py-3 px-4 text-center">
                           <div className="inline-flex items-center justify-center gap-2">
                             <span className={`inline-block font-mono font-bold px-3 py-1 rounded-lg text-sm ${
@@ -1161,6 +1238,21 @@ export const EstoqueScreen: React.FC<EstoqueScreenProps> = ({
           </div>
         );
       })()}
+
+      <EstoqueReportModal
+        isOpen={isReportModalOpen}
+        onClose={() => setIsReportModalOpen(false)}
+        allStock={stock}
+        filteredStock={filteredStock}
+        orders={orders}
+        products={products}
+        categories={categories}
+        units={units}
+        activeUnitId={activeUnitId}
+        initialStatusFilter={statusFilter}
+        initialGroupBy={groupBy}
+        searchTerm={searchTerm}
+      />
     </div>
   );
 };
