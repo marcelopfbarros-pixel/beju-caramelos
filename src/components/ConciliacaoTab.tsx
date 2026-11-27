@@ -31,7 +31,6 @@ import { ConciliacaoReportModal } from './ConciliacaoReportModal';
 import {
   CheckCircle2,
   ChevronDown,
-  FileSpreadsheet,
   FileText,
   Lock,
   LockOpen,
@@ -75,6 +74,7 @@ interface ConciliacaoTabProps {
     isSaving: boolean,
     canToggleInvoice?: boolean
   ) => React.ReactNode;
+  moduleTabs?: React.ReactNode;
 }
 
 type ConciliacaoSubTab = 'PENDENTE' | 'CONCILIADO' | 'IGNORADO';
@@ -107,6 +107,7 @@ export const ConciliacaoTab: React.FC<ConciliacaoTabProps> = ({
   getOrderRowMetrics,
   renderConciliationToggle,
   renderInvoiceToggle,
+  moduleTabs,
 }) => {
   const [statements, setStatements] = useState<BankStatementEntry[]>([]);
   const [periodLocks, setPeriodLocks] = useState<ReconciliationPeriodLock[]>([]);
@@ -125,7 +126,6 @@ export const ConciliacaoTab: React.FC<ConciliacaoTabProps> = ({
 
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
-  const [downloadingTemplate, setDownloadingTemplate] = useState(false);
 
   // Ignore reason modal
   const [isIgnoreModalOpen, setIsIgnoreModalOpen] = useState(false);
@@ -800,16 +800,6 @@ export const ConciliacaoTab: React.FC<ConciliacaoTabProps> = ({
     }
   };
 
-  const handleDownloadTemplate = async () => {
-    setDownloadingTemplate(true);
-    try {
-      const { downloadStatementTemplateXlsx } = await import('../utils/statementTemplateExcel');
-      downloadStatementTemplateXlsx();
-    } finally {
-      setDownloadingTemplate(false);
-    }
-  };
-
   const footerSummary = useMemo(() => {
     const sts = compStatements.filter(
       s => (s.status === 'PENDENTE' || s.status === 'PARCIAL') && selectedStatementIds.has(s.id)
@@ -837,70 +827,29 @@ export const ConciliacaoTab: React.FC<ConciliacaoTabProps> = ({
   return (
     <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden bg-[#f8f9ff]">
       {/* Header Controls Row */}
-      <div className="px-3 sm:px-5 py-2.5 bg-white border-b border-slate-200 flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 shrink-0">
-        <div className="flex flex-wrap items-center gap-2 min-w-0">
-          <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 truncate">
-            {filteredStatements.length} lançamento(s) • {tabLabel}
-          </span>
-
-          {/* Monthly Competence + Lock Status */}
-          <div className="inline-flex items-center h-8 rounded-lg border border-slate-300 bg-slate-50 divide-x divide-slate-200 overflow-hidden">
-            <div className="relative flex items-center px-2.5 h-full">
-              <select
-                aria-label="Selecionar competência mensal"
-                value={competencia}
-                onChange={e => {
-                  setCompetencia(e.target.value);
-                  setSelectedStatementIds(new Set());
-                  setSelectedOrderIds(new Set());
-                }}
-                className="appearance-none bg-transparent pr-5 outline-none cursor-pointer text-xs font-bold text-slate-800"
-              >
-                {availableCompetencias.map(comp => (
-                  <option key={comp} value={comp}>
-                    {formatCompetenciaLabel(comp)}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-1.5 pointer-events-none" />
-            </div>
+      <div className="shrink-0 min-w-0 flex flex-col md:flex-row md:flex-wrap md:items-center justify-between md:bg-white md:border-b md:border-[#e2e8f0] md:px-4 lg:px-5 md:py-2.5 md:gap-2 print:hidden">
+        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2.5 md:p-0 md:bg-transparent md:border-b-0 min-w-0">
+          <h1 className="text-xl font-bold text-[#0f172a] font-sans flex flex-wrap items-center gap-2 min-w-0">
+            <span>Financeiro</span>
             <span
-              className={`px-2.5 h-full flex items-center text-[11px] font-bold whitespace-nowrap ${
-                isPeriodLocked ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'
-              }`}
-              title={
-                isPeriodLocked && activePeriodLock?.fechadoPor
-                  ? `Fechado por ${activePeriodLock.fechadoPor}`
-                  : 'Competência aberta para conciliação'
-              }
+              className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 max-w-full truncate"
+              title={`${filteredStatements.length} lançamento(s) • ${tabLabel}`}
             >
-              {isPeriodLocked ? 'Fechado 🔒' : 'Aberto'}
+              {filteredStatements.length} lançamento(s) • {tabLabel}
             </span>
-          </div>
+          </h1>
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 shrink-0">
-          <button
-            type="button"
-            disabled={downloadingTemplate}
-            onClick={() => void handleDownloadTemplate()}
-            title="Baixar planilha modelo vazia (.xlsx) formatada para importação"
-            aria-label="Baixar planilha modelo vazia (.xlsx) formatada para importação"
-            className="inline-flex items-center justify-center gap-1.5 h-8 px-2.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold shadow-2xs cursor-pointer transition-colors"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-            <span className="hidden md:inline">{downloadingTemplate ? 'Gerando...' : 'Modelo .xlsx'}</span>
-          </button>
-
+        <div className="bg-white border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex flex-wrap items-center gap-1.5 min-w-0 shrink-0">
+          {moduleTabs}
           <button
             type="button"
             onClick={() => setIsReportModalOpen(true)}
             title="Exportar relatório de conciliação (PDF / Excel)"
             aria-label="Exportar relatório de conciliação (PDF / Excel)"
-            className="inline-flex items-center justify-center gap-1.5 h-8 px-2.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold shadow-2xs cursor-pointer transition-colors"
+            className="inline-flex items-center justify-center h-8 w-8 p-0 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 shadow-2xs cursor-pointer transition-colors"
           >
-            <FileText className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-            <span className="hidden sm:inline">Relatório</span>
+            <FileText className="w-4 h-4 text-slate-600 shrink-0" />
           </button>
 
           <button
@@ -920,28 +869,28 @@ export const ConciliacaoTab: React.FC<ConciliacaoTabProps> = ({
             }}
             title={isPeriodLocked ? 'Reabrir Período (ADMIN PIN)' : 'Fechar Período Mensal'}
             aria-label={isPeriodLocked ? 'Reabrir Período (ADMIN PIN)' : 'Fechar Período Mensal'}
-            className={`inline-flex items-center justify-center gap-1.5 h-8 px-2.5 sm:px-3 rounded-lg border text-xs font-bold shadow-2xs cursor-pointer transition-colors ${
+            className={`inline-flex items-center justify-center h-8 w-8 p-0 rounded-lg border shadow-2xs cursor-pointer transition-colors ${
               isPeriodLocked
                 ? 'border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-800'
                 : 'border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900'
             }`}
           >
-            {isPeriodLocked ? <LockOpen className="w-3.5 h-3.5 shrink-0" /> : <Lock className="w-3.5 h-3.5 shrink-0" />}
-            <span className="hidden sm:inline">
-              {isPeriodLocked ? 'Reabrir (ADMIN)' : 'Fechar Período'}
-            </span>
+            {isPeriodLocked ? (
+              <LockOpen className="w-4 h-4 shrink-0" />
+            ) : (
+              <Lock className="w-4 h-4 shrink-0" />
+            )}
           </button>
 
           <button
             type="button"
             disabled={isPeriodLocked || busyAction || kpiStats.exactCount === 0}
             onClick={() => void handleAutoMatchAll()}
-            title="Conciliar automaticamente lançamentos com match exato"
-            aria-label="Conciliar automaticamente lançamentos com match exato"
-            className="inline-flex items-center justify-center gap-1.5 h-8 px-2.5 sm:px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-45 text-white text-xs font-bold shadow-2xs cursor-pointer transition-colors"
+            title={`Conciliar automaticamente lançamentos com match exato (${kpiStats.exactCount})`}
+            aria-label={`Conciliar automaticamente lançamentos com match exato (${kpiStats.exactCount})`}
+            className="inline-flex items-center justify-center h-8 w-8 p-0 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-45 text-white shadow-2xs cursor-pointer transition-colors"
           >
-            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-            <span className="hidden sm:inline">Conciliar Automáticos ({kpiStats.exactCount})</span>
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
           </button>
 
           <button
@@ -950,70 +899,107 @@ export const ConciliacaoTab: React.FC<ConciliacaoTabProps> = ({
             onClick={() => setIsImportModalOpen(true)}
             title="Importar extrato OFX, CSV ou XLSX"
             aria-label="Importar extrato OFX, CSV ou XLSX"
-            className="inline-flex items-center justify-center gap-1.5 h-8 px-2.5 sm:px-3 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-45 text-white text-xs font-bold shadow-2xs cursor-pointer transition-colors"
+            className="inline-flex items-center justify-center h-8 w-8 p-0 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-45 text-white shadow-2xs cursor-pointer transition-colors"
           >
-            <Upload className="w-3.5 h-3.5 shrink-0" />
-            <span className="hidden sm:inline">Importar Extrato</span>
+            <Upload className="w-4 h-4 shrink-0" />
           </button>
         </div>
       </div>
 
-      {/* Single-Row Compact KPIs */}
-      <div className="px-3 sm:px-5 py-2 bg-[#f8f9ff] border-b border-slate-200 grid grid-cols-2 lg:grid-cols-4 gap-2 shrink-0">
-        <div className="bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-2 min-w-0">
-          <div className="min-w-0">
-            <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500 truncate">
-              Extratos (Bruto)
-            </div>
-            <div className="text-xs sm:text-sm font-mono font-bold text-slate-900 tabular-nums">
-              R$ {formatCurrencyBR(kpiStats.totalBruto)}
-            </div>
+      {/* Unified Controls (Sub-tabs + Period + Channel) */}
+      <div className="px-3 sm:px-5 py-2 bg-[#f8f9ff] border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0 min-w-0">
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
+          {/* Sub-tabs (far left) */}
+          <div className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-slate-100 p-0.5 text-[11px] font-semibold shrink-0 max-w-full overflow-x-auto">
+            {(
+              [
+                { id: 'PENDENTE', label: `A Conciliar (${kpiStats.pendCount})` },
+                { id: 'CONCILIADO', label: `Conciliados (${kpiStats.concCount})` },
+                { id: 'IGNORADO', label: `Ignorados (${kpiStats.ignCount})` },
+              ] as const
+            ).map(t => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setSubTab(t.id)}
+                className={`h-full px-2.5 rounded-md whitespace-nowrap cursor-pointer transition-colors ${
+                  subTab === t.id
+                    ? 'bg-slate-900 text-white font-bold shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
           </div>
-          <span className="text-[10px] font-mono font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded shrink-0">
-            {kpiStats.activeCount} créd.
-          </span>
+
+          {/* Monthly Competence + Lock Status */}
+          <div className="inline-flex items-center h-8 rounded-lg border border-slate-300 bg-white divide-x divide-slate-200 overflow-hidden shrink-0">
+            <div className="relative flex items-center px-2 h-full">
+              <select
+                aria-label="Selecionar competência mensal"
+                value={competencia}
+                onChange={e => {
+                  setCompetencia(e.target.value);
+                  setSelectedStatementIds(new Set());
+                  setSelectedOrderIds(new Set());
+                }}
+                className="appearance-none bg-transparent pr-5 outline-none cursor-pointer text-xs font-bold text-slate-800"
+              >
+                {availableCompetencias.map(comp => (
+                  <option key={comp} value={comp}>
+                    {formatCompetenciaLabel(comp)}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-1.5 pointer-events-none" />
+            </div>
+            <span
+              className={`px-2 h-full flex items-center text-[10px] font-bold whitespace-nowrap ${
+                isPeriodLocked ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'
+              }`}
+              title={
+                isPeriodLocked && activePeriodLock?.fechadoPor
+                  ? `Fechado por ${activePeriodLock.fechadoPor}`
+                  : 'Competência aberta para conciliação'
+              }
+            >
+              {isPeriodLocked ? 'Fechado 🔒' : 'Aberto'}
+            </span>
+          </div>
         </div>
 
-        <div className="bg-white border border-emerald-200 rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-2 min-w-0">
-          <div className="min-w-0">
-            <div className="text-[10px] font-mono uppercase tracking-wider text-emerald-700 truncate">
-              Conciliado
-            </div>
-            <div className="text-xs sm:text-sm font-mono font-bold text-emerald-700 tabular-nums">
-              R$ {formatCurrencyBR(kpiStats.totalConc)}
-            </div>
+        {/* Channel Filter + Reset */}
+        <div className="inline-flex items-center h-8 rounded-lg border border-slate-300 bg-white divide-x divide-slate-200 text-[11px] font-semibold overflow-hidden shrink-0">
+          <div className="relative flex items-center px-2 h-full">
+            <select
+              aria-label="Filtrar por canal"
+              value={channelFilter}
+              onChange={e => setChannelFilter(e.target.value)}
+              className="appearance-none bg-transparent pr-5 outline-none cursor-pointer text-[11px] font-semibold text-slate-800"
+            >
+              <option value="TODOS">Canal: Todos</option>
+              {channelOptions.map(name => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-1.5 pointer-events-none" />
           </div>
-          <span className="text-[10px] font-mono font-bold text-emerald-800 bg-emerald-100 px-1.5 py-0.5 rounded shrink-0">
-            {kpiStats.pct}%
-          </span>
-        </div>
-
-        <div className="bg-white border border-amber-200 rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-2 min-w-0">
-          <div className="min-w-0">
-            <div className="text-[10px] font-mono uppercase tracking-wider text-amber-700 truncate">
-              A Conciliar
-            </div>
-            <div className="text-xs sm:text-sm font-mono font-bold text-amber-700 tabular-nums">
-              R$ {formatCurrencyBR(kpiStats.totalPend)}
-            </div>
-          </div>
-          <span className="text-[10px] font-mono font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded shrink-0">
-            {kpiStats.pendCount} itens
-          </span>
-        </div>
-
-        <div className="bg-white border border-rose-200 rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-2 min-w-0">
-          <div className="min-w-0">
-            <div className="text-[10px] font-mono uppercase tracking-wider text-rose-700 truncate">
-              Pedidos s/ Extrato
-            </div>
-            <div className="text-xs sm:text-sm font-mono font-bold text-rose-700 tabular-nums">
-              R$ {formatCurrencyBR(kpiStats.openOrdersSum)}
-            </div>
-          </div>
-          <span className="text-[10px] font-mono font-bold text-rose-800 bg-rose-100 px-1.5 py-0.5 rounded shrink-0">
-            {kpiStats.openOrders.length} ped.
-          </span>
+          <button
+            type="button"
+            title="Limpar filtros"
+            aria-label="Limpar filtros"
+            onClick={() => {
+              setChannelFilter('TODOS');
+              setSearchStatements('');
+              setSearchOrders('');
+            }}
+            className="h-full px-2 flex items-center justify-center text-slate-500 hover:text-rose-600 hover:bg-rose-50 cursor-pointer transition-colors"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
 
@@ -1046,64 +1032,6 @@ export const ConciliacaoTab: React.FC<ConciliacaoTabProps> = ({
           )}
         </div>
       )}
-
-      {/* Sub-tabs + Channel Filter */}
-      <div className="px-3 sm:px-5 py-2 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 bg-white shrink-0">
-        <div className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-slate-100 p-0.5 text-xs font-semibold">
-          {(
-            [
-              { id: 'PENDENTE', label: `A Conciliar (${kpiStats.pendCount})` },
-              { id: 'CONCILIADO', label: `Conciliados (${kpiStats.concCount})` },
-              { id: 'IGNORADO', label: `Ignorados (${kpiStats.ignCount})` },
-            ] as const
-          ).map(t => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setSubTab(t.id)}
-              className={`h-full px-3 rounded-md cursor-pointer transition-colors ${
-                subTab === t.id
-                  ? 'bg-slate-900 text-white font-bold shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="inline-flex items-center h-8 rounded-lg border border-slate-300 bg-white divide-x divide-slate-200 text-xs font-semibold overflow-hidden">
-          <div className="relative flex items-center px-2.5 h-full">
-            <select
-              aria-label="Filtrar por canal"
-              value={channelFilter}
-              onChange={e => setChannelFilter(e.target.value)}
-              className="appearance-none bg-transparent pr-5 outline-none cursor-pointer text-xs font-semibold text-slate-800"
-            >
-              <option value="TODOS">Canal: Todos</option>
-              {channelOptions.map(name => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-1.5 pointer-events-none" />
-          </div>
-          <button
-            type="button"
-            title="Limpar filtros"
-            aria-label="Limpar filtros"
-            onClick={() => {
-              setChannelFilter('TODOS');
-              setSearchStatements('');
-              setSearchOrders('');
-            }}
-            className="h-full px-2.5 flex items-center justify-center text-slate-500 hover:text-rose-600 hover:bg-rose-50 cursor-pointer transition-colors"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </div>
 
       {/* Main Tab Body */}
       <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden bg-white">

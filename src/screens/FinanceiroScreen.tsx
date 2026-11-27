@@ -2177,46 +2177,45 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
     return `${filteredRows.length} pedidos • ${parts.join(' • ')}`;
   })();
 
+  const moduleTabs = (
+    <div
+      role="tablist"
+      aria-label="Módulos do Financeiro"
+      className="inline-flex h-8 items-center rounded-lg bg-slate-100 p-0.5 border border-slate-200 shrink-0"
+    >
+      <button
+        type="button"
+        role="tab"
+        aria-selected={activeModuleTab === 'pedidos_nf'}
+        onClick={() => setActiveModuleTab('pedidos_nf')}
+        className={`h-full px-2.5 rounded-md text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
+          activeModuleTab === 'pedidos_nf'
+            ? 'bg-white text-slate-900 shadow-xs'
+            : 'text-slate-600 hover:text-slate-900'
+        }`}
+      >
+        <Receipt className="w-3.5 h-3.5 shrink-0" />
+        <span>Pedidos &amp; NF</span>
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={activeModuleTab === 'conciliacao'}
+        onClick={() => setActiveModuleTab('conciliacao')}
+        className={`h-full px-2.5 rounded-md text-xs font-bold flex items-center gap-1.5 whitespace-nowrap transition-colors cursor-pointer ${
+          activeModuleTab === 'conciliacao'
+            ? 'bg-white text-emerald-700 shadow-xs'
+            : 'text-slate-600 hover:text-slate-900'
+        }`}
+      >
+        <Landmark className="w-3.5 h-3.5 shrink-0" />
+        <span>Conciliação</span>
+      </button>
+    </div>
+  );
+
   return (
     <div className="flex-1 min-h-0 min-w-0 w-full flex flex-col h-full bg-[#f8f9ff] overflow-hidden">
-      {/* Navegação interna do Módulo Financeiro */}
-      <div className="shrink-0 bg-white border-b border-slate-200 px-3 sm:px-5 py-1.5 flex items-center justify-between gap-2 print:hidden">
-        <div
-          role="tablist"
-          aria-label="Módulos do Financeiro"
-          className="inline-flex rounded-lg bg-slate-100 p-0.5 border border-slate-200"
-        >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeModuleTab === 'pedidos_nf'}
-            onClick={() => setActiveModuleTab('pedidos_nf')}
-            className={`px-3 py-1 rounded-md text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
-              activeModuleTab === 'pedidos_nf'
-                ? 'bg-white text-slate-900 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Receipt className="w-3.5 h-3.5" />
-            <span>Pedidos &amp; NF</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeModuleTab === 'conciliacao'}
-            onClick={() => setActiveModuleTab('conciliacao')}
-            className={`px-3 py-1 rounded-md text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
-              activeModuleTab === 'conciliacao'
-                ? 'bg-white text-emerald-700 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Landmark className="w-3.5 h-3.5" />
-            <span>Conciliação</span>
-          </button>
-        </div>
-      </div>
-
       {activeModuleTab === 'conciliacao' ? (
         <ConciliacaoTab
           orders={orders}
@@ -2228,6 +2227,7 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
           getOrderRowMetrics={getOrderRowMetrics}
           renderConciliationToggle={renderConciliationToggle}
           renderInvoiceToggle={renderInvoiceToggle}
+          moduleTabs={moduleTabs}
         />
       ) : (
         <>
@@ -2246,6 +2246,7 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
         </div>
 
         <div className="bg-white border-b border-[#e2e8f0] px-3 py-2 md:p-0 md:bg-transparent md:border-b-0 flex flex-wrap items-center gap-2 min-w-0">
+          {moduleTabs}
           <div
             className="inline-flex h-8 items-center rounded-lg border border-slate-300 bg-white p-0.5 shadow-2xs shrink-0"
             role="group"
@@ -2284,10 +2285,9 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
             onClick={() => setIsChannelsModalOpen(true)}
             title="Gerenciar Meios de Pagamento"
             aria-label="Gerenciar Meios de Pagamento"
-            className="flex items-center justify-center gap-1.5 h-8 w-8 md:w-auto px-0 md:px-3 text-xs font-bold text-slate-800 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg transition-colors shadow-2xs cursor-pointer"
+            className="flex items-center justify-center h-8 w-8 p-0 text-slate-800 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg transition-colors shadow-2xs cursor-pointer"
           >
             <CreditCard className="w-4 h-4 text-brand-600" />
-            <span className="hidden md:inline">Meios de Pagamento</span>
           </button>
 
           <button
@@ -2301,10 +2301,9 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
             }}
             title="Gerar Relatório de Faturamento (PDF / XLSX)"
             aria-label="Relatório de Faturamento"
-            className="flex items-center justify-center gap-1.5 h-8 w-8 md:w-auto px-0 md:px-3 text-xs font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-colors shadow-xs cursor-pointer"
+            className="flex items-center justify-center h-8 w-8 p-0 text-white bg-brand-600 hover:bg-brand-700 rounded-lg transition-colors shadow-xs cursor-pointer"
           >
             <FileSpreadsheet className="w-4 h-4" />
-            <span className="hidden md:inline">Relatório Faturamento</span>
           </button>
 
           <button

@@ -91,7 +91,7 @@ jobs:
           echo "ENC_SIZE=${ENC_SIZE}" >> "$GITHUB_ENV"
 
       - name: Upload encrypted backup artifact (90-day retention)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: supabase-backup-${{ env.STAMP }}
           path: |

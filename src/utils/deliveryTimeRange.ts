@@ -26,13 +26,23 @@ export function inferDeliveryShiftFromDateTime(dateTimeStr?: string): DeliverySh
   return 'NOITE';
 }
 
+function extractLocalDateYyyyMmDd(dateTimeStr?: string): string {
+  const trimmed = (dateTimeStr ?? '').trim();
+  if (!trimmed) return '';
+  if (/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?$/.test(trimmed)) {
+    return trimmed.slice(0, 10);
+  }
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return toLocalDateTimeString(parsed).slice(0, 10);
+}
+
 export function applyDeliveryShiftToDate(
   dateStr: string,
   shift: DeliveryShift
 ): { start: string; end: string } {
-  const cleanDate = /^\d{4}-\d{2}-\d{2}/.test(dateStr)
-    ? dateStr.slice(0, 10)
-    : toLocalDateTimeString(new Date()).slice(0, 10);
+  const cleanDate =
+    extractLocalDateYyyyMmDd(dateStr) || toLocalDateTimeString(new Date()).slice(0, 10);
   const cfg = DELIVERY_SHIFT_CONFIG[shift];
   return {
     start: `${cleanDate}T${cfg.start}`,
@@ -53,11 +63,12 @@ export function addHoursToDateTime(dateTimeStr: string, hours = 1): string {
 }
 
 export function extractTimeHHmm(dateTimeStr?: string): string {
-  if (!dateTimeStr) return '';
-  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(dateTimeStr)) {
-    return dateTimeStr.slice(11, 16);
+  const trimmed = (dateTimeStr ?? '').trim();
+  if (!trimmed) return '';
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/.test(trimmed)) {
+    return trimmed.slice(11, 16);
   }
-  const parsed = new Date(dateTimeStr);
+  const parsed = new Date(trimmed);
   if (Number.isNaN(parsed.getTime())) return '';
   const hh = String(parsed.getHours()).padStart(2, '0');
   const mm = String(parsed.getMinutes()).padStart(2, '0');
@@ -66,9 +77,8 @@ export function extractTimeHHmm(dateTimeStr?: string): string {
 
 export function combineDateWithTime(baseDateTimeStr: string, timeHHmm: string): string {
   if (!baseDateTimeStr || !/^\d{2}:\d{2}$/.test(timeHHmm)) return '';
-  const datePart = /^\d{4}-\d{2}-\d{2}/.test(baseDateTimeStr)
-    ? baseDateTimeStr.slice(0, 10)
-    : toLocalDateTimeString(new Date(baseDateTimeStr)).slice(0, 10);
+  const datePart = extractLocalDateYyyyMmDd(baseDateTimeStr);
+  if (!datePart) return '';
   return `${datePart}T${timeHHmm}`;
 }
 
