@@ -1,8 +1,63 @@
 import * as XLSX from 'xlsx';
-import { Order, Product, Category, StoreUnit, StockItem, Customer, ProductionOrder, UserProfile, OrderFinancialRecord, FinancialPaymentChannel } from '../types';
+import { Order, Product, Category, StoreUnit, StockItem, StockMovement, Customer, ProductionOrder, UserProfile, OrderFinancialRecord, FinancialPaymentChannel } from '../types';
 import { formatDeliveryTimeRange } from '../utils/deliveryTimeRange';
 import { formatCurrencyBR } from '../components/CurrencyInput';
 import { isLowStockItem } from '../utils/stockAvailability';
+
+export interface FullBackupPayload {
+  units?: StoreUnit[];
+  categories?: Category[];
+  products?: Product[];
+  orders?: Order[];
+  stock?: StockItem[];
+  stockMovements?: StockMovement[];
+  customers?: Customer[];
+  productionOrders?: ProductionOrder[];
+  users?: UserProfile[];
+  financialChannels?: FinancialPaymentChannel[];
+  financialRecords?: OrderFinancialRecord[];
+  appConfigs?: Record<string, unknown>;
+  deliveryFeeZones?: Array<Record<string, unknown>>;
+}
+
+export interface LastBackupMeta {
+  exportedAt: string;
+  exportedBy: string;
+  format: 'XLSX' | 'JSON';
+  totalRecords: number;
+}
+
+function sanitizeUsersForBackup(users: UserProfile[] = []): UserProfile[] {
+  return users.map(u => ({
+    id: u.id,
+    nome: u.nome,
+    email: u.email,
+    role: u.role,
+    unidadePadraoId: u.unidadePadraoId,
+    unidadesPermitidas: Array.isArray(u.unidadesPermitidas) ? u.unidadesPermitidas : [],
+    ativo: u.ativo !== false,
+    avatarUrl: u.avatarUrl || '',
+    autenticadoGoogle: false
+  }));
+}
+
+function countBackupRecords(payload: FullBackupPayload): number {
+  return (
+    (payload.units?.length || 0) +
+    (payload.categories?.length || 0) +
+    (payload.products?.length || 0) +
+    (payload.orders?.length || 0) +
+    (payload.stock?.length || 0) +
+    (payload.stockMovements?.length || 0) +
+    (payload.customers?.length || 0) +
+    (payload.productionOrders?.length || 0) +
+    (payload.users?.length || 0) +
+    (payload.financialChannels?.length || 0) +
+    (payload.financialRecords?.length || 0) +
+    Object.keys(payload.appConfigs || {}).length +
+    (payload.deliveryFeeZones?.length || 0)
+  );
+}
 
 export class ExcelService {
   /**
@@ -142,7 +197,10 @@ export class ExcelService {
     productionOrders: ProductionOrder[] = [],
     users: UserProfile[] = [],
     financialRecords: OrderFinancialRecord[] = [],
-    financialChannels: FinancialPaymentChannel[] = []
+    financialChannels: FinancialPaymentChannel[] = [],
+    stockMovements: StockMovement[] = [],
+    appConfigs: Record<string, unknown> = {},
+    deliveryFeeZones: Array<Record<string, unknown>> = []
   ): void {
     const wb = XLSX.utils.book_new();
 
@@ -204,6 +262,8 @@ export class ExcelService {
       'Desconto': o.desconto,
       'Total': o.valorTotal,
       'Forma Pagamento': o.formaPagamento,
+      'Status Pagamento': o.statusPagamento || 'PENDENTE',
+      'Valor Pago': o.valorPago ?? '',
       'Troco': o.trocoPara || '',
       'Observações': o.observacoes || '',
       'Itens JSON': JSON.stringify(o.itens)
@@ -291,24 +351,138 @@ export class ExcelService {
     })));
     XLSX.utils.book_append_sheet(wb, wsFinRecords, 'Financeiro_Pedidos');
 
+    // 11. Aba Movimentações de Estoque
+    const wsMovs = XLSX.utils.json_to_sheet(stockMovements.map(m => ({
+      'ID': m.id,
+      'Unidade ID': m.unidadeId,
+      'Produto ID': m.produtoId,
+      'Tipo': m.tipo,
+      'Quantidade': m.quantidade,
+      'Motivo': m.motivo || '',
+      'Referência ID': m.referenciaId || '',
+      'Data': m.dataMovimentacao
+    })));
+    XLSX.utils.book_append_sheet(wb, wsMovs, 'Movimentacoes_Estoque');
+
+    // 12. Aba Configurações do App (Metas & Cardápio)
+    const wsAppCfg = XLSX.utils.json_to_sheet(
+      Object.entries(appConfigs || {}).map(([chave, valor]) => ({
+        'Chave': chave,
+        'Valor JSON': JSON.stringify(valor ?? null)
+      }))
+    );
+    XLSX.utils.book_append_sheet(wb, wsAppCfg, 'App_Configuracoes');
+
+    // 13. Aba Taxas de Entrega por Bairro
+    const wsDeliveryZones = XLSX.utils.json_to_sheet(
+      deliveryFeeZones.map(z => ({
+        'ID': z.id ? String(z.id) : '',
+        'Bairro': z.bairro ? String(z.bairro) : '',
+        'Bairro Normalizado': z.bairro_normalizado ? String(z.bairro_normalizado) : '',
+        'CEP Prefixo': z.cep_prefixo ? String(z.cep_prefixo) : '',
+        'Unidade Atendimento ID': z.unidade_atendimento_id ? String(z.unidade_atendimento_id) : '',
+        'Taxa Entrega': Number(z.taxa_entrega || 0),
+        'Tempo Estimado (min)': z.tempo_estimado_minutos ?? '',
+        'Ativo': z.ativo !== false ? 'SIM' : 'NÃO',
+        'Criado Em': z.created_at ? String(z.created_at) : ''
+      }))
+    );
+    XLSX.utils.book_append_sheet(wb, wsDeliveryZones, 'Taxas_Entrega_Bairros');
+
     XLSX.writeFile(wb, `Beju_Caramelos_Backup_Completo_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
+
+  /**
+   * Exporta Snapshot Completo sem perdas em .json (imune ao limite de 32k caracteres do Excel)
+   */
+  static exportFullBackupJson(payload: FullBackupPayload, exportedBy = 'Operador'): LastBackupMeta {
+    const exportedAt = new Date().toISOString();
+    const sanitizedPayload: FullBackupPayload = {
+      ...payload,
+      users: payload.users ? sanitizeUsersForBackup(payload.users) : []
+    };
+    const meta: LastBackupMeta = {
+      exportedAt,
+      exportedBy,
+      format: 'JSON',
+      totalRecords: countBackupRecords(sanitizedPayload)
+    };
+    const documentObj = {
+      schemaVersion: 2,
+      app: 'Beju Caramelos (JuJu Delivery)',
+      exportedAt,
+      exportedBy,
+      data: sanitizedPayload
+    };
+    const jsonText = JSON.stringify(documentObj, null, 2);
+    const blob = new Blob([jsonText], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `Beju_Caramelos_Backup_Completo_${exportedAt.slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return meta;
+  }
+
+  /**
+   * Importa Snapshot Completo a partir de arquivo .json
+   */
+  static async importFullBackupJson(file: File): Promise<FullBackupPayload> {
+    const rawText = await file.text();
+    const parsed = JSON.parse(rawText);
+    const dataObj = parsed && typeof parsed === 'object' && parsed.data && typeof parsed.data === 'object'
+      ? parsed.data
+      : parsed;
+
+    if (!dataObj || typeof dataObj !== 'object') {
+      throw new Error('Estrutura de snapshot JSON inválida.');
+    }
+
+    const expectedKeys: Array<keyof FullBackupPayload> = [
+      'units',
+      'categories',
+      'products',
+      'orders',
+      'stock',
+      'stockMovements',
+      'customers',
+      'productionOrders',
+      'users',
+      'financialChannels',
+      'financialRecords',
+      'appConfigs',
+      'deliveryFeeZones'
+    ];
+    const hasKnownKey = expectedKeys.some(k => k in dataObj);
+    if (!hasKnownKey) {
+      throw new Error('Arquivo JSON não corresponde a um backup do Beju Caramelos.');
+    }
+
+    const result: FullBackupPayload = {
+      units: Array.isArray(dataObj.units) ? dataObj.units : undefined,
+      categories: Array.isArray(dataObj.categories) ? dataObj.categories : undefined,
+      products: Array.isArray(dataObj.products) ? dataObj.products : undefined,
+      orders: Array.isArray(dataObj.orders) ? dataObj.orders : undefined,
+      stock: Array.isArray(dataObj.stock) ? dataObj.stock : undefined,
+      stockMovements: Array.isArray(dataObj.stockMovements) ? dataObj.stockMovements : undefined,
+      customers: Array.isArray(dataObj.customers) ? dataObj.customers : undefined,
+      productionOrders: Array.isArray(dataObj.productionOrders) ? dataObj.productionOrders : undefined,
+      users: Array.isArray(dataObj.users) ? sanitizeUsersForBackup(dataObj.users) : undefined,
+      financialChannels: Array.isArray(dataObj.financialChannels) ? dataObj.financialChannels : undefined,
+      financialRecords: Array.isArray(dataObj.financialRecords) ? dataObj.financialRecords : undefined,
+      appConfigs: dataObj.appConfigs && typeof dataObj.appConfigs === 'object' ? dataObj.appConfigs : undefined,
+      deliveryFeeZones: Array.isArray(dataObj.deliveryFeeZones) ? dataObj.deliveryFeeZones : undefined
+    };
+    return result;
   }
 
   /**
    * Importa e restaura o banco de dados a partir de um backup .xlsx
    */
-  static async importFullBackup(file: File): Promise<{
-    units?: StoreUnit[];
-    categories?: Category[];
-    products?: Product[];
-    orders?: Order[];
-    stock?: StockItem[];
-    customers?: Customer[];
-    productionOrders?: ProductionOrder[];
-    users?: UserProfile[];
-    financialChannels?: FinancialPaymentChannel[];
-    financialRecords?: OrderFinancialRecord[];
-  }> {
+  static async importFullBackup(file: File): Promise<FullBackupPayload> {
     const buffer = await file.arrayBuffer();
     const wb = XLSX.read(buffer, { type: 'array' });
     const result: any = {};
@@ -382,6 +556,8 @@ export class ExcelService {
           desconto: Number(r['Desconto'] || 0),
           valorTotal: Number(r['Total'] || 0),
           formaPagamento: (r['Forma Pagamento'] || 'pix') as any,
+          statusPagamento: r['Status Pagamento'] ? (String(r['Status Pagamento']) as any) : undefined,
+          valorPago: r['Valor Pago'] !== '' && r['Valor Pago'] !== undefined ? Number(r['Valor Pago']) : undefined,
           trocoPara: r['Troco'] ? Number(r['Troco']) : undefined,
           observacoes: String(r['Observações'] || ''),
           itens
@@ -450,7 +626,6 @@ export class ExcelService {
           unidadesPermitidas,
           ativo: String(r['Ativo'] || 'SIM').toUpperCase() === 'SIM',
           avatarUrl: String(r['Avatar URL'] || ''),
-          senha: String(r['Senha'] || '') || undefined,
           autenticadoGoogle: false
         };
       });
@@ -490,6 +665,52 @@ export class ExcelService {
           observacoes: r['Observações'] ? String(r['Observações']) : undefined
         };
       });
+    }
+
+    if (wb.SheetNames.includes('Movimentacoes_Estoque')) {
+      const raw = XLSX.utils.sheet_to_json(wb.Sheets['Movimentacoes_Estoque']) as any[];
+      result.stockMovements = raw.map(r => ({
+        id: String(r['ID'] || `mov-${Date.now()}`),
+        unidadeId: String(r['Unidade ID'] || r['Unidade Origem ID'] || ''),
+        produtoId: String(r['Produto ID'] || ''),
+        tipo: (r['Tipo'] || 'ENTRADA') as any,
+        quantidade: Number(r['Quantidade'] || 0),
+        motivo: r['Motivo'] ? String(r['Motivo']) : undefined,
+        referenciaId: r['Referência ID'] ? String(r['Referência ID']) : undefined,
+        dataMovimentacao: String(r['Data'] || new Date().toISOString())
+      }));
+    }
+
+    if (wb.SheetNames.includes('App_Configuracoes')) {
+      const raw = XLSX.utils.sheet_to_json(wb.Sheets['App_Configuracoes']) as any[];
+      const cfgMap: Record<string, unknown> = {};
+      raw.forEach(r => {
+        const key = String(r['Chave'] || '').trim();
+        if (!key) return;
+        try {
+          cfgMap[key] = JSON.parse(String(r['Valor JSON'] || 'null'));
+        } catch {
+          cfgMap[key] = r['Valor JSON'];
+        }
+      });
+      result.appConfigs = cfgMap;
+    }
+
+    if (wb.SheetNames.includes('Taxas_Entrega_Bairros')) {
+      const raw = XLSX.utils.sheet_to_json(wb.Sheets['Taxas_Entrega_Bairros']) as any[];
+      result.deliveryFeeZones = raw.map(r => ({
+        id: r['ID'] ? String(r['ID']) : undefined,
+        bairro: String(r['Bairro'] || ''),
+        bairro_normalizado: String(r['Bairro Normalizado'] || ''),
+        cep_prefixo: r['CEP Prefixo'] ? String(r['CEP Prefixo']) : null,
+        unidade_atendimento_id: r['Unidade Atendimento ID'] ? String(r['Unidade Atendimento ID']) : null,
+        taxa_entrega: Number(r['Taxa Entrega'] || 0),
+        tempo_estimado_minutos: r['Tempo Estimado (min)'] !== '' && r['Tempo Estimado (min)'] !== undefined
+          ? Number(r['Tempo Estimado (min)'])
+          : null,
+        ativo: String(r['Ativo'] || 'SIM').toUpperCase() === 'SIM',
+        created_at: r['Criado Em'] ? String(r['Criado Em']) : undefined
+      }));
     }
 
     return result;

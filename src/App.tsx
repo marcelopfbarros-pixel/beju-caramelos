@@ -26,6 +26,7 @@ const ConfiguracoesScreen = lazy(() => import('./screens/ConfiguracoesScreen').t
 const CardapioDigitalScreen = lazy(() => import('./screens/CardapioDigitalScreen').then(m => ({ default: m.CardapioDigitalScreen })));
 import { AppStorage } from './services/storage';
 import { SupabaseService } from './services/supabaseService';
+import { FullBackupPayload } from './services/excelService';
 import { supabase } from './services/supabaseClient';
 import {
   getWhatsAppAutomationSettings,
@@ -913,28 +914,34 @@ export const App: React.FC = () => {
   };
 
   // Handlers for Full Backup Restore
-  const handleRestoreFullBackup = (data: {
-    units?: StoreUnit[];
-    categories?: Category[];
-    products?: Product[];
-    orders?: Order[];
-    stock?: StockItem[];
-    customers?: Customer[];
-    productionOrders?: ProductionOrder[];
-    users?: UserProfile[];
-    financialRecords?: OrderFinancialRecord[];
-    financialChannels?: FinancialPaymentChannel[];
-  }) => {
+  const handleRestoreFullBackup = (data: FullBackupPayload) => {
     if (data.units && data.units.length > 0) setUnits(data.units);
     if (data.categories && data.categories.length > 0) setCategories(data.categories);
     if (data.products && data.products.length > 0) setProducts(data.products);
     if (data.orders && data.orders.length > 0) setOrders(data.orders);
     if (data.stock && data.stock.length > 0) setStock(data.stock);
+    if (data.stockMovements && data.stockMovements.length > 0) setStockMovements(data.stockMovements);
     if (data.customers && data.customers.length > 0) setCustomers(data.customers);
     if (data.productionOrders && data.productionOrders.length > 0) setProductionOrders(data.productionOrders);
     if (data.users && data.users.length > 0) setUsers(data.users);
     if (data.financialChannels && data.financialChannels.length > 0) setFinancialChannels(data.financialChannels);
     if (data.financialRecords && data.financialRecords.length > 0) setFinancialRecords(data.financialRecords);
+    if (data.appConfigs) {
+      if (data.appConfigs.revenue_goals && typeof data.appConfigs.revenue_goals === 'object') {
+        handleSaveRevenueGoals(data.appConfigs.revenue_goals as MonthlyRevenueGoals);
+      }
+      if (data.appConfigs.cardapio_intro_config && typeof data.appConfigs.cardapio_intro_config === 'object') {
+        handleSaveCardapioIntroConfig(data.appConfigs.cardapio_intro_config as CardapioIntroConfig);
+      }
+      if (data.appConfigs.cardapio_thankyou_config && typeof data.appConfigs.cardapio_thankyou_config === 'object') {
+        handleSaveCardapioThankYouConfig(data.appConfigs.cardapio_thankyou_config as CardapioThankYouConfig);
+      }
+    }
+    if (isSupabaseOnline && data.deliveryFeeZones && data.deliveryFeeZones.length > 0) {
+      void SupabaseService.saveDeliveryFeeZones(data.deliveryFeeZones).catch(err =>
+        console.error('Erro ao restaurar taxas de entrega por bairro:', err)
+      );
+    }
   };
 
   // Handlers for Financeiro (Conciliação Bancária, NF & Meios de Pagamento)
@@ -1940,6 +1947,12 @@ export const App: React.FC = () => {
               onSaveFinancialChannel={handleSaveFinancialChannel}
               onDeleteFinancialChannel={handleDeleteFinancialChannel}
               onOpenOrderInPedidos={handleOpenOrderInPedidos}
+              onVerifyPin={async (pin: string) => {
+                if (SupabaseService.isConfigured()) {
+                  return SupabaseService.verifyCurrentOperatorPin(effectiveUserProfile.email, pin);
+                }
+                return Boolean(effectiveUserProfile.senha && pin === effectiveUserProfile.senha);
+              }}
             />
           )}
 
@@ -2013,6 +2026,7 @@ export const App: React.FC = () => {
               products={products}
               orders={orders}
               stock={stock}
+              stockMovements={stockMovements}
               customers={customers}
               productionOrders={productionOrders}
               users={users}

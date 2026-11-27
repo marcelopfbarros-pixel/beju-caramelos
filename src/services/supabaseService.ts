@@ -18,7 +18,13 @@ import {
   InvoiceStatus,
   OrderFinancialPaymentEntry,
   OrderFinancialRecord,
-  ReconciliationStatus
+  ReconciliationPeriodLock,
+  ReconciliationStatus,
+  StatementAllocation,
+  StatementEntryStatus,
+  StatementFormat,
+  StatementImportBatch,
+  BankStatementEntry
 } from '../types';
 import { decodePaymentInstructions, encodePaymentInstructions } from '../utils/paymentStatus';
 
@@ -1369,6 +1375,82 @@ export class SupabaseService {
     if (error) throw error;
   }
 
+  static async getAllAppConfigs(): Promise<Record<string, unknown>> {
+    if (!this.isConfigured()) return {};
+    const { data, error } = await supabase!
+      .from('app_configuracoes')
+      .select('chave, valor');
+    if (error) {
+      console.warn('Erro ao carregar todas as app_configuracoes:', error);
+      return {};
+    }
+    const result: Record<string, unknown> = {};
+    for (const row of data || []) {
+      if (row.chave) result[String(row.chave)] = row.valor;
+    }
+    return result;
+  }
+
+  static async getDeliveryFeeZones(): Promise<Array<Record<string, unknown>>> {
+    if (!this.isConfigured()) return [];
+    const { data, error } = await supabase!
+      .from('taxas_entrega_bairros')
+      .select('id, bairro, bairro_normalizado, cep_prefixo, unidade_atendimento_id, taxa_entrega, tempo_estimado_minutos, ativo, created_at')
+      .order('bairro', { ascending: true });
+    if (error) {
+      console.warn('Erro ao carregar taxas_entrega_bairros:', error);
+      return [];
+    }
+    return (data || []) as Array<Record<string, unknown>>;
+  }
+
+  static async saveDeliveryFeeZones(zones: Array<Record<string, unknown>>): Promise<void> {
+    if (!this.isConfigured() || zones.length === 0) return;
+    const isUuid = (v: unknown): v is string =>
+      typeof v === 'string' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+
+    const payloads = zones
+      .filter(z => typeof z.bairro === 'string' && String(z.bairro).trim().length > 0)
+      .map(z => {
+        const bairro = String(z.bairro).trim();
+        const normalized = String(z.bairro_normalizado || bairro)
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase()
+          .trim();
+        const row: Record<string, unknown> = {
+          bairro,
+          bairro_normalizado: normalized,
+          cep_prefixo: z.cep_prefixo ? String(z.cep_prefixo) : null,
+          unidade_atendimento_id: isUuid(z.unidade_atendimento_id) ? z.unidade_atendimento_id : null,
+          taxa_entrega: Math.max(0, Number(z.taxa_entrega) || 0),
+          tempo_estimado_minutos: z.tempo_estimado_minutos !== undefined && z.tempo_estimado_minutos !== null
+            ? Math.max(0, Math.round(Number(z.tempo_estimado_minutos) || 0))
+            : null,
+          ativo: z.ativo !== false,
+        };
+        if (isUuid(z.id)) row.id = z.id;
+        return row;
+      });
+
+    if (payloads.length === 0) return;
+    const withIds = payloads.filter(p => typeof p.id === 'string');
+    const withoutIds = payloads.filter(p => typeof p.id !== 'string');
+    if (withIds.length > 0) {
+      const { error } = await supabase!
+        .from('taxas_entrega_bairros')
+        .upsert(withIds, { onConflict: 'id' });
+      if (error) throw error;
+    }
+    if (withoutIds.length > 0) {
+      const { error } = await supabase!
+        .from('taxas_entrega_bairros')
+        .insert(withoutIds);
+      if (error) throw error;
+    }
+  }
+
   static async getPublicReservedStock(unidadeId?: string): Promise<Map<string, number>> {
     const map = new Map<string, number>();
     if (!this.isConfigured()) return map;
@@ -1726,5 +1808,370 @@ export class SupabaseService {
   static async signOut() {
     if (!this.isConfigured()) return;
     await supabase!.auth.signOut();
+  }
+
+  // ==========================================
+  // CONCILIAÇÃO BANCÁRIA (EXTRATOS & PERÍODOS)
+  // ==========================================
+  static async getStatementEntries(competencia?: string): Promise<BankStatementEntry[]> {
+    if (!this.isConfigured()) return [];
+
+    let query = supabase!
+      .from('extrato_lancamentos')
+      .select(
+        'id, lote_id, competencia, canal_id, canal_nome, data_extrato, descricao, pagador_nome, referencia_nsu, valor_bruto, valor_taxa, valor_liquido, status, conciliado_por, conciliado_em, ignorado_por, ignorado_em, motivo_ignorado, fingerprint_hash, created_at, updated_at'
+      )
+      .order('data_extrato', { ascending: false })
+      .order('created_at', { ascending: false });
+
+    if (competencia) {
+      query = query.eq('competencia', competencia);
+    }
+
+    const { data: rows, error } = await query;
+    if (error) {
+      console.warn('Erro ao carregar extrato_lancamentos:', error);
+      return [];
+    }
+
+    const entryIds = (rows || []).map(r => r.id).filter(Boolean);
+    const linksByEntryId = new Map<string, StatementAllocation[]>();
+
+    if (entryIds.length > 0) {
+      const { data: linkRows, error: linkErr } = await supabase!
+        .from('extrato_conciliacao_vinculos')
+        .select('extrato_lancamento_id, pedido_id, valor_alocado')
+        .in('extrato_lancamento_id', entryIds);
+
+      if (linkErr) {
+        console.warn('Erro ao carregar extrato_conciliacao_vinculos:', linkErr);
+      } else {
+        for (const l of linkRows || []) {
+          const eid = String(l.extrato_lancamento_id);
+          const list = linksByEntryId.get(eid) || [];
+          list.push({
+            orderId: String(l.pedido_id),
+            amount: Number(l.valor_alocado) || 0,
+          });
+          linksByEntryId.set(eid, list);
+        }
+      }
+    }
+
+    return (rows || []).map(r => {
+      const allocations = linksByEntryId.get(String(r.id)) || [];
+      return {
+        id: String(r.id),
+        loteId: r.lote_id ? String(r.lote_id) : undefined,
+        competencia: String(r.competencia),
+        canalId: r.canal_id ? String(r.canal_id) : undefined,
+        canalNome: String(r.canal_nome),
+        dataExtrato: String(r.data_extrato),
+        descricao: String(r.descricao || ''),
+        pagadorNome: String(r.pagador_nome || ''),
+        referenciaNsu: String(r.referencia_nsu || ''),
+        valorBruto: Number(r.valor_bruto) || 0,
+        valorTaxa: Number(r.valor_taxa) || 0,
+        valorLiquido: Number(r.valor_liquido) || 0,
+        status: (r.status || 'PENDENTE') as StatementEntryStatus,
+        conciliadoPor: r.conciliado_por ? String(r.conciliado_por) : undefined,
+        conciliadoEm: r.conciliado_em ? String(r.conciliado_em) : undefined,
+        ignoradoPor: r.ignorado_por ? String(r.ignorado_por) : undefined,
+        ignoradoEm: r.ignorado_em ? String(r.ignorado_em) : undefined,
+        motivoIgnorado: r.motivo_ignorado ? String(r.motivo_ignorado) : undefined,
+        fingerprintHash: String(r.fingerprint_hash),
+        linkedOrderIds: allocations.map(a => a.orderId),
+        allocations,
+        createdAt: r.created_at ? String(r.created_at) : undefined,
+        updatedAt: r.updated_at ? String(r.updated_at) : undefined,
+      };
+    });
+  }
+
+  static async saveStatementBatchWithEntries(
+    batch: Omit<StatementImportBatch, 'id' | 'createdAt'>,
+    entries: Array<{
+      competencia: string;
+      canalId?: string;
+      canalNome: string;
+      dataExtrato: string;
+      descricao: string;
+      pagadorNome: string;
+      referenciaNsu: string;
+      valorBruto: number;
+      valorTaxa: number;
+      valorLiquido: number;
+      fingerprintHash: string;
+    }>
+  ): Promise<{
+    batchId?: string;
+    insertedEntries: BankStatementEntry[];
+    duplicateCount: number;
+  }> {
+    if (!this.isConfigured() || entries.length === 0) {
+      return { insertedEntries: [], duplicateCount: 0 };
+    }
+
+    const hashes = Array.from(new Set(entries.map(e => e.fingerprintHash)));
+    const { data: existingRows, error: checkErr } = await supabase!
+      .from('extrato_lancamentos')
+      .select('fingerprint_hash')
+      .in('fingerprint_hash', hashes);
+    if (checkErr) throw checkErr;
+
+    const existingSet = new Set((existingRows || []).map(r => String(r.fingerprint_hash)));
+    const toInsert = entries.filter(e => !existingSet.has(e.fingerprintHash));
+    const duplicateCount = entries.length - toInsert.length;
+
+    const { data: batchData, error: batchErr } = await supabase!
+      .from('extratos_importados')
+      .insert({
+        canal_id: batch.canalId || null,
+        canal_nome: batch.canalNome,
+        arquivo_nome: batch.arquivoNome,
+        formato: batch.formato as StatementFormat,
+        periodo_inicio: batch.periodoInicio || null,
+        periodo_fim: batch.periodoFim || null,
+        total_linhas: batch.totalLinhas,
+        linhas_novas: toInsert.length,
+        linhas_duplicadas: duplicateCount,
+        importado_por: batch.importadoPor || null,
+      })
+      .select('id')
+      .single();
+    if (batchErr) throw batchErr;
+
+    const batchId = String(batchData.id);
+    if (toInsert.length === 0) {
+      return { batchId, insertedEntries: [], duplicateCount };
+    }
+
+    const payload = toInsert.map(e => ({
+      lote_id: batchId,
+      competencia: e.competencia,
+      canal_id: e.canalId || null,
+      canal_nome: e.canalNome,
+      data_extrato: e.dataExtrato,
+      descricao: e.descricao,
+      pagador_nome: e.pagadorNome,
+      referencia_nsu: e.referenciaNsu,
+      valor_bruto: e.valorBruto,
+      valor_taxa: e.valorTaxa,
+      valor_liquido: e.valorLiquido,
+      status: 'PENDENTE',
+      fingerprint_hash: e.fingerprintHash,
+    }));
+
+    const { data: insertedRows, error: insErr } = await supabase!
+      .from('extrato_lancamentos')
+      .insert(payload)
+      .select(
+        'id, lote_id, competencia, canal_id, canal_nome, data_extrato, descricao, pagador_nome, referencia_nsu, valor_bruto, valor_taxa, valor_liquido, status, fingerprint_hash, created_at, updated_at'
+      );
+    if (insErr) throw insErr;
+
+    const insertedEntries: BankStatementEntry[] = (insertedRows || []).map(r => ({
+      id: String(r.id),
+      loteId: r.lote_id ? String(r.lote_id) : undefined,
+      competencia: String(r.competencia),
+      canalId: r.canal_id ? String(r.canal_id) : undefined,
+      canalNome: String(r.canal_nome),
+      dataExtrato: String(r.data_extrato),
+      descricao: String(r.descricao || ''),
+      pagadorNome: String(r.pagador_nome || ''),
+      referenciaNsu: String(r.referencia_nsu || ''),
+      valorBruto: Number(r.valor_bruto) || 0,
+      valorTaxa: Number(r.valor_taxa) || 0,
+      valorLiquido: Number(r.valor_liquido) || 0,
+      status: (r.status || 'PENDENTE') as StatementEntryStatus,
+      fingerprintHash: String(r.fingerprint_hash),
+      linkedOrderIds: [],
+      allocations: [],
+      createdAt: r.created_at ? String(r.created_at) : undefined,
+      updatedAt: r.updated_at ? String(r.updated_at) : undefined,
+    }));
+
+    return { batchId, insertedEntries, duplicateCount };
+  }
+
+  static async confirmStatementReconciliation(params: {
+    statementIds: string[];
+    links: Array<{ statementId: string; orderId: string; amount: number }>;
+    operatorName: string;
+  }): Promise<void> {
+    if (!this.isConfigured() || params.statementIds.length === 0) return;
+    const nowIso = new Date().toISOString();
+
+    if (params.links.length > 0) {
+      const linkPayloads = params.links.map(l => ({
+        extrato_lancamento_id: l.statementId,
+        pedido_id: l.orderId,
+        valor_alocado: Number(l.amount.toFixed(2)),
+        conciliado_por: params.operatorName,
+        conciliado_em: nowIso,
+      }));
+      const { error: linkErr } = await supabase!
+        .from('extrato_conciliacao_vinculos')
+        .upsert(linkPayloads, { onConflict: 'extrato_lancamento_id,pedido_id' });
+      if (linkErr) throw linkErr;
+    }
+
+    const { error: stErr } = await supabase!
+      .from('extrato_lancamentos')
+      .update({
+        status: 'CONCILIADO',
+        conciliado_por: params.operatorName,
+        conciliado_em: nowIso,
+        updated_at: nowIso,
+      })
+      .in('id', params.statementIds);
+    if (stErr) throw stErr;
+  }
+
+  static async ignoreStatementEntries(
+    statementIds: string[],
+    reason: string,
+    operatorName: string
+  ): Promise<void> {
+    if (!this.isConfigured() || statementIds.length === 0) return;
+    const nowIso = new Date().toISOString();
+    const { error } = await supabase!
+      .from('extrato_lancamentos')
+      .update({
+        status: 'IGNORADO',
+        motivo_ignorado: reason,
+        ignorado_por: operatorName,
+        ignorado_em: nowIso,
+        updated_at: nowIso,
+      })
+      .in('id', statementIds);
+    if (error) throw error;
+  }
+
+  static async revertStatementEntry(statementId: string): Promise<void> {
+    if (!this.isConfigured()) return;
+    const { error: delErr } = await supabase!
+      .from('extrato_conciliacao_vinculos')
+      .delete()
+      .eq('extrato_lancamento_id', statementId);
+    if (delErr) throw delErr;
+
+    const { error: updErr } = await supabase!
+      .from('extrato_lancamentos')
+      .update({
+        status: 'PENDENTE',
+        conciliado_por: null,
+        conciliado_em: null,
+        ignorado_por: null,
+        ignorado_em: null,
+        motivo_ignorado: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', statementId);
+    if (updErr) throw updErr;
+  }
+
+  static async getReconciliationPeriodLocks(): Promise<ReconciliationPeriodLock[]> {
+    if (!this.isConfigured()) return [];
+    const { data, error } = await supabase!
+      .from('conciliacao_periodos_fechados')
+      .select('id, competencia, status, fechado_por, fechado_em, reaberto_por, reaberto_em, resumo_snapshot')
+      .order('competencia', { ascending: false });
+    if (error) {
+      console.warn('Erro ao carregar conciliacao_periodos_fechados:', error);
+      return [];
+    }
+    return (data || []).map(r => ({
+      id: String(r.id),
+      competencia: String(r.competencia),
+      status: (r.status || 'ABERTO') as 'ABERTO' | 'FECHADO',
+      fechadoPor: r.fechado_por ? String(r.fechado_por) : undefined,
+      fechadoEm: r.fechado_em ? String(r.fechado_em) : undefined,
+      reabertoPor: r.reaberto_por ? String(r.reaberto_por) : undefined,
+      reabertoEm: r.reaberto_em ? String(r.reaberto_em) : undefined,
+      resumoSnapshot: (r.resumo_snapshot as Record<string, unknown>) || undefined,
+    }));
+  }
+
+  static async lockReconciliationPeriod(
+    competencia: string,
+    operatorName: string,
+    resumoSnapshot?: Record<string, unknown>
+  ): Promise<ReconciliationPeriodLock> {
+    const nowIso = new Date().toISOString();
+    const fallback: ReconciliationPeriodLock = {
+      competencia,
+      status: 'FECHADO',
+      fechadoPor: operatorName,
+      fechadoEm: nowIso,
+      resumoSnapshot,
+    };
+    if (!this.isConfigured()) return fallback;
+
+    const { data, error } = await supabase!
+      .from('conciliacao_periodos_fechados')
+      .upsert(
+        {
+          competencia,
+          status: 'FECHADO',
+          fechado_por: operatorName,
+          fechado_em: nowIso,
+          resumo_snapshot: resumoSnapshot || null,
+          updated_at: nowIso,
+        },
+        { onConflict: 'competencia' }
+      )
+      .select('id, competencia, status, fechado_por, fechado_em, reaberto_por, reaberto_em, resumo_snapshot')
+      .single();
+    if (error) throw error;
+
+    return {
+      id: String(data.id),
+      competencia: String(data.competencia),
+      status: 'FECHADO',
+      fechadoPor: data.fechado_por ? String(data.fechado_por) : undefined,
+      fechadoEm: data.fechado_em ? String(data.fechado_em) : undefined,
+      reabertoPor: data.reaberto_por ? String(data.reaberto_por) : undefined,
+      reabertoEm: data.reaberto_em ? String(data.reaberto_em) : undefined,
+      resumoSnapshot: (data.resumo_snapshot as Record<string, unknown>) || undefined,
+    };
+  }
+
+  static async unlockReconciliationPeriod(
+    competencia: string,
+    operatorName: string
+  ): Promise<ReconciliationPeriodLock> {
+    const nowIso = new Date().toISOString();
+    const fallback: ReconciliationPeriodLock = {
+      competencia,
+      status: 'ABERTO',
+      reabertoPor: operatorName,
+      reabertoEm: nowIso,
+    };
+    if (!this.isConfigured()) return fallback;
+
+    const { data, error } = await supabase!
+      .from('conciliacao_periodos_fechados')
+      .update({
+        status: 'ABERTO',
+        reaberto_por: operatorName,
+        reaberto_em: nowIso,
+        updated_at: nowIso,
+      })
+      .eq('competencia', competencia)
+      .select('id, competencia, status, fechado_por, fechado_em, reaberto_por, reaberto_em, resumo_snapshot')
+      .single();
+    if (error) throw error;
+
+    return {
+      id: String(data.id),
+      competencia: String(data.competencia),
+      status: 'ABERTO',
+      fechadoPor: data.fechado_por ? String(data.fechado_por) : undefined,
+      fechadoEm: data.fechado_em ? String(data.fechado_em) : undefined,
+      reabertoPor: data.reaberto_por ? String(data.reaberto_por) : undefined,
+      reabertoEm: data.reaberto_em ? String(data.reaberto_em) : undefined,
+      resumoSnapshot: (data.resumo_snapshot as Record<string, unknown>) || undefined,
+    };
   }
 }

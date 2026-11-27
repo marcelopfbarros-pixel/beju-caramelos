@@ -17,6 +17,7 @@ import { HybridFilterSort } from '../components/HybridFilterSort';
 import { CurrencyInput, formatCurrencyBR } from '../components/CurrencyInput';
 import { PrintReportHeader } from '../components/PrintReportHeader';
 import { FinanceiroReportModal } from '../components/FinanceiroReportModal';
+import { ConciliacaoTab } from '../components/ConciliacaoTab';
 import { useExpandedGroups } from '../hooks/useExpandedGroups';
 import { formatDeliveryTimeRange } from '../utils/deliveryTimeRange';
 import {
@@ -96,6 +97,7 @@ interface FinanceiroScreenProps {
   ) => Promise<FinancialPaymentChannel | void> | void;
   onDeleteFinancialChannel?: (channelId: string) => Promise<void> | void;
   onOpenOrderInPedidos?: (order: Order, openEditModal?: boolean) => void;
+  onVerifyPin?: (pin: string) => Promise<boolean>;
 }
 
 type FinancialStatusFilter =
@@ -292,7 +294,9 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
   onSaveFinancialChannel,
   onDeleteFinancialChannel,
   onOpenOrderInPedidos,
+  onVerifyPin,
 }) => {
+  const [activeModuleTab, setActiveModuleTab] = useState<'pedidos_nf' | 'conciliacao'>('pedidos_nf');
   const todayLocalDate = toLocalDateInput();
   const [viewMode, setViewMode] = useState<'TABLE' | 'CARDS'>(() =>
     typeof window !== 'undefined' && window.innerWidth < 768 ? 'CARDS' : 'TABLE'
@@ -2175,6 +2179,58 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
 
   return (
     <div className="flex-1 min-h-0 min-w-0 w-full flex flex-col h-full bg-[#f8f9ff] overflow-hidden">
+      {/* Navegação interna do Módulo Financeiro */}
+      <div className="shrink-0 bg-white border-b border-slate-200 px-3 sm:px-5 py-1.5 flex items-center justify-between gap-2 print:hidden">
+        <div
+          role="tablist"
+          aria-label="Módulos do Financeiro"
+          className="inline-flex rounded-lg bg-slate-100 p-0.5 border border-slate-200"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeModuleTab === 'pedidos_nf'}
+            onClick={() => setActiveModuleTab('pedidos_nf')}
+            className={`px-3 py-1 rounded-md text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
+              activeModuleTab === 'pedidos_nf'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Receipt className="w-3.5 h-3.5" />
+            <span>Pedidos &amp; NF</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeModuleTab === 'conciliacao'}
+            onClick={() => setActiveModuleTab('conciliacao')}
+            className={`px-3 py-1 rounded-md text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
+              activeModuleTab === 'conciliacao'
+                ? 'bg-white text-emerald-700 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Landmark className="w-3.5 h-3.5" />
+            <span>Conciliação</span>
+          </button>
+        </div>
+      </div>
+
+      {activeModuleTab === 'conciliacao' ? (
+        <ConciliacaoTab
+          orders={orders}
+          financialChannels={financialChannels}
+          financialRecords={financialRecords}
+          userProfile={userProfile}
+          onSaveFinancialRecord={onSaveFinancialRecord}
+          onVerifyPin={onVerifyPin}
+          getOrderRowMetrics={getOrderRowMetrics}
+          renderConciliationToggle={renderConciliationToggle}
+          renderInvoiceToggle={renderInvoiceToggle}
+        />
+      ) : (
+        <>
       {/* Header */}
       <div className="shrink-0 min-w-0 flex flex-col md:flex-row md:flex-wrap md:items-center justify-between md:bg-white md:border-b md:border-[#e2e8f0] md:px-4 lg:px-5 md:py-2.5 md:gap-2 print:hidden">
         <div className="bg-white border-b border-[#e2e8f0] px-3 py-2.5 md:p-0 md:bg-transparent md:border-b-0 min-w-0">
@@ -3274,6 +3330,8 @@ export const FinanceiroScreen: React.FC<FinanceiroScreenProps> = ({
           </table>
         </div>
       </div>
+        </>
+      )}
 
       {/* Modal de Conciliação Bancária & Emissão de NF */}
       {isModalOpen && editingOrder && (

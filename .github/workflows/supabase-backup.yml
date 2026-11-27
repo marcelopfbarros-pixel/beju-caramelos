@@ -1,0 +1,114 @@
+name: Supabase Daily Encrypted Backup
+
+on:
+  schedule:
+    # 03:00 BRT (UTC-3) = 06:00 UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    name: Encrypted pg_dump & Integrity Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Validate required secrets
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "::error::Secret SUPABASE_DB_URL não configurado. Veja docs/BACKUP_POLICY.md para obter a URI do Session Pooler IPv4."
+            exit 1
+          fi
+          if [ -z "$BACKUP_ENCRYPTION_KEY" ]; then
+            echo "::error::Secret BACKUP_ENCRYPTION_KEY não configurado. Defina uma passphrase forte para criptografar o dump AES-256."
+            exit 1
+          fi
+
+      - name: Install PostgreSQL 17 client and GnuPG
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl ca-certificates gnupg lsb-release
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+          CODENAME=$(lsb_release -cs)
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${CODENAME}-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+          pg_dump --version
+
+      - name: Dump public and private schemas & verify TOC
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          STAMP=$(date -u +%Y-%m-%d_%H%MUTC)
+          mkdir -p /tmp/backups
+          DUMP_FILE="/tmp/backups/beju_caramelos_${STAMP}.dump"
+          echo "DUMP_FILE=${DUMP_FILE}" >> "$GITHUB_ENV"
+          echo "STAMP=${STAMP}" >> "$GITHUB_ENV"
+
+          pg_dump "$SUPABASE_DB_URL" \
+            --format=custom \
+            --compress=9 \
+            --no-owner \
+            --no-acl \
+            --schema=public \
+            --schema=private \
+            --file="$DUMP_FILE"
+
+          if [ ! -s "$DUMP_FILE" ]; then
+            echo "::error::Arquivo de dump vazio."
+            exit 1
+          fi
+
+          pg_restore --list "$DUMP_FILE" > /tmp/backups/toc.txt
+          TOC_COUNT=$(wc -l < /tmp/backups/toc.txt)
+          echo "TOC_COUNT=${TOC_COUNT}" >> "$GITHUB_ENV"
+          echo "Verificação pg_restore --list OK (${TOC_COUNT} entradas)."
+
+      - name: Encrypt dump with AES-256 & compute SHA-256
+        env:
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+        run: |
+          ENC_FILE="${DUMP_FILE}.gpg"
+          echo "ENC_FILE=${ENC_FILE}" >> "$GITHUB_ENV"
+
+          gpg --batch --yes --symmetric \
+            --cipher-algo AES256 \
+            --passphrase-fd 3 \
+            --output "$ENC_FILE" \
+            "$DUMP_FILE" 3<<<"$BACKUP_ENCRYPTION_KEY"
+
+          sha256sum "$ENC_FILE" > "${ENC_FILE}.sha256"
+          shred -u "$DUMP_FILE" || rm -f "$DUMP_FILE"
+
+          ENC_SIZE=$(du -h "$ENC_FILE" | cut -f1)
+          echo "ENC_SIZE=${ENC_SIZE}" >> "$GITHUB_ENV"
+
+      - name: Upload encrypted backup artifact (90-day retention)
+        uses: actions/upload-artifact@v4
+        with:
+          name: supabase-backup-${{ env.STAMP }}
+          path: |
+            ${{ env.ENC_FILE }}
+            ${{ env.ENC_FILE }}.sha256
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Publish backup summary
+        run: |
+          BRT_TIME=$(TZ=America/Sao_Paulo date '+%d/%m/%Y %H:%M BRT')
+          {
+            echo "### Supabase Daily Encrypted Backup"
+            echo "- **Data/Hora (BRT):** ${BRT_TIME}"
+            echo "- **Schemas incluídos:** \`public\`, \`private\`"
+            echo "- **Entradas validadas (\`pg_restore --list\`):** ${TOC_COUNT}"
+            echo "- **Arquivo criptografado (AES-256):** \`$(basename "${ENC_FILE}")\` (${ENC_SIZE})"
+            echo "- **Retenção:** 90 dias (GitHub Actions Artifact)"
+            echo "- **Runbook de restauração:** consulte \`docs/BACKUP_POLICY.md\`"
+          } >> "$GITHUB_STEP_SUMMARY"

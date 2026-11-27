@@ -226,3 +226,72 @@ export interface OrderFinancialRecord {
   atualizadoPor?: string;
   updatedAt?: string;
 }
+
+export type StatementFormat = 'OFX' | 'CSV' | 'XLSX';
+export type StatementEntryStatus = 'PENDENTE' | 'CONCILIADO' | 'PARCIAL' | 'IGNORADO';
+export type StatementMatchConfidence = 'EXATO' | 'PROVAVEL' | 'SEM_MATCH';
+
+export interface StatementImportBatch {
+  id: string;
+  canalId?: string;
+  canalNome: string;
+  arquivoNome: string;
+  formato: StatementFormat;
+  periodoInicio?: string;
+  periodoFim?: string;
+  totalLinhas: number;
+  linhasNovas: number;
+  linhasDuplicadas: number;
+  importadoPor?: string;
+  createdAt?: string;
+}
+
+export interface StatementAllocation {
+  orderId: string;
+  amount: number;
+}
+
+export interface BankStatementEntry {
+  id: string;
+  loteId?: string;
+  competencia: string;
+  canalId?: string;
+  canalNome: string;
+  dataExtrato: string;
+  descricao: string;
+  pagadorNome: string;
+  referenciaNsu: string;
+  valorBruto: number;
+  valorTaxa: number;
+  valorLiquido: number;
+  status: StatementEntryStatus;
+  conciliadoPor?: string;
+  conciliadoEm?: string;
+  ignoradoPor?: string;
+  ignoradoEm?: string;
+  motivoIgnorado?: string;
+  fingerprintHash: string;
+  linkedOrderIds: string[];
+  allocations: StatementAllocation[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface StatementMatchSuggestion {
+  statementId: string;
+  confidence: StatementMatchConfidence;
+  score: number;
+  matchedOrderIds: string[];
+  reasons: string[];
+}
+
+export interface ReconciliationPeriodLock {
+  id?: string;
+  competencia: string;
+  status: 'ABERTO' | 'FECHADO';
+  fechadoPor?: string;
+  fechadoEm?: string;
+  reabertoPor?: string;
+  reabertoEm?: string;
+  resumoSnapshot?: Record<string, unknown>;
+}

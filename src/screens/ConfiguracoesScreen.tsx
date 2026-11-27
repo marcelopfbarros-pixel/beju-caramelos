@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { UserProfile, StoreUnit, Category, Product, Order, StockItem, Customer, ProductionOrder, MonthlyRevenueGoals, CardapioIntroConfig, CardapioThankYouConfig, OrderFinancialRecord, FinancialPaymentChannel } from '../types';
+import { UserProfile, StoreUnit, Category, Product, Order, StockItem, StockMovement, Customer, ProductionOrder, MonthlyRevenueGoals, CardapioIntroConfig, CardapioThankYouConfig, OrderFinancialRecord, FinancialPaymentChannel } from '../types';
 import { getMonthGoalForUnit, getMonthYearKey, getUnitMonthGoalKey, getYearGoalForUnit } from '../utils/revenueGoals';
 import { 
   User, 
@@ -27,9 +27,10 @@ import {
   Truck,
   Trash2,
   LayoutGrid,
-  List
+  List,
+  AlertTriangle
 } from 'lucide-react';
-import { ExcelService } from '../services/excelService';
+import { ExcelService, FullBackupPayload, LastBackupMeta } from '../services/excelService';
 import { CurrencyInput, formatCurrencyBR } from '../components/CurrencyInput';
 import { SupabaseService } from '../services/supabaseService';
 import {
@@ -46,6 +47,7 @@ interface ConfiguracoesScreenProps {
   products: Product[];
   orders: Order[];
   stock: StockItem[];
+  stockMovements?: StockMovement[];
   customers: Customer[];
   productionOrders: ProductionOrder[];
   users: UserProfile[];
@@ -54,18 +56,7 @@ interface ConfiguracoesScreenProps {
   onSaveUserProfile: (profile: UserProfile) => void;
   onSaveUser: (user: UserProfile) => void;
   onToggleUserActive: (userId: string, ativo: boolean) => void;
-  onRestoreFullBackup: (data: {
-    units?: StoreUnit[];
-    categories?: Category[];
-    products?: Product[];
-    orders?: Order[];
-    stock?: StockItem[];
-    customers?: Customer[];
-    productionOrders?: ProductionOrder[];
-    users?: UserProfile[];
-    financialRecords?: OrderFinancialRecord[];
-    financialChannels?: FinancialPaymentChannel[];
-  }) => void;
+  onRestoreFullBackup: (data: FullBackupPayload) => void;
   isSupabaseOnline: boolean;
   onSyncSupabase?: () => Promise<void> | void;
   revenueGoals?: MonthlyRevenueGoals;
@@ -85,6 +76,7 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
   products,
   orders,
   stock,
+  stockMovements = [],
   customers,
   productionOrders,
   users,
@@ -158,7 +150,15 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
 
   // Associação de lojas por usuário
   const [selectedAssocUserId, setSelectedAssocUserId] = useState<string>('');
-  const [exportingBackup, setExportingBackup] = useState(false);
+  const [exportingBackup, setExportingBackup] = useState<'XLSX' | 'JSON' | null>(null);
+  const [lastBackupMeta, setLastBackupMeta] = useState<LastBackupMeta | null>(() => {
+    try {
+      const raw = localStorage.getItem('juju_last_backup_meta');
+      return raw ? (JSON.parse(raw) as LastBackupMeta) : null;
+    } catch {
+      return null;
+    }
+  });
   const [myNewPassword, setMyNewPassword] = useState('');
   const [myConfirmPassword, setMyConfirmPassword] = useState('');
   const [passwordError, setPasswordError] = useState<string | null>(null);
@@ -295,39 +295,164 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
     });
   };
 
-  const handleExportFullBackup = async () => {
-    setExportingBackup(true);
-    try {
-      if (isSupabaseOnline) {
-        const [dbUnits, dbCats, dbProds, dbOrders, dbStock, dbCustomers, dbProdOrders, dbUsers, dbFinRecs, dbFinChs] = await Promise.all([
-          SupabaseService.getUnits().catch(() => units),
-          SupabaseService.getCategories().catch(() => categories),
-          SupabaseService.getProducts().catch(() => products),
-          SupabaseService.getOrders().catch(() => orders),
-          SupabaseService.getStock().catch(() => stock),
-          SupabaseService.getCustomers().catch(() => customers),
-          SupabaseService.getProductionOrders().catch(() => productionOrders),
-          SupabaseService.getUsers().catch(() => users),
-          SupabaseService.getOrderFinancialRecords().catch(() => financialRecords),
-          SupabaseService.getFinancialPaymentChannels().catch(() => financialChannels)
-        ]);
-        ExcelService.exportFullBackup(
-          dbUnits.length ? dbUnits : units,
-          dbCats.length ? dbCats : categories,
-          dbProds.length ? dbProds : products,
-          dbOrders.length ? dbOrders : orders,
-          dbStock.length ? dbStock : stock,
-          dbCustomers.length ? dbCustomers : customers,
-          dbProdOrders.length ? dbProdOrders : productionOrders,
-          dbUsers.length ? dbUsers : users,
-          dbFinRecs.length ? dbFinRecs : financialRecords,
-          dbFinChs.length ? dbFinChs : financialChannels
-        );
-      } else {
-        ExcelService.exportFullBackup(units, categories, products, orders, stock, customers, productionOrders, users, financialRecords, financialChannels);
+  useEffect(() => {
+    if (!isSupabaseOnline || activeTab !== 'banco') return;
+    let active = true;
+    void SupabaseService.getAppConfig<LastBackupMeta>('last_backup_meta').then(meta => {
+      if (active && meta && meta.exportedAt) {
+        setLastBackupMeta(meta);
+        try {
+          localStorage.setItem('juju_last_backup_meta', JSON.stringify(meta));
+        } catch {
+          // ignore localStorage quota errors
+        }
       }
+    });
+    return () => {
+      active = false;
+    };
+  }, [isSupabaseOnline, activeTab]);
+
+  const buildBackupPayload = async (): Promise<FullBackupPayload> => {
+    const localAppConfigs: Record<string, unknown> = {
+      revenue_goals: revenueGoals,
+      cardapio_intro_config: cardapioIntroConfig,
+      cardapio_thankyou_config: cardapioThankYouConfig
+    };
+
+    if (!isSupabaseOnline) {
+      return {
+        units,
+        categories,
+        products,
+        orders,
+        stock,
+        stockMovements,
+        customers,
+        productionOrders,
+        users,
+        financialRecords,
+        financialChannels,
+        appConfigs: localAppConfigs,
+        deliveryFeeZones: []
+      };
+    }
+
+    const [
+      dbUnits,
+      dbCats,
+      dbProds,
+      dbOrders,
+      dbStock,
+      dbStockMovs,
+      dbCustomers,
+      dbProdOrders,
+      dbUsers,
+      dbFinRecs,
+      dbFinChs,
+      dbAppConfigs,
+      dbDeliveryZones
+    ] = await Promise.all([
+      SupabaseService.getUnits().catch(() => units),
+      SupabaseService.getCategories().catch(() => categories),
+      SupabaseService.getProducts().catch(() => products),
+      SupabaseService.getOrders().catch(() => orders),
+      SupabaseService.getStock().catch(() => stock),
+      SupabaseService.getStockMovements().catch(() => stockMovements),
+      SupabaseService.getCustomers().catch(() => customers),
+      SupabaseService.getProductionOrders().catch(() => productionOrders),
+      SupabaseService.getUsers().catch(() => users),
+      SupabaseService.getOrderFinancialRecords().catch(() => financialRecords),
+      SupabaseService.getFinancialPaymentChannels().catch(() => financialChannels),
+      SupabaseService.getAllAppConfigs().catch(() => localAppConfigs),
+      SupabaseService.getDeliveryFeeZones().catch(() => [])
+    ]);
+
+    return {
+      units: dbUnits.length ? dbUnits : units,
+      categories: dbCats.length ? dbCats : categories,
+      products: dbProds.length ? dbProds : products,
+      orders: dbOrders.length ? dbOrders : orders,
+      stock: dbStock.length ? dbStock : stock,
+      stockMovements: dbStockMovs.length ? dbStockMovs : stockMovements,
+      customers: dbCustomers.length ? dbCustomers : customers,
+      productionOrders: dbProdOrders.length ? dbProdOrders : productionOrders,
+      users: dbUsers.length ? dbUsers : users,
+      financialRecords: dbFinRecs.length ? dbFinRecs : financialRecords,
+      financialChannels: dbFinChs.length ? dbFinChs : financialChannels,
+      appConfigs: Object.keys(dbAppConfigs).length ? dbAppConfigs : localAppConfigs,
+      deliveryFeeZones: dbDeliveryZones
+    };
+  };
+
+  const recordBackupMeta = (format: 'XLSX' | 'JSON', payload: FullBackupPayload) => {
+    const totalRecords =
+      (payload.units?.length || 0) +
+      (payload.categories?.length || 0) +
+      (payload.products?.length || 0) +
+      (payload.orders?.length || 0) +
+      (payload.stock?.length || 0) +
+      (payload.stockMovements?.length || 0) +
+      (payload.customers?.length || 0) +
+      (payload.productionOrders?.length || 0) +
+      (payload.users?.length || 0) +
+      (payload.financialChannels?.length || 0) +
+      (payload.financialRecords?.length || 0) +
+      Object.keys(payload.appConfigs || {}).length +
+      (payload.deliveryFeeZones?.length || 0);
+
+    const meta: LastBackupMeta = {
+      exportedAt: new Date().toISOString(),
+      exportedBy: userProfile.nome || userProfile.email || 'Operador',
+      format,
+      totalRecords
+    };
+    setLastBackupMeta(meta);
+    try {
+      localStorage.setItem('juju_last_backup_meta', JSON.stringify(meta));
+    } catch {
+      // ignore localStorage quota errors
+    }
+    if (isSupabaseOnline) {
+      void SupabaseService.saveAppConfig('last_backup_meta', meta).catch(err =>
+        console.warn('Não foi possível registrar last_backup_meta no Supabase:', err)
+      );
+    }
+  };
+
+  const handleExportFullBackup = async () => {
+    setExportingBackup('XLSX');
+    try {
+      const payload = await buildBackupPayload();
+      ExcelService.exportFullBackup(
+        payload.units || [],
+        payload.categories || [],
+        payload.products || [],
+        payload.orders || [],
+        payload.stock || [],
+        payload.customers || [],
+        payload.productionOrders || [],
+        payload.users || [],
+        payload.financialRecords || [],
+        payload.financialChannels || [],
+        payload.stockMovements || [],
+        payload.appConfigs || {},
+        payload.deliveryFeeZones || []
+      );
+      recordBackupMeta('XLSX', payload);
     } finally {
-      setExportingBackup(false);
+      setExportingBackup(null);
+    }
+  };
+
+  const handleExportFullBackupJson = async () => {
+    setExportingBackup('JSON');
+    try {
+      const payload = await buildBackupPayload();
+      ExcelService.exportFullBackupJson(payload, userProfile.nome || userProfile.email || 'Operador');
+      recordBackupMeta('JSON', payload);
+    } finally {
+      setExportingBackup(null);
     }
   };
 
@@ -335,13 +460,26 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    const confirmed = window.confirm(
+      `Deseja restaurar o backup "${file.name}"?\n\nOs dados carregados na sessão serão atualizados com o conteúdo do arquivo.`
+    );
+    if (!confirmed) {
+      if (backupFileRef.current) backupFileRef.current.value = '';
+      return;
+    }
+
     try {
-      const data = await ExcelService.importFullBackup(file);
+      const isJson = file.name.toLowerCase().endsWith('.json');
+      const data = isJson
+        ? await ExcelService.importFullBackupJson(file)
+        : await ExcelService.importFullBackup(file);
       onRestoreFullBackup(data);
-      alert('Backup completo em Excel (.xlsx) restaurado com sucesso no sistema!');
+      alert(
+        `Backup completo em ${isJson ? 'JSON (.json)' : 'Excel (.xlsx)'} restaurado com sucesso no sistema!`
+      );
     } catch (err) {
       console.error(err);
-      alert('Erro ao restaurar arquivo de backup. Verifique se o arquivo possui as abas corretas.');
+      alert('Erro ao restaurar arquivo de backup. Verifique se o arquivo (.json ou .xlsx) é válido.');
     } finally {
       if (backupFileRef.current) backupFileRef.current.value = '';
     }
@@ -1318,50 +1456,100 @@ export const ConfiguracoesScreen: React.FC<ConfiguracoesScreenProps> = ({
               </div>
             </div>
 
-            {/* Excel Download / Upload Tools */}
+            {/* Backup Health & Automated Daily pg_dump Banner */}
+            {(() => {
+              const daysSinceBackup = lastBackupMeta?.exportedAt
+                ? Math.floor((Date.now() - new Date(lastBackupMeta.exportedAt).getTime()) / (1000 * 60 * 60 * 24))
+                : null;
+              const isStaleOrMissing = daysSinceBackup === null || daysSinceBackup > 7;
+              return (
+                <div className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                  isStaleOrMissing ? 'border-amber-200 bg-amber-50/70' : 'border-emerald-200 bg-emerald-50/50'
+                }`}>
+                  <div className="flex items-start gap-2.5">
+                    {isStaleOrMissing ? (
+                      <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                    ) : (
+                      <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                    )}
+                    <div className="space-y-0.5">
+                      <div className="text-xs font-bold text-slate-900">
+                        {lastBackupMeta
+                          ? isStaleOrMissing
+                            ? `Último backup manual há ${daysSinceBackup} dia(s) — recomendamos baixar um Snapshot (.json)`
+                            : `Backup manual em dia (${lastBackupMeta.format})`
+                          : 'Nenhum backup manual registrado ainda — baixe um Snapshot (.json)'}
+                      </div>
+                      <p className="text-[11px] text-slate-600">
+                        {lastBackupMeta
+                          ? `Última exportação: ${new Date(lastBackupMeta.exportedAt).toLocaleString('pt-BR')} • ${lastBackupMeta.totalRecords} registro(s) • por ${lastBackupMeta.exportedBy}`
+                          : 'Backups automáticos diários (03:00 BRT, pg_dump AES-256) configuráveis via GitHub Actions (docs/BACKUP_POLICY.md).'}
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-mono font-bold px-2.5 py-1 rounded-full bg-white border border-slate-200 text-slate-700 shrink-0 self-start sm:self-center">
+                    Política 3-2-1 Ativa
+                  </span>
+                </div>
+              );
+            })()}
+
+            {/* Excel & JSON Download / Upload Tools */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
               {/* Card Download */}
               <div className="p-5 rounded-xl border border-slate-200 bg-slate-50/70 space-y-3">
                 <div className="flex items-center gap-2">
                   <Download className="w-5 h-5 text-brand-600" />
-                  <h4 className="text-xs font-bold text-slate-900">Exportar Backup Completo (.xlsx)</h4>
+                  <h4 className="text-xs font-bold text-slate-900">Exportar Backup Completo (.json / .xlsx)</h4>
                 </div>
                 <p className="text-[11px] text-slate-600 leading-relaxed">
-                  Baixe todas as tabelas do BD em um único arquivo Excel contendo as abas formatadas:
-                  <strong> Lojas, Categorias, Produtos, Clientes, Pedidos, Estoque, Ordens de Produção e Usuários</strong>.
+                  Inclui <strong>Lojas, Categorias, Produtos, Clientes, Pedidos (+ pagamento/sinal), Estoque, Movimentações, Ordens de Produção, Usuários, Financeiro/NF, Configurações e Taxas por Bairro</strong>.
                 </p>
-                <button
-                  onClick={handleExportFullBackup}
-                  disabled={exportingBackup}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-white border border-slate-300 hover:bg-slate-100 disabled:opacity-60 text-slate-800 text-xs font-bold rounded-lg transition-colors shadow-2xs"
-                >
-                  <Download className="w-3.5 h-3.5 text-slate-500" />
-                  <span>{exportingBackup ? 'Exportando BD Completo...' : 'Baixar Backup Geral (.xlsx)'}</span>
-                </button>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={handleExportFullBackupJson}
+                    disabled={exportingBackup !== null}
+                    className="w-full flex items-center justify-center gap-1.5 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-xs font-bold rounded-lg transition-colors shadow-2xs cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5 shrink-0" />
+                    <span>{exportingBackup === 'JSON' ? 'Gerando...' : 'Snapshot (.json)'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExportFullBackup}
+                    disabled={exportingBackup !== null}
+                    className="w-full flex items-center justify-center gap-1.5 py-2.5 px-3 bg-white border border-slate-300 hover:bg-slate-100 disabled:opacity-60 text-slate-800 text-xs font-bold rounded-lg transition-colors shadow-2xs cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                    <span>{exportingBackup === 'XLSX' ? 'Exportando...' : 'Planilha (.xlsx)'}</span>
+                  </button>
+                </div>
               </div>
 
               {/* Card Upload */}
               <div className="p-5 rounded-xl border border-slate-200 bg-slate-50/70 space-y-3">
                 <div className="flex items-center gap-2">
                   <Upload className="w-5 h-5 text-purple-600" />
-                  <h4 className="text-xs font-bold text-slate-900">Restaurar / Carga em Lote (.xlsx)</h4>
+                  <h4 className="text-xs font-bold text-slate-900">Restaurar / Carga em Lote (.json / .xlsx)</h4>
                 </div>
                 <p className="text-[11px] text-slate-600 leading-relaxed">
-                  Faça o upload de uma planilha de backup para atualizar ou restaurar os dados de todas as filiais e produtos com validação de esquema.
+                  Envie um arquivo de backup (.json sem perdas ou planilha .xlsx) para restaurar os dados e configurações de todas as unidades.
                 </p>
                 <input
                   type="file"
                   ref={backupFileRef}
                   onChange={handleBackupUpload}
-                  accept=".xlsx"
+                  accept=".json,.xlsx"
                   className="hidden"
                 />
                 <button
+                  type="button"
                   onClick={() => backupFileRef.current?.click()}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-lg transition-colors shadow-2xs"
+                  className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-lg transition-colors shadow-2xs cursor-pointer"
                 >
                   <Upload className="w-3.5 h-3.5" />
-                  <span>Selecionar Planilha (.xlsx)</span>
+                  <span>Selecionar Arquivo (.json ou .xlsx)</span>
                 </button>
               </div>
             </div>

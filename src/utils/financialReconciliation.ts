@@ -17,6 +17,7 @@ export const DEFAULT_FINANCIAL_PAYMENT_CHANNELS: FinancialPaymentChannel[] = [
   { id: 'fin-ch-dinheiro', nome: 'Dinheiro', categoria: 'DINHEIRO', exigeNfPadrao: true, ativo: true, ordem: 4 },
   { id: 'fin-ch-bonificado', nome: 'Bonificado', categoria: 'BONIFICADO', exigeNfPadrao: false, ativo: true, ordem: 5 },
   { id: 'fin-ch-boleto', nome: 'Boleto', categoria: 'BOLETO', exigeNfPadrao: true, ativo: true, ordem: 6 },
+  { id: 'fin-ch-rede', nome: 'Rede', categoria: 'CARTAO', exigeNfPadrao: true, ativo: true, ordem: 7 },
 ];
 
 export const FINANCIAL_CATEGORY_LABELS: Record<FinancialPaymentCategory, string> = {
